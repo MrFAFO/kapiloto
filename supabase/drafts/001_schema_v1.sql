@@ -342,8 +342,31 @@ create table public.consensus_pick_results (
 -- Kapiloto fixture research
 -- ---------------------------------------------------------------------------
 
+create table public.kapiloto_research_runs (
+  id uuid primary key default gen_random_uuid(),
+  round_id uuid not null references public.rounds(id) on delete cascade,
+  run_number smallint not null check (run_number between 1 and 3),
+  status text not null default 'queued'
+    check (status in ('queued', 'researching', 'completed', 'failed')),
+  trigger_type text not null
+    check (trigger_type in ('fixture_consult', 'fixture_recheck', 'diego')),
+  triggered_by_user_id uuid references auth.users(id) on delete set null,
+  requested_round_game_id uuid references public.round_games(id) on delete set null,
+  model_key text not null,
+  research_protocol_version text not null,
+  requested_at timestamptz not null default now(),
+  started_at timestamptz,
+  completed_at timestamptz,
+  failure_reason text,
+  unique (round_id, run_number)
+);
+
+create index kapiloto_research_runs_round_status_idx
+  on public.kapiloto_research_runs (round_id, status, run_number desc);
+
 create table public.kapiloto_analyses (
   id uuid primary key default gen_random_uuid(),
+  research_run_id uuid not null references public.kapiloto_research_runs(id) on delete restrict,
   round_game_id uuid not null references public.round_games(id) on delete cascade,
   analysis_version integer not null check (analysis_version > 0),
   is_current boolean not null default true,
@@ -369,7 +392,8 @@ create table public.kapiloto_analyses (
   stale_reason text,
   model_key text,
   research_protocol_version text not null,
-  unique (round_game_id, analysis_version)
+  unique (round_game_id, analysis_version),
+  unique (research_run_id, round_game_id)
 );
 
 create unique index kapiloto_one_current_analysis_uq
