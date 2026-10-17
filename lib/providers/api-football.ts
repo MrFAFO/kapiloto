@@ -268,7 +268,11 @@ export class ApiFootballClient {
       timezone: "UTC",
     });
     const rows = requireResponse(envelope, "fixture");
-    return rows.map(toProviderFixture).find(Boolean) ?? null;
+    return (
+      rows
+        .map(toProviderFixture)
+        .find((fixture): fixture is ProviderFixture => fixture != null) ?? null
+    );
   }
 
   async resolveFixture(
