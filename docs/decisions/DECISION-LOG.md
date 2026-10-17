@@ -114,3 +114,23 @@ Reason: preserve the shared three-run budget for meaningful later information wi
 ## D-027 — Diego pins one Kapiloto research run
 Decision: every Diego proposal references exactly one completed Kapiloto research run and may not combine per-fixture analyses from different runs.
 Reason: preserves internally consistent scores and round-relative double ranking.
+
+## D-028 — Kapiloto probabilities are server-derived from Sol plus a prior
+Decision: Sol returns raw pre-match home/draw/away probability estimates (`p_sol`). The server combines them with a versioned market/rating/league prior, deterministic analysis reliability, blend/deviation policy and optional fitted calibrator to produce `p_final`. All picks and double ranking use `p_final`, never raw Sol output.
+Reason: double allocation requires comparable probabilities across fixtures, while an external structured prior reduces narrative/model overconfidence and keeps deterministic policy outside the LLM.
+
+## D-029 — Market and fixture context are structured inputs, not web facts
+Decision: fixture identity, Toto 1/2 orientation, 90-minute settlement rule, neutral venue, kickoff/cutoff, competition-leg context and the preferred de-vigged market prior are supplied by the server in a frozen fixture card. Sol uses web search for qualitative evidence, not for scraping odds or deciding settlement semantics.
+Reason: prevents wrong-market, stale-odds, home/away-swap and qualification-vs-90-minute errors.
+
+## D-030 — Claim-level evidence must be grounded
+Decision: material Sol evidence carries a retrieved URL, short supporting quote and structured claim. Server code canonicalizes the URL, verifies the quote against retrieved content, extracts publication time, assigns source trust by claim type and enforces the research cutoff. Medium/large score-moving factors require stronger verified support; entailment verification is required before public production.
+Reason: a valid URL alone does not prove that the cited page supports the model's claim.
+
+## D-031 — User-facing confidence means analysis reliability
+Decision: numeric/model self-confidence does not directly drive the UI. A versioned deterministic reliability score is derived from evidence coverage/quality, conflicts, recency, prior divergence and later empirical stability. User-facing confidence bands represent research reliability, not the probability that the recommended outcome occurs.
+Reason: separates outcome uncertainty from confidence in the evidence/research process.
+
+## D-032 — Fixture fan-out is the preferred research topology, pending shadow comparison
+Decision: the worker architecture supports both a whole-round batch arm and fixture-scoped fan-out. The preferred first implementation is one task per eligible fixture with bounded concurrency and fixture-scoped retries, followed by deterministic round synthesis and atomic publication. Whole-round execution remains a shadow comparison arm until quality/cost data settles the choice.
+Reason: deterministic server synthesis removes the need for one 16-game model context, while fan-out improves isolation, retry cost and grounding depth.
