@@ -269,9 +269,34 @@ This table makes every consensus version reproducible. If a member later submits
 
 Live/provisional evaluation may use current sporting state. Final scoring uses the pool settlement outcome.
 
+## Kapiloto research runs
+### kapiloto_research_runs
+One shared research execution for a Toto round.
+
+- id
+- round_id
+- run_number: 1..3
+- status: queued/researching/completed/failed
+- trigger_type: fixture_consult/fixture_recheck/diego
+- triggered_by_user_id
+- requested_round_game_id
+- requested_at
+- started_at
+- completed_at
+- model_key
+- research_protocol_version
+- failure_reason
+
+Unique: (round_id, run_number).
+
+A research run is created only because of explicit user demand. There is no scheduled/cron path that creates runs merely because data is stale.
+
+The server must single-flight creation per round so simultaneous requests reuse the same in-progress run. Transient infrastructure retries remain part of the same run number.
+
 ## Kapiloto fixture research
 ### kapiloto_analyses
 - id
+- research_run_id
 - round_game_id
 - analysis_version
 - is_current
