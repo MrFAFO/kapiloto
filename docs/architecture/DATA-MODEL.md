@@ -269,57 +269,130 @@ This table makes every consensus version reproducible. If a member later submits
 
 Live/provisional evaluation may use current sporting state. Final scoring uses the pool settlement outcome.
 
-## Kapiloto research runs
+## Kapiloto round research state
+### kapiloto_round_research_state
+One row per Toto round. This is the serialization target and atomic publication pointer.
+
+- round_id
+- runs_consumed: 0..3
+- active_run_id
+- current_run_id
+- research_closed_at
+- attempts_total
+- cost_micros_total
+- version
+- updated_at
+
+`current_run_id` is the only definition of the published Kapiloto snapshot. Readers never assemble “latest per fixture”.
+
+## Kapiloto research requests
+### kapiloto_research_requests
+One row per explicit user intent.
+
+- id
+- user_id
+- round_id
+- round_game_id
+- intent: consult/recheck/diego
+- idempotency_key
+- request_sha256
+- based_on_run_id
+- outcome
+- run_id
+- created_at
+
+Unique: (user_id, idempotency_key).
+
+Clients do not insert this table directly; the privileged request path records it.
+
+## Kapiloto logical research runs
 ### kapiloto_research_runs
-One shared research execution for a Toto round.
+One shared logical round-wide research execution.
 
 - id
 - round_id
-- run_number: 1..3
-- status: queued/researching/completed/failed
+- seq_no
+- budget_slot: 1..3 or null when refunded
+- status: queued/running/completed/failed/cancelled
 - trigger_type: fixture_consult/fixture_recheck/diego
-- triggered_by_user_id
-- requested_round_game_id
-- requested_at
-- started_at
-- completed_at
-- model_key
+- origin_request_id
+- based_on_run_id
+- model_key: requested server configuration
 - research_protocol_version
-- failure_reason
+- prompt_template_sha256
+- fixture_set
+- fixture_set_sha256
+- input_snapshot
+- input_snapshot_at
+- max_attempts
+- attempt_count
+- succeeded_attempt_id
+- round_synthesis
+- failure_class
+- failure_detail
+- token/cost/search totals
+- created_at/started_at/completed_at/failed_at
 
-Unique: (round_id, run_number).
+Constraints:
+- unique (round_id, seq_no);
+- unique (round_id, budget_slot) where budget_slot is not null;
+- at most one queued/running run per round.
 
-A research run is created only because of explicit user demand. There is no scheduled/cron path that creates runs merely because data is stale.
+A transient retry never creates another logical run. A refunded terminal infrastructure failure may release its budget slot.
 
-The server must single-flight creation per round so simultaneous requests reuse the same in-progress run. Transient infrastructure retries remain part of the same run number.
+## Kapiloto execution attempts
+### kapiloto_research_attempts
+Execution/retry unit for one logical run.
+
+- id
+- run_id
+- attempt_no
+- status: queued/running/succeeded/failed/abandoned
+- available_at
+- worker_id
+- claimed_at
+- heartbeat_at
+- lease_expires_at
+- finished_at
+- model_snapshot
+- provider request/response IDs
+- token/search/source/cost usage
+- timing metrics
+- failure_class/code/detail
+- repair_calls
+- validation_report
+- trace_id
+
+Workers claim attempts with `FOR UPDATE SKIP LOCKED`. Long model/web work occurs outside database transactions.
 
 ## Kapiloto fixture research
 ### kapiloto_analyses
+Immutable fixture rows published as one complete research-run snapshot.
+
 - id
 - research_run_id
+- round_id
 - round_game_id
-- analysis_version
-- is_current
-- status
+- outcome: analyzed/insufficient_data/void/carried_forward
+- carried_from_analysis_id
 - primary_pick
 - suggested_double
 - double_recommended
 - double_priority_rank
-- double_priority_budget
 - confidence
 - score_1
 - score_x
 - score_2
 - summary
 - main_risk
-- generated_at
+- input_data_version
 - valid_until
-- stale_at
-- stale_reason
-- model_key
-- research_protocol_version
+- sources_count
+- generated_at
 
-`score_1/score_x/score_2` are structured model/research scores used by deterministic ticket optimization. They must not be presented as calibrated probabilities unless we later validate calibration.
+Unique: (research_run_id, round_game_id).
+
+`score_1/score_x/score_2` are normalized structured research scores used by deterministic optimization. They must not be presented as calibrated real-world probabilities unless calibration is later validated.
 
 ### kapiloto_factors
 - analysis_id
@@ -338,13 +411,18 @@ The server must single-flight creation per round so simultaneous requests reuse 
 - accessed_at
 - trust_tier
 
-### kapiloto_analysis_inputs
-- analysis_id
-- input_type
-- input_version
-- metadata
+### kapiloto_freshness_signals
+Non-AI ingestion signals used to compute freshness.
 
-This records the sports-data/research versions that produced an analysis.
+- round_game_id
+- signal_type: lineup/injury/suspension/odds_move/kickoff_change/postponed/cancelled
+- severity
+- data_version
+- observed_at
+- payload
+
+Freshness is computed at read time from deterministic TTL, input versions and signals. Signals never trigger AI by themselves.
+
 
 ## AI personas
 ### Kapiloto
@@ -361,6 +439,7 @@ The personas can share underlying infrastructure, but stored proposal type/perso
 - group_id
 - round_id
 - user_id
+- research_run_id
 - proposal_type: fill_ticket
 - source_submission_id
 - max_doubles
@@ -373,7 +452,6 @@ The personas can share underlying infrastructure, but stored proposal type/perso
 - proposal_id
 - round_game_id
 - analysis_id
-- analysis_version
 
 ### diego_ticket_proposal_picks
 - proposal_id
@@ -384,7 +462,7 @@ The personas can share underlying infrastructure, but stored proposal type/perso
 - rank
 - marginal_coverage_value
 
-A Diego proposal produces/fills the normal editable user draft. It never mutates a submitted or locked ticket.
+A Diego proposal pins one completed Kapiloto `research_run_id`, uses analyses only from that snapshot, produces/fills the normal editable user draft, and never mutates a submitted or locked ticket.
 
 ## Audit and corrections
 ### admin_audit_log
