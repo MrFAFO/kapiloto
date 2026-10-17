@@ -95,6 +95,8 @@ Never re-run live web research on historical finished fixtures to measure model 
 
 ## Frozen fixture card
 
+The server-side input contract is stored at `docs/ai/kapiloto-fixture-card.schema.json`.
+
 Each fixture task receives a server-built card. Example shape:
 
 ```json
