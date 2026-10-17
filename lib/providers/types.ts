@@ -60,6 +60,7 @@ export type ProviderSpikeFixtureInput = {
     away?: string[];
   };
   apiFootballFixtureId?: number;
+  sportmonksFixtureId?: number;
 };
 
 export type ProviderCapabilities = {
