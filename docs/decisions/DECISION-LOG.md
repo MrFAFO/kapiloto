@@ -85,3 +85,12 @@ Reason: preserves one ticket model and makes AI assistance reversible and unders
 ## D-020 — Double advice is round-relative
 Decision: Kapiloto may recommend a double for a specific fixture only with awareness of the full round and remaining/allowed double budget. The UI can show a relative priority such as "3 of 7".
 Reason: recommending a double has opportunity cost versus the other 15 matches.
+
+
+## D-021 — Stable editable ticket + immutable submission versions
+Decision: one `user_tickets` row represents the current editable ticket for a user/group/round, while every explicit submission is copied into immutable `ticket_versions` + `ticket_version_picks`.
+Reason: this cleanly supports autosave, multi-device optimistic concurrency, historical reproducibility and consensus provenance without mutating past submissions.
+
+## D-022 — Remove Kapiloto whole-consensus review
+Decision: remove the old Kapiloto round/consensus review entity from Schema v1.
+Reason: the approved product boundary is Kapiloto = fixture analysis and Diego = autonomous personal full-ticket generation. Group consensus remains its own deterministic group feature.
