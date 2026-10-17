@@ -642,7 +642,7 @@ create or replace function private.validate_diego_proposal_analysis_run()
 returns trigger
 language plpgsql
 set search_path = ''
-as $
+as $diego$
 declare
   proposal_run uuid;
 begin
@@ -663,7 +663,7 @@ begin
 
   return new;
 end;
-$;
+$diego$;
 
 create trigger diego_proposal_inputs_validate_run
 before insert or update on public.diego_ticket_proposal_inputs
