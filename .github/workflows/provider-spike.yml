@@ -1,0 +1,78 @@
+name: Provider Spike
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider to probe
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - api-football
+          - sportmonks
+      concurrency:
+        description: Fixture probe concurrency
+        required: true
+        default: "2"
+        type: string
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Prepare artifact directory
+        run: mkdir -p artifacts/provider-spike
+
+      - name: Probe API-Football
+        if: ${{ inputs.provider == 'both' || inputs.provider == 'api-football' }}
+        env:
+          API_FOOTBALL_API_KEY: ${{ secrets.API_FOOTBALL_API_KEY }}
+        run: |
+          npm run spike:provider -- \
+            --provider api-football \
+            --input scripts/provider-spike.round-264101.json \
+            --out artifacts/provider-spike/api-football.json \
+            --concurrency "${{ inputs.concurrency }}"
+
+      - name: Probe Sportmonks
+        if: ${{ inputs.provider == 'both' || inputs.provider == 'sportmonks' }}
+        env:
+          SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
+        run: |
+          npm run spike:provider -- \
+            --provider sportmonks \
+            --input scripts/provider-spike.round-264101.json \
+            --out artifacts/provider-spike/sportmonks.json \
+            --concurrency "${{ inputs.concurrency }}"
+
+      - name: Compare providers
+        if: ${{ inputs.provider == 'both' }}
+        run: |
+          npm run spike:compare -- \
+            --left artifacts/provider-spike/api-football.json \
+            --right artifacts/provider-spike/sportmonks.json \
+            > artifacts/provider-spike/comparison.json
+
+      - name: Upload spike reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-spike-264101
+          path: artifacts/provider-spike
+          if-no-files-found: error
+          retention-days: 14
