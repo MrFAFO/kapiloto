@@ -35,7 +35,7 @@ Kapiloto presents:
 - recommended pick: 1 / X / 2 / 1X / X2 / 12;
 - whether a double is justified for the current group's budget;
 - round-relative double priority derived deterministically from all fixture scores;
-- confidence;
+- analysis reliability (user-facing confidence band, distinct from outcome probability);
 - professional 7–8 line analysis;
 - key factors;
 - main risk;
@@ -56,6 +56,8 @@ Example:
 - local recommendation: X2;
 - double justified: yes;
 - round-relative priority: 3 of 7.
+
+The shared research stores server-derived `p_final` estimates for deterministic optimization. Until calibration is validated, the UI does not present them as precise real-world win percentages. The user-facing confidence indicator represents research reliability.
 
 Kapiloto shows this advice but does not automatically change the user's pick.
 
