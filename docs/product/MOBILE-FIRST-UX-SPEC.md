@@ -92,7 +92,7 @@ Panel supports:
 - exact recommendation: 1 / X / 2 / 1X / X2 / 12;
 - whether a double is recommended;
 - relative double priority against the other 15 fixtures and the remaining group double budget;
-- confidence;
+- analysis reliability / confidence band (quality of the research, not outcome probability);
 - concise professional conclusion;
 - current form and home/away context;
 - injuries, suspensions, expected returns and fatigue/load;
