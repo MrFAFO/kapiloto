@@ -33,8 +33,8 @@ username -> auth user -> verified email/phone identifier -> Supabase password si
 This resolver must be rate-limited and must return generic errors.
 
 ## AI identities
-- **Kapiloto**: fixture analyst and ticket reviewer. Handles per-match research, recommendation quality, rechecks and ticket review.
-- **Diego**: full-ticket builder. Generates a complete 16-match draft and allocates doubles under the group limit.
+- **Kapiloto**: fixture analyst. Handles per-match research, recommendation quality, rechecks and whether that specific fixture is a strong candidate for a double in the context of the whole round.
+- **Diego**: full-ticket builder. Uses the latest Kapiloto analysis for all 16 fixtures, selects every pick, allocates doubles under the group limit, and fills the normal ticket.
 
 These are product personas. Backend implementation may share infrastructure/models while preserving distinct user-facing responsibilities.
 
@@ -59,14 +59,17 @@ The group creator. Owner privileges cannot be removed without explicit ownership
 ## Weekly flow
 1. Current round appears automatically.
 2. User sees lock time and allowed doubles.
-3. User fills all 16 fixtures.
-4. Validation prevents incomplete tickets or excess doubles.
-5. User submits and may edit until lock.
-6. Group submissions become visible according to group policy.
-7. Admin generates consensus.
-8. Live fixtures show score/minute and provisional hit/miss.
-9. Final Toto settlement grades every ticket.
-10. Round statistics are frozen and added to history.
+3. **Default flow:** user fills the normal 16-match ticket manually.
+4. For any specific fixture, the user may expand Kapiloto inline for research and a recommendation.
+5. **Optional Diego flow:** Diego can fill the same normal ticket end-to-end, including which fixtures receive doubles.
+6. Whether filled manually or by Diego, the result is the same editable draft ticket.
+7. Validation prevents incomplete tickets or excess doubles.
+8. User submits and may edit until lock.
+9. Group submissions become visible according to group policy.
+10. Admin generates consensus.
+11. Live fixtures show score/minute and provisional hit/miss.
+12. Final Toto settlement grades every ticket.
+13. Round statistics are frozen and added to history.
 
 ## Round history
 Users can navigate backward from the current round to every round since the group was created.
@@ -139,14 +142,32 @@ Kapiloto:
 ## Kapiloto
 Each fixture has "Consult Kapiloto".
 
-The result is concise and source-backed:
-- primary single pick;
-- optional double;
+Kapiloto expands inline below that fixture and does not navigate away from the ticket.
+
+The analysis is source-backed and includes:
+- primary outcome recommendation;
+- whether a double is justified;
+- the exact recommended pick (1/X/2/1X/X2/12);
 - confidence;
-- key factors;
-- main risk;
-- timestamp;
-- sources.
+- professional 7–8 line analysis;
+- key factors and main risk;
+- round-relative double priority, e.g. "3 of 7", because double value depends on the other fixtures;
+- timestamp and sources;
+- recheck.
+
+Kapiloto does not fill the user's entire personal ticket.
+
+## Diego
+Diego is the optional autonomous full-ticket builder.
+
+When invoked:
+1. ensure the current Kapiloto research for all 16 fixtures is sufficiently fresh;
+2. use the structured outcome scores from those analyses;
+3. deterministically allocate up to the group double limit across the full round;
+4. fill the **same normal user draft ticket** with all 16 selections;
+5. keep each fixture's Kapiloto analysis available inline underneath it.
+
+There is no separate "Diego ticket" data model in the user experience. Diego produces a normal editable draft that the user reviews and submits.
 
 ## Out of scope for MVP
 - placing bets with Toto/Winner;
