@@ -43,12 +43,16 @@ The database trigger checks the group's max-double limit.
 Final scoring uses pool settlement only.
 
 ### Demand-driven AI research
-Kapiloto research is represented by shared round-level research runs:
-- no run exists until a user explicitly requests Kapiloto, recheck or Diego assistance;
-- each run produces the shared analyses for all 16 fixtures;
-- `run_number` is constrained to 1..3 and unique per round;
-- research-run creation is server-only and must use a transaction/advisory lock so concurrent requests cannot create duplicate runs;
-- stale data never starts a run by itself.
+Kapiloto uses a round-state row, immutable published snapshots and separate execution attempts:
+- no run exists until a user explicitly requests Kapiloto, Recheck or Diego assistance;
+- each logical run targets the shared 16-fixture snapshot;
+- one row in `kapiloto_round_research_state` is locked with `FOR UPDATE` before run creation;
+- `current_run_id` atomically publishes one coherent snapshot;
+- budget slots 1..3 plus a partial unique active-run index enforce the global cap and single-flight semantics;
+- retries are `kapiloto_research_attempts` inside the same logical run;
+- stale data can make a refresh eligible but never starts research itself;
+- Consult creates only run 1; later runs require explicit Recheck/refresh intent;
+- authenticated clients cannot write research tables directly.
 
 ### Public vs private data
 `private.auth_username_aliases` contains the username-to-auth-identifier mapping and is never exposed to the Data API.
