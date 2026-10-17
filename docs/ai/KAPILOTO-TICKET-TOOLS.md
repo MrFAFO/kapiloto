@@ -30,11 +30,11 @@ Rules:
 
 Each fixture can expand inline inside the normal ticket.
 
-Kapiloto returns:
-- primary outcome;
+Kapiloto presents:
+- primary outcome derived from the research scores;
 - recommended pick: 1 / X / 2 / 1X / X2 / 12;
-- whether a double is justified;
-- round-relative double priority;
+- whether a double is justified for the current group's budget;
+- round-relative double priority derived deterministically from all fixture scores;
 - confidence;
 - professional 7–8 line analysis;
 - key factors;
@@ -45,6 +45,8 @@ Kapiloto returns:
 
 ### Double recommendation requires round context
 A double cannot be evaluated in isolation because the user has a limited number of doubles.
+
+Shared research does not persist a universal `double_recommended` flag because groups may have different max-double settings. The server derives one global priority ranking from the shared scores and applies the viewing group's configured budget.
 
 Therefore Kapiloto's per-fixture analysis has two layers:
 1. **local fixture view** — how uncertain this game is and which two outcomes are strongest;
