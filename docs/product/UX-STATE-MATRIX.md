@@ -97,7 +97,7 @@ There is no separate Diego ticket object in the UX.
 - Fixture mapping uncertain
 - Settlement source pending
 
-Where confidence is low, show the uncertainty rather than silently guessing.
+Where analysis reliability is low, show the uncertainty rather than silently guessing. Reliability describes evidence/research quality; it is not a displayed win probability.
 
 ## Connectivity
 Mobile-first requires explicit poor-network behavior:
