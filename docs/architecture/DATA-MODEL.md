@@ -319,6 +319,7 @@ One shared logical round-wide research execution.
 - based_on_run_id
 - model_key: requested server configuration
 - research_protocol_version
+- derivation_version
 - prompt_template_sha256
 - fixture_set
 - fixture_set_sha256
@@ -377,8 +378,8 @@ Immutable fixture rows published as one complete research-run snapshot.
 - carried_from_analysis_id
 - primary_pick
 - suggested_double
-- double_recommended
 - double_priority_rank
+- double_gain_score
 - confidence
 - score_1
 - score_x
@@ -392,7 +393,9 @@ Immutable fixture rows published as one complete research-run snapshot.
 
 Unique: (research_run_id, round_game_id).
 
-`score_1/score_x/score_2` are normalized structured research scores used by deterministic optimization. They must not be presented as calibrated real-world probabilities unless calibration is later validated.
+`score_1/score_x/score_2` are normalized structured research scores used by deterministic post-processing. They must not be presented as calibrated real-world probabilities unless calibration is later validated.
+
+`primary_pick`, `suggested_double`, `double_gain_score` and `double_priority_rank` are derived deterministically from those scores under the run's `derivation_version`. `double_recommended` is group-specific and is computed at read/build time from the group's configured max doubles; it is not persisted as a universal analysis fact.
 
 ### kapiloto_factors
 - analysis_id
