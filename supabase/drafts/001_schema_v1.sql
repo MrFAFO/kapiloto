@@ -389,6 +389,7 @@ create table public.kapiloto_research_runs (
   based_on_run_id uuid references public.kapiloto_research_runs(id) on delete restrict,
   model_key text not null,
   research_protocol_version text not null,
+  derivation_version text not null,
   prompt_template_sha256 text not null,
   fixture_set jsonb not null,
   fixture_set_sha256 text not null,
@@ -507,9 +508,9 @@ create table public.kapiloto_analyses (
   carried_from_analysis_id uuid references public.kapiloto_analyses(id) on delete restrict,
   primary_pick text check (primary_pick is null or primary_pick in ('1', 'X', '2')),
   suggested_double text check (suggested_double is null or suggested_double in ('1X', 'X2', '12')),
-  double_recommended boolean not null default false,
   double_priority_rank smallint check (double_priority_rank is null or double_priority_rank between 1 and 16),
-  confidence numeric(5,4) check (confidence is null or confidence between 0 and 1),
+  double_gain_score numeric(12,8) check (double_gain_score is null or double_gain_score >= 0),
+  analysis_confidence numeric(5,4) check (analysis_confidence is null or analysis_confidence between 0 and 1),
   score_1 numeric(7,6) check (score_1 is null or score_1 between 0 and 1),
   score_x numeric(7,6) check (score_x is null or score_x between 0 and 1),
   score_2 numeric(7,6) check (score_2 is null or score_2 between 0 and 1),
@@ -528,13 +529,13 @@ create table public.kapiloto_analyses (
   check (outcome not in ('analyzed', 'carried_forward') or
     (primary_pick is not null and score_1 is not null and score_x is not null and score_2 is not null)),
   check (score_1 is null or abs((score_1 + score_x + score_2) - 1.0) <= 0.001),
-  check (not double_recommended or (suggested_double is not null and double_priority_rank is not null)),
+  check (outcome <> 'analyzed' or (suggested_double is not null and double_priority_rank is not null and double_gain_score is not null)),
   check ((outcome = 'carried_forward') = (carried_from_analysis_id is not null))
 );
 
 create unique index kapiloto_analyses_double_rank_uq
   on public.kapiloto_analyses (research_run_id, double_priority_rank)
-  where double_recommended;
+  where double_priority_rank is not null;
 
 create table public.kapiloto_factors (
   id uuid primary key default gen_random_uuid(),
