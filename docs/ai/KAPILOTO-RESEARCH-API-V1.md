@@ -43,7 +43,9 @@ The envelope contains:
 - request outcome
 - poll retry_after_seconds
 
-Analysis includes outcome, primary_pick, suggested_double, double_recommended, double_priority_rank, confidence, normalized scores, summary, main_risk, generated_at and sources.
+Analysis includes outcome, deterministically derived primary_pick and suggested_double, global double_priority_rank/double_gain_score, group-specific double_recommended, analysis_confidence, normalized relative scores, summary, main_risk, generated_at and validated sources.
+
+`double_recommended` in the API is contextual to the requesting group's configured double budget; it is not stored as a universal model output. The shared stored scores/rank remain identical for every group.
 
 ## HTTP behavior
 | Scenario | HTTP | State | Request outcome |
@@ -68,6 +70,13 @@ Do not use 429 for the three-run business limit.
 
 ## Idempotency
 Store (user_id, idempotency_key, request_sha256). Same key + same body returns the current state of the original request/run and never creates another run. Same key + different body returns 422.
+
+## Model-output boundary
+Sol's strict structured output contains evidence, normalized 1/X/2 relative scores, analysis confidence, material factors, data quality/conflicts and watch items.
+
+Sol does **not** author the persisted primary pick, suggested double, global double rank or group-specific double recommendation. Those are derived deterministically under the run's derivation version after schema/source validation.
+
+Every source URL supplied by the structured output must match a URL actually observed from the Responses API web-search tool.
 
 ## Research lifecycle
 1. Request path performs an optimistic read.
