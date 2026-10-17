@@ -64,3 +64,10 @@ The placeholder circles on the current auth mock are intentionally temporary and
 - admin round settings;
 - create-group/join-group after authentication;
 - desktop adaptation of the approved mobile behavior.
+
+
+## Latest mobile additions
+- Small league/competition label on every fixture card.
+- Post-login create-group / join-group screen.
+- Max-doubles reached, submitted-editable, and locked/read-only states.
+- Diego preview screen showing key picks, double allocation and league context before filling the normal ticket.
