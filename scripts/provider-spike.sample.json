@@ -9,6 +9,7 @@
       "home": ["Provider English Home Name"],
       "away": ["Provider English Away Name"]
     },
-    "apiFootballFixtureId": 123456
+    "apiFootballFixtureId": 123456,
+    "sportmonksFixtureId": 987654
   }
 ]
