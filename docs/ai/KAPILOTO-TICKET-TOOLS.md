@@ -58,9 +58,11 @@ Example:
 Kapiloto shows this advice but does not automatically change the user's pick.
 
 ### Recheck
-Recheck refreshes that fixture's research and version.
-If the recommendation changes, show the change and reason.
-The user's current pick remains unchanged.
+Recheck is an explicit user request for newer research relative to the currently published run. If refresh eligibility passes, it creates the next shared round-wide research run for all 16 fixtures; it does not run an isolated one-fixture model call.
+
+If another user already started that run, Recheck joins the same active run. If a newer run was already published, the request returns that newer snapshot and creates nothing.
+
+If the recommendation changes, show the change and reason. The user's current pick remains unchanged.
 
 ## Diego — full-ticket builder
 
@@ -73,12 +75,14 @@ Input:
 - round rules and lock status.
 
 Process:
-1. refresh stale fixture analyses when required;
-2. validate structured scores for 1/X/2;
-3. select the strongest base outcome for each fixture;
-4. use a deterministic optimizer to allocate up to max_doubles according to marginal coverage value;
-5. generate a complete 16-match draft;
-6. attach/reference the underlying Kapiloto analysis for every fixture.
+1. pin exactly one completed Kapiloto research run for all 16 fixtures;
+2. if no completed run exists, create/join run 1 and wait for user-visible completion;
+3. never refresh implicitly merely because research is stale; explicit refresh-and-build uses the same Recheck path;
+4. validate structured scores for 1/X/2;
+5. select the strongest base outcome for each fixture;
+6. use a deterministic optimizer to allocate up to max_doubles according to marginal coverage value;
+7. generate a complete 16-match draft;
+8. attach/reference the underlying Kapiloto analysis for every fixture.
 
 Output:
 - one pick for all 16 fixtures;
