@@ -58,20 +58,23 @@ Status must use text/iconography in addition to color.
 - Sources partially unavailable
 - Rate limit reached
 
-Recheck never changes the user's pick automatically.
+Recheck never changes the user's pick automatically. Kapiloto has no separate Apply action; the user changes the normal ticket controls directly.
 
-## Whole-ticket Kapiloto states
+## Diego full-ticket states
 - Enough fresh fixture analyses
 - Some fixture analyses stale
 - Research required before proposal
-- Generating proposal
-- Proposal ready
+- Researching one or more fixtures
+- Generating full-ticket proposal
 - Proposal violates deterministic validation and is repaired/rejected
-- Preview diff
-- Apply selected changes
-- Apply all changes
-- User rejects proposal
-- Ticket becomes stale after new fixture research
+- Preview ready
+- User confirms preview
+- Same normal user draft is filled
+- User manually edits Diego-filled picks
+- User rejects/cancels preview
+- Ticket becomes analytically stale after new fixture research
+
+There is no separate Diego ticket object in the UX.
 
 ## Group / consensus states
 - No members yet
@@ -124,8 +127,8 @@ Mobile-first requires explicit poor-network behavior:
 Recovery must never display or send the existing password.
 
 ## Brand-character states
-Authentication reserves a prominent visual stage for original 3D Kapiloto and Diego characters.
-Character art must remain decorative/brand-supporting:
+Authentication uses the approved full-width Kapiloto + Diego stadium hero.
+Character art remains decorative/brand-supporting:
 - never cover inputs or primary CTA;
 - load progressively;
 - preserve usable auth UI if the asset fails to load;
