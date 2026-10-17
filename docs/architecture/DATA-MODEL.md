@@ -169,29 +169,57 @@ Suggested visibility policies:
 Default candidate: after_own_submission.
 
 ## Tickets
-### ticket_submissions
+
+The ticket model separates the **current editable ticket** from immutable submitted snapshots.
+
+### user_tickets
+Stable identity for one user's ticket in one group round.
 - id
 - group_id
 - round_id
 - user_id
-- version
-- revision
 - state: draft/submitted/locked
+- revision
 - submitted_at
-- updated_at
+- locked_at
 - created_at
+- updated_at
 
-`revision` supports optimistic concurrency for multi-device editing.
+Unique: (group_id, round_id, user_id).
 
-A submitted edit creates or advances an auditable version; historical versions are never silently overwritten.
+`revision` supports optimistic concurrency for phone/desktop editing.
 
-### ticket_picks
-- submission_id
+### user_ticket_picks
+Current editable picks.
+- user_ticket_id
 - round_game_id
 - pick: 1/X/2/1X/X2/12
 - updated_at
 
-Unique: (submission_id, round_game_id).
+Unique: (user_ticket_id, round_game_id).
+
+Selecting two outcomes in the UI is stored as the corresponding double pick. There is no separate double flag.
+
+### ticket_versions
+Immutable snapshot created on each explicit submission and at final lock when needed.
+- id
+- user_ticket_id
+- version_no
+- state_at_snapshot
+- submitted_at
+- created_at
+
+Unique: (user_ticket_id, version_no).
+
+### ticket_version_picks
+Immutable picks for one ticket version.
+- ticket_version_id
+- round_game_id
+- pick
+
+Unique: (ticket_version_id, round_game_id).
+
+Consensus and historical scoring reference immutable `ticket_versions`, never a mutable draft.
 
 ## Consensus
 ### consensus_versions
@@ -208,10 +236,9 @@ Unique: (submission_id, round_game_id).
 
 ### consensus_source_submissions
 - consensus_version_id
-- submission_id
-- submission_version
+- ticket_version_id
 
-This table makes every consensus version reproducible and lets the UI mark it stale when a source submission changes.
+This table makes every consensus version reproducible. If a member later submits a newer ticket version before lock, the current consensus is marked stale without rewriting the old source set.
 
 ### consensus_picks
 - consensus_version_id
@@ -225,7 +252,7 @@ This table makes every consensus version reproducible and lets the UI mark it st
 
 ## Scoring
 ### ticket_pick_results
-- submission_id
+- ticket_version_id
 - round_game_id
 - evaluation_state
 - is_hit
@@ -247,9 +274,13 @@ Live/provisional evaluation may use current sporting state. Final scoring uses t
 - id
 - round_game_id
 - analysis_version
+- is_current
 - status
 - primary_pick
 - suggested_double
+- double_recommended
+- double_priority_rank
+- double_priority_budget
 - confidence
 - score_1
 - score_x
@@ -329,14 +360,6 @@ The personas can share underlying infrastructure, but stored proposal type/perso
 - marginal_coverage_value
 
 A Diego proposal produces/fills the normal editable user draft. It never mutates a submitted or locked ticket.
-
-### kapiloto_round_reviews
-- id
-- group_id
-- round_id
-- consensus_version_id
-- review
-- generated_at
 
 ## Audit and corrections
 ### admin_audit_log
