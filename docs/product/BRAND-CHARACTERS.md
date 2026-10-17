@@ -74,3 +74,31 @@ Do not place characters repeatedly inside every fixture row. The ticket remains 
 
 ## Next creative step
 Before production assets, generate 2–3 visual directions for each character and select canonical identities. Once selected, lock a character bible for face, body, clothing, colors and poses before generating the full asset set.
+
+
+## Locked brand asset architecture
+
+The authentication artwork and the Kapiloto logo are separate assets.
+
+### Auth hero
+Canonical hero image:
+`public/brand/kapiloto-auth-hero.jpg`
+
+Rules:
+- contains Kapiloto + Diego + stadium only;
+- contains no baked-in logo or UI text;
+- may be cropped responsively by the product;
+- logo is always overlaid as a separate reusable brand component.
+
+### Kapiloto wordmark
+The official Figma component is:
+`Brand/Kapiloto Wordmark`
+
+Variants:
+- Hero
+- Header
+
+Rules:
+- use the same wordmark family in auth, mobile app headers and future marketing surfaces;
+- do not recreate the logo as ad-hoc text;
+- future exported SVG/PNG logo assets must derive from this locked component or a later explicitly approved replacement.
