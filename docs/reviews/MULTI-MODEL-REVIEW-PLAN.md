@@ -104,3 +104,5 @@ Run the full review set:
 - **Kapiloto research concurrency / cost architecture — Opus 5.5**: completed and reconciled in `docs/reviews/OPUS-KAPILOTO-RESEARCH-REVIEW-001.md`.
 - Accepted findings were propagated into the data model, Schema v1 draft, RLS boundary, API contract, UX behavior and decision log.
 - The review is advisory evidence, not an authority; final decisions remain in `DECISION-LOG.md`.
+- **Kapiloto research protocol / grounding — Opus 5.5**: completed and reconciled in `docs/reviews/OPUS-KAPILOTO-RESEARCH-PROTOCOL-REVIEW-001.md`.
+- Accepted findings changed the probability pipeline, fixture-card boundary, evidence grounding, cutoff/evaluation isolation, confidence semantics and preferred execution topology.
