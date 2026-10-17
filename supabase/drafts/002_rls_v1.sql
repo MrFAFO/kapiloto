@@ -160,11 +160,15 @@ alter table public.consensus_source_submissions enable row level security;
 alter table public.consensus_picks enable row level security;
 alter table public.ticket_pick_results enable row level security;
 alter table public.consensus_pick_results enable row level security;
+alter table public.kapiloto_round_research_state enable row level security;
+alter table public.kapiloto_research_requests enable row level security;
 alter table public.kapiloto_research_runs enable row level security;
+alter table public.kapiloto_research_attempts enable row level security;
 alter table public.kapiloto_analyses enable row level security;
 alter table public.kapiloto_factors enable row level security;
 alter table public.kapiloto_sources enable row level security;
 alter table public.kapiloto_analysis_inputs enable row level security;
+alter table public.kapiloto_freshness_signals enable row level security;
 alter table public.diego_ticket_proposals enable row level security;
 alter table public.diego_ticket_proposal_inputs enable row level security;
 alter table public.diego_ticket_proposal_picks enable row level security;
@@ -209,12 +213,8 @@ grant select on public.consensus_picks to authenticated;
 grant select on public.ticket_pick_results to authenticated;
 grant select on public.consensus_pick_results to authenticated;
 
--- Kapiloto: authenticated users can read generated analyses. Generation is server-only.
-grant select on public.kapiloto_analyses to authenticated;
-grant select on public.kapiloto_factors to authenticated;
-grant select on public.kapiloto_sources to authenticated;
-
--- Analysis inputs remain server/ops only: no authenticated grant.
+-- Kapiloto research is served through the application/API boundary.
+-- Raw research/state/provenance tables receive no authenticated grants.
 
 -- Diego: user can read own proposals; generation/apply are server-side.
 grant select on public.diego_ticket_proposals to authenticated;
@@ -515,31 +515,10 @@ using (
 -- Kapiloto
 -- ---------------------------------------------------------------------------
 
-create policy kapiloto_analyses_select_authenticated
-on public.kapiloto_analyses
-for select
-to authenticated
-using (true);
-
-create policy kapiloto_factors_select_authenticated
-on public.kapiloto_factors
-for select
-to authenticated
-using (
-  exists (
-    select 1 from public.kapiloto_analyses a where a.id = analysis_id
-  )
-);
-
-create policy kapiloto_sources_select_authenticated
-on public.kapiloto_sources
-for select
-to authenticated
-using (
-  exists (
-    select 1 from public.kapiloto_analyses a where a.id = analysis_id
-  )
-);
+-- No authenticated table policies or grants are defined for Kapiloto research.
+-- The browser reads the published response model through the application/API boundary
+-- and requests Consult/Recheck through one privileged server path.
+-- This prevents clients from fabricating runs, attempts, analyses or freshness signals.
 
 -- ---------------------------------------------------------------------------
 -- Diego
@@ -597,9 +576,15 @@ using (
 -- public.provider_team_mappings
 -- public.provider_competition_mappings
 -- public.provider_fixture_mappings
+-- public.kapiloto_round_research_state
+-- public.kapiloto_research_requests
 -- public.kapiloto_research_runs
+-- public.kapiloto_research_attempts
+-- public.kapiloto_analyses
+-- public.kapiloto_factors
+-- public.kapiloto_sources
 -- public.kapiloto_analysis_inputs
-
+-- public.kapiloto_freshness_signals
 -- When the real Supabase project exists:
 -- 1) verify which schemas are exposed by the Data API;
 -- 2) ensure private is NOT exposed;
