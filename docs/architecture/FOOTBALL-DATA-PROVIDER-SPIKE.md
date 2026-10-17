@@ -104,6 +104,47 @@ For each market snapshot:
 
 If only one complete bookmaker is available, the prior may still be used but its quality flag/reliability contribution is reduced.
 
+## Implemented spike harness
+
+The repository now contains provider-neutral spike code:
+
+- `lib/providers/types.ts` — normalized fixture/market/report contracts;
+- `lib/providers/market.ts` — shared de-vig + robust bookmaker aggregation;
+- `lib/providers/api-football.ts`;
+- `lib/providers/sportmonks.ts`;
+- `scripts/provider-spike.ts`;
+- provider parser/market unit tests.
+
+Environment variables:
+
+```
+API_FOOTBALL_API_KEY=
+SPORTMONKS_API_TOKEN=
+```
+
+Input example:
+`scripts/provider-spike.sample.json`.
+
+Run the exact same input against API-Football:
+
+```bash
+npm run spike:provider -- --provider api-football --input ./round.json --out ./artifacts/api-football.json
+```
+
+Then Sportmonks:
+
+```bash
+npm run spike:provider -- --provider sportmonks --input ./round.json --out ./artifacts/sportmonks.json
+```
+
+Default concurrency is 2 and can be changed up to 8 with `--concurrency`.
+
+Provider fixture IDs are optional. If omitted, the harness attempts same-date home/away name matching using supplied aliases. For a serious comparison, prefer already verified provider mappings when available so fixture-resolution quality and data-field coverage are measured separately.
+
+The report distinguishes provider-declared capability from observed payload count. For example, zero injury rows does not mean injury coverage is unsupported.
+
+API-Football's normal pre-match odds history is short-lived, so the most meaningful market spike must run on upcoming/recent fixtures and persist the output immediately.
+
 ## Coverage-spike procedure
 
 Before selecting a provider, test against several real Winner 16 rounds.
