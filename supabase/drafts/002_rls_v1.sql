@@ -160,6 +160,7 @@ alter table public.consensus_source_submissions enable row level security;
 alter table public.consensus_picks enable row level security;
 alter table public.ticket_pick_results enable row level security;
 alter table public.consensus_pick_results enable row level security;
+alter table public.kapiloto_research_runs enable row level security;
 alter table public.kapiloto_analyses enable row level security;
 alter table public.kapiloto_factors enable row level security;
 alter table public.kapiloto_sources enable row level security;
@@ -596,6 +597,7 @@ using (
 -- public.provider_team_mappings
 -- public.provider_competition_mappings
 -- public.provider_fixture_mappings
+-- public.kapiloto_research_runs
 -- public.kapiloto_analysis_inputs
 
 -- When the real Supabase project exists:
