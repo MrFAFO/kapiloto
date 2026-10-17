@@ -149,6 +149,23 @@ Unique: (provider, provider_fixture_id).
 
 The football-data provider is authoritative only for football-state data, not Toto settlement.
 
+
+### fixture_market_snapshots
+Server-ingested pre-match 90-minute 1X2 market snapshots.
+
+- id
+- round_game_id
+- provider
+- captured_at
+- market_type: 1x2_90m
+- raw_home_odds/raw_draw_odds/raw_away_odds
+- overround
+- p_1_bp/p_x_bp/p_2_bp (de-vigged, sum 10000)
+- source_version
+- created_at
+
+Market data is structured input, never scraped by Sol from articles. Odds movement is computed from comparable snapshots.
+
 ## Group round settings
 ### group_round_settings
 - group_id
@@ -320,14 +337,20 @@ One shared logical round-wide research execution.
 - model_key: requested server configuration
 - research_protocol_version
 - derivation_version
+- source_policy_version
+- recency_policy_version
+- reliability_formula_version
+- blend_policy_version
+- calibration_version: nullable until a fitted calibrator exists
 - prompt_template_sha256
+- execution_topology: round_batch/fixture_fanout
+- research_cutoff_at
 - fixture_set
 - fixture_set_sha256
 - input_snapshot
 - input_snapshot_at
-- max_attempts
+- max_attempts_per_task
 - attempt_count
-- succeeded_attempt_id
 - round_synthesis
 - failure_class
 - failure_detail
@@ -341,12 +364,16 @@ Constraints:
 
 A transient retry never creates another logical run. A refunded terminal infrastructure failure may release its budget slot.
 
+`research_cutoff_at` freezes the pre-match evidence boundary. Research tasks do not use evidence published later than this cutoff.
+
 ## Kapiloto execution attempts
 ### kapiloto_research_attempts
-Execution/retry unit for one logical run.
+Fixture/round task execution and retry unit inside one logical run.
 
 - id
 - run_id
+- task_key
+- round_game_id: nullable for a whole-round experiment task
 - attempt_no
 - status: queued/running/succeeded/failed/abandoned
 - available_at
@@ -361,10 +388,33 @@ Execution/retry unit for one logical run.
 - timing metrics
 - failure_class/code/detail
 - repair_calls
+- raw_output_uri/raw_output_sha256
+- validated_output
 - validation_report
 - trace_id
 
+Unique: (run_id, task_key, attempt_no).
+
+At most one queued/running attempt and at most one succeeded attempt exist per task key.
+
 Workers claim attempts with `FOR UPDATE SKIP LOCKED`. Long model/web work occurs outside database transactions.
+
+The preferred first implementation uses one task key per fixture; a round-batch task remains available for shadow comparison.
+
+## Kapiloto source registry
+### kapiloto_source_registry
+Server-curated trust policy for web evidence.
+
+- domain (canonical/punycode)
+- publisher
+- tier_by_claim_type
+- languages
+- coverage metadata
+- denied
+- reviewed_at
+- metadata
+
+Unknown domains default to low trust. Sol never assigns source tier.
 
 ## Kapiloto fixture research
 ### kapiloto_analyses
@@ -374,45 +424,96 @@ Immutable fixture rows published as one complete research-run snapshot.
 - research_run_id
 - round_id
 - round_game_id
-- outcome: analyzed/insufficient_data/void/carried_forward
+- outcome: analyzed/insufficient_data/void/carried_forward/research_unavailable
 - carried_from_analysis_id
+- research_cutoff_at
+- kickoff_at_snapshot
+- settlement_rule_snapshot
+- neutral_venue_snapshot
+- orientation_verified
+- prior_type: market/rating/league_base
+- market_snapshot_id
+- p_prior_1_bp/p_prior_x_bp/p_prior_2_bp
+- p_sol_1_bp/p_sol_x_bp/p_sol_2_bp
+- p_final_1_bp/p_final_x_bp/p_final_2_bp
+- reliability
+- reliability_band: low/medium/high
+- reliability_reasons
+- model_self_confidence: logged only
 - primary_pick
 - suggested_double
 - double_priority_rank
-- double_gain_score
-- confidence
-- score_1
-- score_x
-- score_2
+- double_gain_score (display/audit value; ordering uses integer ratio comparison)
+- blend_weight
+- deviation_cap_applied
 - summary
 - main_risk
-- input_data_version
+- availability
+- dimension_coverage
+- conflicts
+- watch_items
+- key_assumptions
+- data_quality
+- suspicious_content
 - valid_until
-- sources_count
 - generated_at
 
 Unique: (research_run_id, round_game_id).
 
-`score_1/score_x/score_2` are normalized structured research scores used by deterministic post-processing. They must not be presented as calibrated real-world probabilities unless calibration is later validated.
+Each probability triple is stored in basis points and sums to 10,000.
 
-`primary_pick`, `suggested_double`, `double_gain_score` and `double_priority_rank` are derived deterministically from those scores under the run's `derivation_version`. `double_recommended` is group-specific and is computed at read/build time from the group's configured max doubles; it is not persisted as a universal analysis fact.
+`p_sol` is Sol's raw pre-match 90-minute probability estimate. `p_final` is server-derived from the versioned prior/reliability/blend/calibration pipeline.
+
+Only `p_final` drives `primary_pick`, `suggested_double`, `double_gain_score` and `double_priority_rank`.
+
+`double_recommended` is group-specific and is computed at read/build time from the group's configured max doubles; it is not persisted as a universal analysis fact.
+
+### kapiloto_evidence
+Claim-level grounding and audit evidence.
+
+- id
+- analysis_id
+- model_evidence_id
+- url_canonical
+- domain
+- claim_type
+- about_team
+- quote
+- claim
+- source_event_time
+- published_at (server-extracted)
+- retrieved_at
+- trust_tier (server-assigned for the claim type)
+- quote_verified
+- entailment: supported/unsupported/not_checked
+- syndication_cluster_id
+- content_sha256
+- status: accepted/rejected
+- rejected_reason
+
+A real/retrieved URL is not sufficient: material evidence must also pass quote/claim validation.
 
 ### kapiloto_factors
+- id
 - analysis_id
-- factor_type
-- text
-- direction
-- importance
+- dimension
+- favors: home/draw/away/none
+- magnitude: small/medium/large
+- rationale
 
-### kapiloto_sources
+### kapiloto_factor_evidence
+- factor_id
+- evidence_id
+
+Many-to-many mapping from derived factor to accepted claim evidence.
+
+### kapiloto_analysis_inputs
 - analysis_id
-- title
-- url
-- publisher
-- source_type
-- published_at
-- accessed_at
-- trust_tier
+- input_type
+- input_version
+- metadata
+
+This records structured football/prior snapshots that produced the immutable analysis.
 
 ### kapiloto_freshness_signals
 Non-AI ingestion signals used to compute freshness.
