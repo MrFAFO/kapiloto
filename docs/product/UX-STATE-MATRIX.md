@@ -56,7 +56,8 @@ Status must use text/iconography in addition to color.
 - Recommendation changed after recheck
 - Research failed
 - Sources partially unavailable
-- Rate limit reached
+- Research budget exhausted (3 shared runs consumed)
+- Request rate limit reached
 
 Recheck never changes the user's pick automatically. Kapiloto has no separate Apply action; the user changes the normal ticket controls directly.
 
