@@ -1,8 +1,13 @@
 # MVP Scope
 
 ## Must ship
-- Email/password signup, verification and password reset
-- Display name
+- Username/password login
+- Remember-me session persistence
+- Signup with unique username + password
+- At least one recovery contact: email or phone
+- Password recovery by email reset or phone OTP
+- Generic auth errors and rate limiting
+- Display name / username
 - Create private group
 - Join via code/link
 - Admin approval/rejection
@@ -22,6 +27,12 @@
 - Per-fixture Kapiloto analysis
 - Kapiloto caching, sources and freshness
 - Admin whole-ticket Kapiloto review
+- Diego full-ticket draft generation
+
+## Brand / marketing track
+- Original 3D Kapiloto and Diego character assets
+- Authentication/onboarding character hero
+- Optional contextual appearances in AI/loading/success states
 
 ## Shortly after MVP
 - Push/email reminders
