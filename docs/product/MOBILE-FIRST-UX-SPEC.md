@@ -6,7 +6,7 @@ Kapiloto is mobile-first. The phone experience is the primary product surface. D
 Reference width for design QA: 390px.
 
 ## Weekly round screen
-The current round is the default home screen.
+The current round is the default home screen and manual ticket filling is always the default flow.
 
 Every fixture row must show:
 - game number;
@@ -55,7 +55,8 @@ Selection must be thumb-friendly.
 Requirements:
 - large 1/X/2 tap targets;
 - selected state unmistakable;
-- double pick is made by activating two outcomes;
+- double pick is made automatically by activating two outcomes;
+- there is no separate “choose doubles” control;
 - selected pair remains visible without an extra modal;
 - reaching max doubles produces clear feedback;
 - no ambiguous destructive third-outcome behavior.
@@ -64,7 +65,7 @@ Preferred interaction:
 - single outcome tap selects/replaces a single;
 - second outcome tap adds a double if capacity exists;
 - tapping an active outcome in a double removes only that outcome;
-- adding a third outcome should be blocked with a clear message unless a deliberate tested replacement interaction is designed.
+- adding a third outcome is blocked with a clear message.
 
 ## Doubles counter
 - persistent but compact;
@@ -72,11 +73,10 @@ Preferred interaction:
 - changes visually near the limit;
 - tap opens a quick list of games currently using doubles.
 
-## Inline Kapiloto consultation
-Do not navigate to a separate screen.
+## Kapiloto — per-fixture analyst
+Kapiloto is the fixture analyst. It does not own a separate whole-ticket flow.
 
-Each fixture has a clear Consult Kapiloto action.
-On tap, an expandable panel opens directly below that fixture.
+Each fixture has a clear “Consult Kapiloto” action. On tap, an expandable panel opens directly below that fixture; it never navigates away from the ticket.
 
 Panel supports:
 - expand;
@@ -84,18 +84,27 @@ Panel supports:
 - reopen without losing cached result;
 - loading state;
 - stale state;
-- error/retry state.
+- rechecking state;
+- error/retry state;
+- recommendation-changed state.
 
 ### Inline analysis content
-- recommendation: single + optional double;
+- exact recommendation: 1 / X / 2 / 1X / X2 / 12;
+- whether a double is recommended;
+- relative double priority against the other 15 fixtures and the remaining group double budget;
 - confidence;
-- concise conclusion;
-- key factors;
+- concise professional conclusion;
+- current form and home/away context;
+- injuries, suspensions, expected returns and fatigue/load;
+- tactical matchup and table/context;
+- relevant current news / press-conference signal;
+- independent analysis/model signal and market movement where useful;
 - main risk/counter-case;
-- last researched timestamp;
+- freshness timestamp;
 - sources;
-- Apply to my ticket;
 - Recheck.
+
+There is no separate “Apply” button. The recommendation appears inside the fixture card and the user changes the normal 1/X/2 controls directly.
 
 ### Recheck behavior
 A recheck performs new research and creates a new analysis version.
@@ -107,22 +116,30 @@ UI must show:
 
 Rechecking never silently overwrites the user's pick.
 
-## Kapiloto — whole-ticket tools
-The round screen includes three AI flows:
+## Diego — full-ticket builder
+Diego is the only autonomous whole-ticket flow.
 
-### 1. Recommend doubles
-Kapiloto reviews all 16 fixtures and ranks where doubles add the most value, respecting the group max.
+Diego:
+- uses the latest Kapiloto research for all 16 fixtures;
+- selects every game;
+- allocates doubles while respecting the group maximum;
+- uses structured outcome scores plus deterministic validation/optimization;
+- shows a preview with key decisions before filling;
+- fills the same normal editable user draft rather than creating a separate “Diego ticket”.
 
-### 2. Review my ticket
-Kapiloto detects unsafe singles, weak double allocation, stale picks and major conflicts with current research.
-
-### 3. Fill the whole ticket
-Kapiloto creates a complete draft for all 16 fixtures, obeying the double limit. The user previews before applying.
-
-Kapiloto never alters a submitted or locked ticket outside the normal edit/submit flow.
+After Diego finishes:
+- all 16 normal ticket picks are populated;
+- doubles are counted and badged normally;
+- per-game Kapiloto analysis remains available inline;
+- the user can manually change any pick;
+- the user submits the normal ticket when satisfied.
 
 ## Round-level status
 A global live count can exist as secondary information, but every fixture independently displays date/result/status.
+
+## Round navigation
+The upper header supports previous/current round navigation.
+Previous rounds are read-only and contain no edit, submit, Kapiloto recheck or Diego actions.
 
 ## Mobile navigation
 Primary destinations:
@@ -135,4 +152,4 @@ Primary destinations:
 Use four items plus More if five items reduce clarity.
 
 ## Desktop adaptation
-Desktop may add side navigation, simultaneous AI/group panels, richer statistics and denser fixture lists, but must preserve the same domain behavior.
+Desktop may add side navigation, simultaneous information panels, richer statistics and denser fixture lists, but must preserve the same domain behavior.
