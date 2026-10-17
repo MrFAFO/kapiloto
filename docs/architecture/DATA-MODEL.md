@@ -122,7 +122,11 @@ Unique: (provider, provider_competition_id).
 - away_team_id
 - competition_id
 - competition_name_snapshot
+- competition_stage_snapshot
+- leg_number / aggregate score when applicable
+- neutral_venue
 - kickoff_at
+- actual_kickoff_at
 - status
 - field_home_score
 - field_away_score
@@ -135,6 +139,8 @@ Unique: (provider, provider_competition_id).
 - last_synced_at
 
 Unique: (round_id, game_number).
+
+For Kapiloto research, Toto `1` maps to the stored listed-first/home team and Toto `2` to the listed-second/away team. `neutral_venue` prevents the model from interpreting that orientation as a true home-field advantage. Research also snapshots the applicable 90-minute settlement rule.
 
 ### provider_fixture_mappings
 - round_game_id
