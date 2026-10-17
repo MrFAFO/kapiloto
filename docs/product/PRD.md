@@ -146,7 +146,7 @@ Kapiloto expands inline below that fixture and does not navigate away from the t
 
 The analysis is source-backed and includes:
 - primary outcome recommendation;
-- whether a double is justified;
+- whether a double is justified for this group's configured double budget;
 - the exact recommended pick (1/X/2/1X/X2/12);
 - confidence;
 - professional 7–8 line analysis;
@@ -156,6 +156,8 @@ The analysis is source-backed and includes:
 - recheck.
 
 Kapiloto does not fill the user's entire personal ticket.
+
+Because research is shared across groups, shared research stores a global double-priority rank derived from the 1/X/2 scores. Whether a double is actually recommended is computed for the viewing group's configured max-doubles rule rather than stored as a universal model output.
 
 ### Research execution
 - Research is lazy/on-demand: a new round costs nothing in AI research until a user asks for Kapiloto, recheck, or Diego assistance.
