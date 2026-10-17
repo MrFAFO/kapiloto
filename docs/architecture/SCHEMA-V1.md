@@ -54,6 +54,20 @@ Kapiloto uses a round-state row, immutable published snapshots and separate exec
 - Consult creates only run 1; later runs require explicit Recheck/refresh intent;
 - authenticated clients cannot write research tables directly.
 
+### Grounded probability research
+Kapiloto research persists three probability layers:
+- structured prior (`p_prior`);
+- raw Sol pre-match estimate (`p_sol`);
+- server-derived final estimate (`p_final`).
+
+All are integer basis points summing to 10,000. Only `p_final` drives picks/double ranking.
+
+Research runs freeze `research_cutoff_at` and a fixture card that pins Toto orientation, settlement semantics and provider/prior versions.
+
+The preferred execution topology is fixture fan-out. Attempts are keyed by task so one fixture can retry without repaying for the other 15. Publication is still one atomic 16-row snapshot.
+
+Claim-level evidence is stored separately from factors and is grounded through URL retrieval, quote verification, server source registry/tiering and cutoff checks.
+
 ### Public vs private data
 `private.auth_username_aliases` contains the username-to-auth-identifier mapping and is never exposed to the Data API.
 
@@ -93,10 +107,29 @@ Privileged multi-row transitions are server operations:
 - a transient terminal failure refunds its slot and clears active_run_id;
 - a deterministic model-output failure follows the configured consume/refund policy;
 - publication inserts the complete fixture snapshot and flips current_run_id in one transaction;
+- every persisted prior/Sol/final probability triple sums to exactly 10,000 basis points;
+- fixture output with mismatched home/away identity or unverified orientation cannot publish;
+- a factor cannot reference evidence from another analysis;
+- post-cutoff evidence cannot publish into a pre-match analysis;
+- a zombie fixture task cannot overwrite the successful attempt for the same task key;
 - readers never observe a mixture of two run IDs;
 - Diego input rows all belong to one pinned completed research_run_id;
 - GET/read paths never create research;
 - a fourth non-refunded budget slot is impossible at the database level.
+
+### Kapiloto grounding/evaluation tests
+- web-search result URL that was never retrieved is rejected as evidence;
+- quote mismatch rejects/downgrades the evidence;
+- wrong-team/stale-player evidence fails validation;
+- source published after research_cutoff_at is rejected;
+- live-blog/match-report fixtures are excluded from pre-match evidence;
+- research worker role cannot read actual result/settlement/evaluation tables;
+- home/away echo mismatch rejects structured output;
+- p_sol normalization and p_final derivation are deterministic/versioned;
+- double ranking uses p_final and stable integer ratio ordering;
+- source registry deny-list and unknown-domain behavior are enforced;
+- HTML/Markdown/URLs in free-text output are sanitized;
+- fan-out retries one fixture task without creating a new logical run.
 
 Required tests:
 - user A cannot read group B data;
