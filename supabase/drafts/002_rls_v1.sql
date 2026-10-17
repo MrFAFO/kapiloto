@@ -150,6 +150,7 @@ alter table public.provider_competition_mappings enable row level security;
 alter table public.rounds enable row level security;
 alter table public.round_games enable row level security;
 alter table public.provider_fixture_mappings enable row level security;
+alter table public.fixture_market_snapshots enable row level security;
 alter table public.group_round_settings enable row level security;
 alter table public.user_tickets enable row level security;
 alter table public.user_ticket_picks enable row level security;
@@ -164,9 +165,11 @@ alter table public.kapiloto_round_research_state enable row level security;
 alter table public.kapiloto_research_requests enable row level security;
 alter table public.kapiloto_research_runs enable row level security;
 alter table public.kapiloto_research_attempts enable row level security;
+alter table public.kapiloto_source_registry enable row level security;
 alter table public.kapiloto_analyses enable row level security;
+alter table public.kapiloto_evidence enable row level security;
 alter table public.kapiloto_factors enable row level security;
-alter table public.kapiloto_sources enable row level security;
+alter table public.kapiloto_factor_evidence enable row level security;
 alter table public.kapiloto_analysis_inputs enable row level security;
 alter table public.kapiloto_freshness_signals enable row level security;
 alter table public.diego_ticket_proposals enable row level security;
@@ -576,13 +579,16 @@ using (
 -- public.provider_team_mappings
 -- public.provider_competition_mappings
 -- public.provider_fixture_mappings
+-- public.fixture_market_snapshots
 -- public.kapiloto_round_research_state
 -- public.kapiloto_research_requests
 -- public.kapiloto_research_runs
 -- public.kapiloto_research_attempts
+-- public.kapiloto_source_registry
 -- public.kapiloto_analyses
+-- public.kapiloto_evidence
 -- public.kapiloto_factors
--- public.kapiloto_sources
+-- public.kapiloto_factor_evidence
 -- public.kapiloto_analysis_inputs
 -- public.kapiloto_freshness_signals
 -- When the real Supabase project exists:
