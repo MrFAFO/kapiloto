@@ -3,68 +3,42 @@
 Figma source:
 https://www.figma.com/design/2Pp5ae9bgqhTfwcU2JcIlK
 
-## Mobile-first screens created
+## Locked visual direction
+**Dark Stadium**
 
-### 01 — Current Round
-- round navigation;
-- closing time;
-- group name;
-- doubles counter;
-- Toto 1/X/2 controls;
-- Kapiloto entry point;
-- bottom navigation.
+Primary design page:
+**00 — Mobile First · Dark Stadium**
 
-### 02 — Kapiloto Analysis
-- primary recommendation;
-- confidence;
-- concise reasoning;
-- key factors;
-- main risk;
-- freshness and sources;
-- apply-to-draft action.
+The mobile experience is the source priority. Desktop is a later responsive adaptation.
 
-### 03 — Group Consensus
-- submission progress;
-- democratic consensus;
-- per-outcome support;
-- doubles rationale;
-- Kapiloto whole-ticket review action;
-- admin generate action.
+## Current mobile core screens
+- Current Round with upcoming, live, finished-hit and finished-miss fixture states.
+- Large thumb-friendly 1/X/2 controls and double-pick states.
+- Inline per-fixture Kapiloto expansion with recommendation, freshness, recheck and apply.
+- Kapiloto ticket tools: recommend doubles, review ticket, fill whole ticket.
+- Group screen with member submissions and join requests.
+- Democratic Consensus screen with vote distribution and Kapiloto review.
+- Statistics screen with weekly ranking, consensus comparison and Kapiloto benchmark.
+- History screen with previous rounds.
 
-### 04 — Statistics
-- weekly leader;
-- group average;
-- consensus score;
-- weekly leaderboard;
-- consensus comparison;
-- Kapiloto benchmark.
-
-### 05 — Group
-- members and ticket-submission status;
-- ticket score/status;
-- group round state;
-- pending join requests with admin actions.
-
-### 06 — Onboarding
-- registration/login switch;
-- username, email and password;
-- create-group path;
-- join-existing-group path.
-
-## Design direction
-- iPhone-first, 390px reference width.
+## Design rules now locked
+- 390px reference mobile width.
 - Hebrew RTL.
-- Light neutral surface system.
-- Blue for core product actions/selections.
-- Purple for Kapiloto AI.
-- Dark navy for important round/summary states.
-- Compact cards suitable for 16-fixture rounds.
+- Dark Stadium visual language.
+- Purple = Kapiloto / AI / uncertainty intelligence.
+- Blue = user selection / action.
+- Red = live or miss/risk depending context.
+- Green = hit / completion / success.
+- Status is never represented by color alone; text labels remain mandatory.
+- Finished games are visually darker/desaturated with subtle green-grey or red-grey treatment.
+- Kapiloto fixture analysis stays inline; it does not navigate away from the ticket.
+- Every fixture independently shows date/time, live result or final result and ticket status.
 
-## Still to design
-- history/round browser;
-- live round state variants;
-- full member ticket detail;
+## Next design work
+- loading/error/stale/offline states;
+- locked/submitted ticket states;
+- max-double limit error interaction;
+- whole-ticket AI preview/diff state;
 - admin round settings;
-- join-request detail;
-- empty/error/loading states;
-- desktop responsive compositions.
+- onboarding/create-group/join-group in Dark Stadium;
+- desktop adaptation of the approved mobile behavior.
