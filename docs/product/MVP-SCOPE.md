@@ -26,6 +26,7 @@
 - Weekly and all-time statistics
 - Per-fixture Kapiloto analysis
 - Kapiloto caching, sources and freshness
+- Demand-driven Kapiloto research: zero research before user demand, shared all-16-fixture runs, maximum 3 runs per round
 - Per-fixture inline Kapiloto analysis and recheck
 - Round-relative Kapiloto double recommendation per fixture
 - Diego full-ticket draft generation using all 16 Kapiloto analyses
