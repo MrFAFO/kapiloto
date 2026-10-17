@@ -23,13 +23,23 @@ The mobile experience is the source priority. Desktop is a later responsive adap
 - Large thumb-friendly 2/X/1 controls; selecting two outcomes automatically counts as a double.
 - Visible used/max doubles count and per-game double badge.
 - Inline per-fixture Kapiloto expansion with professional analysis, freshness, recheck and final recommendation.
-- Diego full-ticket generation.
-- Kapiloto ticket review.
+- Diego full-ticket builder and Diego preview before filling the normal draft.
 - Group screen with member submissions and join requests.
-- Democratic Consensus screen with vote distribution and Kapiloto review.
-- Statistics screen with weekly ranking, consensus comparison and Kapiloto benchmark.
-- History screen with previous rounds.
+- Democratic Consensus screen with vote distribution.
+- Statistics screen with weekly ranking and group comparisons.
+- History and previous-round read-only screens.
+- Create-group / join-group post-login state.
+- Submitted-editable, max-doubles-reached and locked/read-only ticket states.
 - Centered primary page titles across the approved mobile screens.
+
+## Locked AI roles
+- Manual filling is the default.
+- **Kapiloto** is a per-fixture analyst only in the primary user-facing flow.
+- Kapiloto expands inline under a fixture and never navigates away.
+- Kapiloto may recommend a double, but the recommendation is ranked relative to all 16 fixtures and the limited group double budget.
+- Kapiloto has no separate Apply button; the user edits the normal 1/X/2 controls.
+- **Diego** is the only autonomous whole-ticket builder.
+- Diego fills the same normal editable user draft; there is no separate “Diego ticket”.
 
 ## Design rules now locked
 - 390px reference mobile width.
@@ -43,8 +53,8 @@ The mobile experience is the source priority. Desktop is a later responsive adap
 - Green = hit / completion / success.
 - Status is never represented by color alone; text labels remain mandatory.
 - Finished games are visually darker/desaturated with subtle green-grey or red-grey treatment.
-- Kapiloto fixture analysis stays inline; it does not navigate away from the ticket.
-- Every fixture independently shows date/time, live result or final result and ticket status.
+- Kapiloto fixture analysis stays inline.
+- Every fixture independently shows league, date/result/status and ticket state.
 
 ## Authentication
 Figma page: **00 — Auth · Dark Stadium**
@@ -52,22 +62,13 @@ Figma page: **00 — Auth · Dark Stadium**
 - remember-me control;
 - signup with username/password + email-or-phone recovery contact;
 - password-recovery state;
-- reserved hero stage for future 3D Kapiloto and Diego character assets.
-
-The placeholder circles on the current auth mock are intentionally temporary and will be replaced by the final 3D character art.
+- approved full-width 3:2 Kapiloto + Diego stadium hero on all three auth screens;
+- logo treatment matches the approved Kapiloto wordmark used in the app.
 
 ## Next design work
-- loading/error/stale/offline states;
-- locked/submitted ticket states;
-- max-double limit error interaction;
-- whole-ticket AI preview/diff state;
-- admin round settings;
-- create-group/join-group after authentication;
+- Kapiloto loading / stale / changed / error / rate-limit states;
+- draft Saving / Saved / Save failed / offline behavior;
+- explicit eighth-double rejection interaction;
+- admin round settings and member-management edge states;
+- consensus stale/regeneration state;
 - desktop adaptation of the approved mobile behavior.
-
-
-## Latest mobile additions
-- Small league/competition label on every fixture card.
-- Post-login create-group / join-group screen.
-- Max-doubles reached, submitted-editable, and locked/read-only states.
-- Diego preview screen showing key picks, double allocation and league context before filling the normal ticket.
