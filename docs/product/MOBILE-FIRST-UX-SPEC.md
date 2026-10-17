@@ -107,12 +107,16 @@ Panel supports:
 There is no separate “Apply” button. The recommendation appears inside the fixture card and the user changes the normal 1/X/2 controls directly.
 
 ### Recheck behavior
-A recheck performs new research and creates a new analysis version.
+A recheck is an explicit request for newer research relative to the published round snapshot. If eligible, it creates or joins the next shared all-16-fixture research run; it is not a one-fixture Sol call.
+
+The previous analysis remains visible while the new run is researching. If all three research slots have been consumed, the UI keeps the newest available analysis and explains that no further refresh is available for this round.
 
 UI must show:
 - last updated age;
 - stale indicator when new information may exist;
-- recommendation-change indicator when the pick changed, including reason.
+- recommendation-change indicator when the pick changed, including reason;
+- shared research-in-progress state when another user already triggered the run;
+- research-budget-exhausted state distinct from request rate limiting.
 
 Rechecking never silently overwrites the user's pick.
 
