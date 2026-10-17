@@ -10,6 +10,22 @@ Kapiloto and Diego have intentionally different scopes:
 
 They may share backend models and research infrastructure, but their product responsibilities remain distinct.
 
+## Research execution policy
+
+Kapiloto research is **demand-driven and shared per Toto round**.
+
+Rules:
+- No Sol call and no AI web research runs merely because a new round exists or time has passed.
+- The first user request for a Kapiloto recommendation, Kapiloto recheck, or Diego full-ticket recommendation may trigger research when no usable shared research exists.
+- A triggered research run covers **all 16 fixtures**, even when the initiating user opened only one fixture. This keeps outcome scores and round-relative double priority internally consistent.
+- Every completed run is stored centrally and reused by all users.
+- A round may start **at most 3 research runs**. Bounded technical retries for the same run keep the same run number.
+- Freshness/staleness can make another run eligible, but eligibility alone never executes research. A later user request is still required.
+- If the three-run budget has been exhausted, return the newest available analysis and clearly expose its freshness/staleness state instead of silently starting a fourth run.
+- Diego counts as explicit user demand. If Diego is requested before Kapiloto has research for the round, it can trigger the first shared run.
+- The approved model family for research is **Sol**. The exact OpenAI API model ID remains server configuration rather than being hard-coded into product logic.
+- Research creation must use a **single-flight / idempotent round lock** so concurrent first requests cannot launch duplicate runs.
+
 ## Kapiloto — fixture analysis
 
 Each fixture can expand inline inside the normal ticket.
