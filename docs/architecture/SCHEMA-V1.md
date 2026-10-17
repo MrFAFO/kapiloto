@@ -84,6 +84,20 @@ Privileged multi-row transitions are server operations:
 
 ## Before migration
 
+### Kapiloto research concurrency tests
+- 20 simultaneous first Consult requests create exactly one logical run and one budget slot;
+- simultaneous eligible Rechecks create exactly one next run;
+- duplicate Idempotency-Key with the same body never creates a second run;
+- duplicate Idempotency-Key with a different body is rejected;
+- an expired worker lease cannot publish after a retry owns the run;
+- a transient terminal failure refunds its slot and clears active_run_id;
+- a deterministic model-output failure follows the configured consume/refund policy;
+- publication inserts the complete fixture snapshot and flips current_run_id in one transaction;
+- readers never observe a mixture of two run IDs;
+- Diego input rows all belong to one pinned completed research_run_id;
+- GET/read paths never create research;
+- a fourth non-refunded budget slot is impossible at the database level.
+
 Required tests:
 - user A cannot read group B data;
 - member cannot read another member's draft;
