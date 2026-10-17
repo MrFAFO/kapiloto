@@ -670,6 +670,8 @@ create table public.kapiloto_evidence (
   status text not null default 'accepted' check (status in ('accepted', 'rejected')),
   rejected_reason text,
   unique (analysis_id, model_evidence_id),
+  check (status = 'rejected' or quote_verified),
+  check (status = 'rejected' or entailment <> 'unsupported'),
   unique (id, analysis_id)
 );
 
