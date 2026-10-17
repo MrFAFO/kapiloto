@@ -32,16 +32,13 @@
       ]
     },
     "fixture_key": {
-      "type": "string",
-      "maxLength": 200
+      "type": "string"
     },
     "home_team_id": {
-      "type": "string",
-      "maxLength": 100
+      "type": "string"
     },
     "away_team_id": {
-      "type": "string",
-      "maxLength": 100
+      "type": "string"
     },
     "outcome": {
       "type": "string",
@@ -70,20 +67,16 @@
         ],
         "properties": {
           "evidence_id": {
-            "type": "string",
-            "maxLength": 40
+            "type": "string"
           },
           "url": {
-            "type": "string",
-            "maxLength": 2000
+            "type": "string"
           },
           "quote": {
-            "type": "string",
-            "maxLength": 300
+            "type": "string"
           },
           "claim": {
-            "type": "string",
-            "maxLength": 220
+            "type": "string"
           },
           "claim_type": {
             "type": "string",
@@ -115,8 +108,7 @@
             "type": [
               "string",
               "null"
-            ],
-            "maxLength": 80
+            ]
           }
         }
       }
@@ -144,8 +136,7 @@
             ]
           },
           "player_name": {
-            "type": "string",
-            "maxLength": 120
+            "type": "string"
           },
           "status": {
             "type": "string",
@@ -178,8 +169,7 @@
             "type": "array",
             "maxItems": 5,
             "items": {
-              "type": "string",
-              "maxLength": 40
+              "type": "string"
             }
           }
         }
@@ -235,13 +225,11 @@
             "type": "array",
             "maxItems": 8,
             "items": {
-              "type": "string",
-              "maxLength": 40
+              "type": "string"
             }
           },
           "rationale": {
-            "type": "string",
-            "maxLength": 300
+            "type": "string"
           }
         }
       }
@@ -298,23 +286,20 @@
         ],
         "properties": {
           "topic": {
-            "type": "string",
-            "maxLength": 150
+            "type": "string"
           },
           "evidence_ids_a": {
             "type": "array",
             "maxItems": 6,
             "items": {
-              "type": "string",
-              "maxLength": 40
+              "type": "string"
             }
           },
           "evidence_ids_b": {
             "type": "array",
             "maxItems": 6,
             "items": {
-              "type": "string",
-              "maxLength": 40
+              "type": "string"
             }
           },
           "resolution": {
@@ -366,15 +351,13 @@
       ],
       "properties": {
         "summary": {
-          "type": "string",
-          "maxLength": 300
+          "type": "string"
         },
         "evidence_ids": {
           "type": "array",
           "maxItems": 8,
           "items": {
-            "type": "string",
-            "maxLength": 40
+            "type": "string"
           }
         }
       }
@@ -383,17 +366,14 @@
       "type": "array",
       "maxItems": 3,
       "items": {
-        "type": "string",
-        "maxLength": 150
+        "type": "string"
       }
     },
     "main_risk": {
-      "type": "string",
-      "maxLength": 300
+      "type": "string"
     },
     "summary": {
-      "type": "string",
-      "maxLength": 700
+      "type": "string"
     },
     "watch_items": {
       "type": "array",
@@ -434,12 +414,10 @@
             "type": [
               "string",
               "null"
-            ],
-            "maxLength": 120
+            ]
           },
           "condition": {
-            "type": "string",
-            "maxLength": 150
+            "type": "string"
           },
           "impact_if_triggered": {
             "type": "string",
@@ -469,8 +447,7 @@
           "type": "boolean"
         },
         "notes": {
-          "type": "string",
-          "maxLength": 220
+          "type": "string"
         }
       }
     },
@@ -486,12 +463,10 @@
         ],
         "properties": {
           "url": {
-            "type": "string",
-            "maxLength": 2000
+            "type": "string"
           },
           "description": {
-            "type": "string",
-            "maxLength": 220
+            "type": "string"
           }
         }
       }
