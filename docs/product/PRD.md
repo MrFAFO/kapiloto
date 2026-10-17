@@ -148,12 +148,14 @@ The analysis is source-backed and includes:
 - primary outcome recommendation;
 - whether a double is justified for this group's configured double budget;
 - the exact recommended pick (1/X/2/1X/X2/12);
-- confidence;
+- analysis reliability / confidence band, distinct from outcome probability;
 - professional 7–8 line analysis;
 - key factors and main risk;
 - round-relative double priority, e.g. "3 of 7", because double value depends on the other fixtures;
 - timestamp and sources;
 - recheck.
+
+Precise model-derived win percentages are not a launch requirement and should not be shown as calibrated probabilities until forward evaluation validates calibration.
 
 Kapiloto does not fill the user's entire personal ticket.
 
