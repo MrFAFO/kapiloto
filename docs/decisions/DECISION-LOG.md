@@ -103,3 +103,14 @@ Reason: Sol provides the desired research/reasoning quality while keeping recurr
 Decision: no Kapiloto research executes until a user explicitly requests Kapiloto, recheck, or Diego assistance. The first qualifying request triggers one shared all-16-fixture research run when needed. Results are cached centrally for every user. A round may start at most three research runs, and stale/refresh eligibility never triggers a run without a new user request.
 Reason: avoids spending AI/search budget on unused rounds, prevents per-user duplicate research, and preserves coherent round-relative double ranking.
 
+## D-025 — Atomic round snapshots for Kapiloto research
+Decision: Kapiloto research uses one lockable round-state row, separate logical runs and execution attempts, immutable analysis snapshots, and a single `current_run_id` publication pointer.
+Reason: database-enforced single-flight, retry safety, crash recovery and coherent 16-fixture snapshots for users and Diego.
+
+## D-026 — Explicit refresh after the first run
+Decision: a normal Consult may create the first round research run. Runs 2 and 3 require explicit Recheck or explicit Diego refresh intent and must pass freshness/rate-limit gates. Staleness by itself never creates research.
+Reason: preserve the shared three-run budget for meaningful later information without adding a separate final-run confirmation step in MVP.
+
+## D-027 — Diego pins one Kapiloto research run
+Decision: every Diego proposal references exactly one completed Kapiloto research run and may not combine per-fixture analyses from different runs.
+Reason: preserves internally consistent scores and round-relative double ranking.
