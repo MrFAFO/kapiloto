@@ -3,6 +3,44 @@
 ## Goal
 Replace screenshots and chat-based Toto coordination with one persistent group workspace for weekly submissions, democratic consensus, live tracking, history, statistics and AI-assisted fixture research.
 
+## Authentication
+
+Kapiloto opens on a simple authentication screen before the product home screen.
+
+### Login
+- username + password;
+- optional `Remember me`, checked by default;
+- when remembered, the session should survive browser/app restarts under normal conditions until explicit sign-out or a security event terminates the session;
+- generic login errors to reduce account enumeration.
+
+### Registration
+Required:
+- unique username;
+- password;
+- at least one recovery contact: email or mobile phone.
+
+The recovery email/phone is not the public login name.
+
+### Password recovery
+- email: send a reset link/code;
+- phone: send an OTP through the configured SMS provider, then allow setting a new password;
+- never send the existing password because it is not stored in recoverable form.
+
+### Username login implementation
+Supabase Auth natively signs in with email or phone + password, not username + password. Kapiloto therefore uses a server-side username resolver in a private/non-exposed schema:
+username -> auth user -> verified email/phone identifier -> Supabase password sign-in.
+
+This resolver must be rate-limited and must return generic errors.
+
+## AI identities
+- **Kapiloto**: fixture analyst and ticket reviewer. Handles per-match research, recommendation quality, rechecks and ticket review.
+- **Diego**: full-ticket builder. Generates a complete 16-match draft and allocates doubles under the group limit.
+
+These are product personas. Backend implementation may share infrastructure/models while preserving distinct user-facing responsibilities.
+
+## Brand characters
+Kapiloto and Diego will later receive original 3D mascot/character identities in the Dark Stadium visual language. They should appear prominently in authentication/onboarding and may appear selectively elsewhere without obstructing core ticket interactions.
+
 ## Roles
 ### Member
 Registers, requests group membership, submits a weekly ticket, views submitted group tickets, consensus, live results and statistics.
