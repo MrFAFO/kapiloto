@@ -102,3 +102,31 @@ Mobile-first requires explicit poor-network behavior:
 - live scores can show last-updated age;
 - cached historical screens remain readable;
 - destructive actions require confirmed server response.
+
+## Authentication states
+- Logged out -> authentication screen before all product screens
+- Username/password login
+- Remember me checked
+- Remember me unchecked
+- Invalid credentials with generic error
+- Login rate limited
+- Registration: username available/unavailable
+- Registration: email recovery contact
+- Registration: phone recovery contact
+- Registration: both contacts provided
+- Recovery email sent
+- Recovery SMS OTP sent
+- Invalid/expired recovery code
+- New password set
+- Existing remembered session restored
+- Explicit logout clears the remembered session
+
+Recovery must never display or send the existing password.
+
+## Brand-character states
+Authentication reserves a prominent visual stage for original 3D Kapiloto and Diego characters.
+Character art must remain decorative/brand-supporting:
+- never cover inputs or primary CTA;
+- load progressively;
+- preserve usable auth UI if the asset fails to load;
+- avoid heavy animation that harms performance or accessibility.
