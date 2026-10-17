@@ -26,8 +26,10 @@
 - Weekly and all-time statistics
 - Per-fixture Kapiloto analysis
 - Kapiloto caching, sources and freshness
-- Admin whole-ticket Kapiloto review
-- Diego full-ticket draft generation
+- Per-fixture inline Kapiloto analysis and recheck
+- Round-relative Kapiloto double recommendation per fixture
+- Diego full-ticket draft generation using all 16 Kapiloto analyses
+- Diego automatic double allocation under the configured group limit
 
 ## Brand / marketing track
 - Original 3D Kapiloto and Diego character assets
