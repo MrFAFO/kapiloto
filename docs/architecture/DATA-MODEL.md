@@ -3,10 +3,34 @@
 ## Identity
 ### profiles
 - id
+- username
+- normalized_username
 - display_name
 - created_at
 
-Credentials remain in Supabase Auth.
+Unique: normalized_username.
+
+Recovery email/phone and password credentials remain in Supabase Auth and must not be copied into the public profile table unless there is a separate product need.
+
+### private.auth_username_aliases
+Private, non-exposed schema.
+- normalized_username
+- user_id
+- preferred_auth_identifier: email/phone
+- created_at
+- updated_at
+
+Unique: normalized_username.
+Unique: user_id.
+
+Purpose: support username + password login while Supabase Auth performs password authentication with the user's verified email or phone identifier.
+
+Security:
+- never expose this table to the Data API;
+- server-only lookup;
+- generic authentication errors;
+- rate-limit login and recovery attempts;
+- do not use user-editable metadata for authorization.
 
 ## Groups
 ### groups
@@ -246,13 +270,23 @@ Live/provisional evaluation may use current sporting state. Final scoring uses t
 
 This records the sports-data/research versions that produced an analysis.
 
-## Kapiloto ticket-level proposals
+## AI personas
+### Kapiloto
+Fixture research and ticket review.
+
+### Diego
+Full-ticket draft generation and automatic double allocation.
+
+The personas can share underlying infrastructure, but stored proposal type/persona must preserve what the user invoked.
+
+## Kapiloto / Diego ticket-level proposals
 ### kapiloto_ticket_proposals
 - id
 - group_id
 - round_id
 - user_id
-- proposal_type: recommend_doubles/review_ticket/fill_ticket
+- persona: kapiloto/diego
+- proposal_type: review_ticket/fill_ticket
 - source_submission_id
 - max_doubles
 - generated_at
