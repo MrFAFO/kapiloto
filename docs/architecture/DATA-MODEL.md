@@ -83,6 +83,24 @@ Unique: (provider, provider_team_id).
 
 This prevents supplier naming differences from leaking into product logic.
 
+## Competitions
+### competitions
+- id
+- canonical_name
+- country_code
+- competition_type
+- created_at
+
+### provider_competition_mappings
+- provider
+- provider_competition_id
+- competition_id
+- provider_name
+- mapping_status
+- last_verified_at
+
+Unique: (provider, provider_competition_id).
+
 ## Rounds
 ### rounds
 - id
@@ -102,6 +120,8 @@ This prevents supplier naming differences from leaking into product logic.
 - game_number (1..16)
 - home_team_id
 - away_team_id
+- competition_id
+- competition_name_snapshot
 - kickoff_at
 - status
 - field_home_score
