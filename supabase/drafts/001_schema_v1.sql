@@ -173,6 +173,7 @@ create table public.round_games (
   settlement_confirmed_at timestamptz,
   last_synced_at timestamptz,
   created_at timestamptz not null default now(),
+  unique (id, round_id),
   unique (round_id, game_number),
   check (home_team_id <> away_team_id)
 );
@@ -339,73 +340,205 @@ create table public.consensus_pick_results (
 );
 
 -- ---------------------------------------------------------------------------
--- Kapiloto fixture research
+-- Kapiloto demand-driven round research
 -- ---------------------------------------------------------------------------
+
+create table public.kapiloto_round_research_state (
+  round_id uuid primary key references public.rounds(id) on delete cascade,
+  runs_consumed smallint not null default 0 check (runs_consumed between 0 and 3),
+  active_run_id uuid,
+  current_run_id uuid,
+  research_closed_at timestamptz,
+  attempts_total integer not null default 0 check (attempts_total >= 0),
+  cost_micros_total bigint not null default 0 check (cost_micros_total >= 0),
+  version bigint not null default 0 check (version >= 0),
+  updated_at timestamptz not null default now()
+);
+
+create table public.kapiloto_research_requests (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  round_id uuid not null references public.rounds(id) on delete cascade,
+  round_game_id uuid references public.round_games(id) on delete set null,
+  intent text not null check (intent in ('consult', 'recheck', 'diego')),
+  idempotency_key text not null,
+  request_sha256 text not null,
+  based_on_run_id uuid,
+  outcome text check (outcome is null or outcome in (
+    'served_cache', 'served_newer', 'joined_run', 'created_run',
+    'refresh_ineligible', 'limit_reached', 'round_closed', 'breaker_open'
+  )),
+  run_id uuid,
+  created_at timestamptz not null default now(),
+  unique (user_id, idempotency_key)
+);
+
+create index kapiloto_research_requests_round_user_idx
+  on public.kapiloto_research_requests (round_id, user_id, created_at desc);
 
 create table public.kapiloto_research_runs (
   id uuid primary key default gen_random_uuid(),
   round_id uuid not null references public.rounds(id) on delete cascade,
-  run_number smallint not null check (run_number between 1 and 3),
+  seq_no integer not null check (seq_no > 0),
+  budget_slot smallint check (budget_slot between 1 and 3),
   status text not null default 'queued'
-    check (status in ('queued', 'researching', 'completed', 'failed')),
+    check (status in ('queued', 'running', 'completed', 'failed', 'cancelled')),
   trigger_type text not null
     check (trigger_type in ('fixture_consult', 'fixture_recheck', 'diego')),
-  triggered_by_user_id uuid references auth.users(id) on delete set null,
-  requested_round_game_id uuid references public.round_games(id) on delete set null,
+  origin_request_id uuid not null references public.kapiloto_research_requests(id) on delete restrict,
+  based_on_run_id uuid references public.kapiloto_research_runs(id) on delete restrict,
   model_key text not null,
   research_protocol_version text not null,
-  requested_at timestamptz not null default now(),
+  prompt_template_sha256 text not null,
+  fixture_set jsonb not null,
+  fixture_set_sha256 text not null,
+  input_snapshot jsonb,
+  input_snapshot_at timestamptz,
+  max_attempts smallint not null default 3 check (max_attempts between 1 and 10),
+  attempt_count smallint not null default 0 check (attempt_count >= 0),
+  succeeded_attempt_id uuid,
+  round_synthesis jsonb not null default '{}'::jsonb,
+  failure_class text check (failure_class is null or failure_class in (
+    'provider_transient', 'worker_lost', 'input_unavailable', 'internal',
+    'model_output_invalid', 'model_refusal', 'cancelled', 'breaker_open'
+  )),
+  failure_detail text,
+  input_tokens_total bigint not null default 0,
+  cached_input_tokens_total bigint not null default 0,
+  output_tokens_total bigint not null default 0,
+  reasoning_tokens_total bigint not null default 0,
+  web_search_calls_total integer not null default 0,
+  cost_micros_total bigint not null default 0,
+  created_at timestamptz not null default now(),
   started_at timestamptz,
   completed_at timestamptz,
-  failure_reason text,
-  unique (round_id, run_number)
+  failed_at timestamptz,
+  unique (round_id, seq_no),
+  unique (id, round_id),
+  check (status <> 'completed' or (completed_at is not null and succeeded_attempt_id is not null)),
+  check (status not in ('queued', 'running', 'completed') or budget_slot is not null)
 );
 
-create index kapiloto_research_runs_round_status_idx
-  on public.kapiloto_research_runs (round_id, status, run_number desc);
+create unique index kapiloto_research_runs_budget_slot_uq
+  on public.kapiloto_research_runs (round_id, budget_slot)
+  where budget_slot is not null;
+
+create unique index kapiloto_research_runs_one_active_uq
+  on public.kapiloto_research_runs (round_id)
+  where status in ('queued', 'running');
+
+create index kapiloto_research_runs_round_seq_idx
+  on public.kapiloto_research_runs (round_id, seq_no desc);
+
+create table public.kapiloto_research_attempts (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid not null references public.kapiloto_research_runs(id) on delete restrict,
+  attempt_no smallint not null check (attempt_no > 0),
+  status text not null default 'queued'
+    check (status in ('queued', 'running', 'succeeded', 'failed', 'abandoned')),
+  available_at timestamptz not null default now(),
+  worker_id text,
+  claimed_at timestamptz,
+  heartbeat_at timestamptz,
+  lease_expires_at timestamptz,
+  finished_at timestamptz,
+  model_snapshot text,
+  provider_request_ids text[],
+  provider_response_id text,
+  input_tokens integer,
+  cached_input_tokens integer,
+  output_tokens integer,
+  reasoning_tokens integer,
+  web_search_calls integer,
+  sources_count integer,
+  repair_calls smallint not null default 0 check (repair_calls >= 0),
+  cost_micros bigint,
+  pricing_version text,
+  queue_wait_ms integer,
+  model_ms integer,
+  validation_ms integer,
+  total_ms integer,
+  failure_class text check (failure_class is null or failure_class in (
+    'provider_transient', 'worker_lost', 'input_unavailable', 'internal',
+    'model_output_invalid', 'model_refusal', 'cancelled', 'breaker_open'
+  )),
+  failure_code text,
+  failure_detail text,
+  validation_report jsonb,
+  trace_id text,
+  unique (run_id, attempt_no)
+);
+
+create unique index kapiloto_research_attempts_one_active_uq
+  on public.kapiloto_research_attempts (run_id)
+  where status in ('queued', 'running');
+
+create index kapiloto_research_attempts_claim_idx
+  on public.kapiloto_research_attempts (available_at)
+  where status = 'queued';
+
+create index kapiloto_research_attempts_lease_idx
+  on public.kapiloto_research_attempts (lease_expires_at)
+  where status = 'running';
+
+alter table public.kapiloto_research_runs
+  add constraint kapiloto_runs_succeeded_attempt_fk
+  foreign key (succeeded_attempt_id) references public.kapiloto_research_attempts(id) on delete restrict;
+
+alter table public.kapiloto_research_requests
+  add constraint kapiloto_requests_based_on_run_fk
+  foreign key (based_on_run_id) references public.kapiloto_research_runs(id) on delete restrict,
+  add constraint kapiloto_requests_run_fk
+  foreign key (run_id) references public.kapiloto_research_runs(id) on delete restrict;
+
+alter table public.kapiloto_round_research_state
+  add constraint kapiloto_state_active_run_fk
+  foreign key (active_run_id, round_id) references public.kapiloto_research_runs(id, round_id) on delete restrict,
+  add constraint kapiloto_state_current_run_fk
+  foreign key (current_run_id, round_id) references public.kapiloto_research_runs(id, round_id) on delete restrict;
 
 create table public.kapiloto_analyses (
   id uuid primary key default gen_random_uuid(),
-  research_run_id uuid not null references public.kapiloto_research_runs(id) on delete restrict,
-  round_game_id uuid not null references public.round_games(id) on delete cascade,
-  analysis_version integer not null check (analysis_version > 0),
-  is_current boolean not null default true,
-  status text not null default 'fresh'
-    check (status in ('researching', 'fresh', 'stale', 'failed')),
+  research_run_id uuid not null,
+  round_id uuid not null,
+  round_game_id uuid not null,
+  outcome text not null default 'analyzed'
+    check (outcome in ('analyzed', 'insufficient_data', 'void', 'carried_forward')),
+  carried_from_analysis_id uuid references public.kapiloto_analyses(id) on delete restrict,
   primary_pick text check (primary_pick is null or primary_pick in ('1', 'X', '2')),
-  suggested_double text
-    check (suggested_double is null or suggested_double in ('1X', 'X2', '12')),
-  double_recommended boolean,
-  double_priority_rank smallint
-    check (double_priority_rank is null or double_priority_rank between 1 and 16),
-  double_priority_budget smallint
-    check (double_priority_budget is null or double_priority_budget between 0 and 16),
-  confidence text check (confidence is null or confidence in ('low', 'medium', 'medium_high', 'high')),
-  score_1 numeric(10,6) check (score_1 is null or score_1 >= 0),
-  score_x numeric(10,6) check (score_x is null or score_x >= 0),
-  score_2 numeric(10,6) check (score_2 is null or score_2 >= 0),
+  suggested_double text check (suggested_double is null or suggested_double in ('1X', 'X2', '12')),
+  double_recommended boolean not null default false,
+  double_priority_rank smallint check (double_priority_rank is null or double_priority_rank between 1 and 16),
+  confidence numeric(5,4) check (confidence is null or confidence between 0 and 1),
+  score_1 numeric(7,6) check (score_1 is null or score_1 between 0 and 1),
+  score_x numeric(7,6) check (score_x is null or score_x between 0 and 1),
+  score_2 numeric(7,6) check (score_2 is null or score_2 between 0 and 1),
   summary text,
   main_risk text,
-  generated_at timestamptz not null default now(),
+  input_data_version text,
   valid_until timestamptz,
-  stale_at timestamptz,
-  stale_reason text,
-  model_key text,
-  research_protocol_version text not null,
-  unique (round_game_id, analysis_version),
-  unique (research_run_id, round_game_id)
+  sources_count smallint not null default 0 check (sources_count >= 0),
+  generated_at timestamptz not null default now(),
+  foreign key (research_run_id, round_id)
+    references public.kapiloto_research_runs(id, round_id) on delete restrict,
+  foreign key (round_game_id, round_id)
+    references public.round_games(id, round_id) on delete restrict,
+  unique (research_run_id, round_game_id),
+  unique (id, research_run_id),
+  check (outcome not in ('analyzed', 'carried_forward') or
+    (primary_pick is not null and score_1 is not null and score_x is not null and score_2 is not null)),
+  check (score_1 is null or abs((score_1 + score_x + score_2) - 1.0) <= 0.001),
+  check (not double_recommended or (suggested_double is not null and double_priority_rank is not null)),
+  check ((outcome = 'carried_forward') = (carried_from_analysis_id is not null))
 );
 
-create unique index kapiloto_one_current_analysis_uq
-  on public.kapiloto_analyses (round_game_id)
-  where is_current;
-
-create index kapiloto_analyses_freshness_idx
-  on public.kapiloto_analyses (round_game_id, status, valid_until);
+create unique index kapiloto_analyses_double_rank_uq
+  on public.kapiloto_analyses (research_run_id, double_priority_rank)
+  where double_recommended;
 
 create table public.kapiloto_factors (
   id uuid primary key default gen_random_uuid(),
-  analysis_id uuid not null references public.kapiloto_analyses(id) on delete cascade,
+  analysis_id uuid not null references public.kapiloto_analyses(id) on delete restrict,
   factor_type text not null,
   text text not null,
   direction text check (direction is null or direction in ('home', 'draw', 'away', 'neutral', 'risk')),
@@ -414,7 +547,7 @@ create table public.kapiloto_factors (
 
 create table public.kapiloto_sources (
   id uuid primary key default gen_random_uuid(),
-  analysis_id uuid not null references public.kapiloto_analyses(id) on delete cascade,
+  analysis_id uuid not null references public.kapiloto_analyses(id) on delete restrict,
   title text not null,
   url text not null,
   publisher text,
@@ -426,11 +559,53 @@ create table public.kapiloto_sources (
 
 create table public.kapiloto_analysis_inputs (
   id uuid primary key default gen_random_uuid(),
-  analysis_id uuid not null references public.kapiloto_analyses(id) on delete cascade,
+  analysis_id uuid not null references public.kapiloto_analyses(id) on delete restrict,
   input_type text not null,
   input_version text,
   metadata jsonb not null default '{}'::jsonb
 );
+
+create table public.kapiloto_freshness_signals (
+  id bigint generated always as identity primary key,
+  round_game_id uuid not null references public.round_games(id) on delete cascade,
+  signal_type text not null check (signal_type in (
+    'lineup', 'injury', 'suspension', 'odds_move', 'kickoff_change', 'postponed', 'cancelled'
+  )),
+  severity smallint not null check (severity between 1 and 3),
+  data_version text,
+  observed_at timestamptz not null,
+  payload jsonb not null default '{}'::jsonb
+);
+
+create index kapiloto_freshness_signals_game_time_idx
+  on public.kapiloto_freshness_signals (round_game_id, observed_at desc);
+
+create or replace function private.reject_kapiloto_immutable_change()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  raise exception 'published Kapiloto research rows are immutable';
+end;
+$$;
+
+create trigger kapiloto_analyses_immutable
+before update or delete on public.kapiloto_analyses
+for each row execute function private.reject_kapiloto_immutable_change();
+
+create trigger kapiloto_factors_immutable
+before update or delete on public.kapiloto_factors
+for each row execute function private.reject_kapiloto_immutable_change();
+
+create trigger kapiloto_sources_immutable
+before update or delete on public.kapiloto_sources
+for each row execute function private.reject_kapiloto_immutable_change();
+
+create trigger kapiloto_analysis_inputs_immutable
+before update or delete on public.kapiloto_analysis_inputs
+for each row execute function private.reject_kapiloto_immutable_change();
+
 
 -- ---------------------------------------------------------------------------
 -- Diego proposals
@@ -441,6 +616,7 @@ create table public.diego_ticket_proposals (
   group_id uuid not null references public.groups(id) on delete cascade,
   round_id uuid not null references public.rounds(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
+  research_run_id uuid not null references public.kapiloto_research_runs(id) on delete restrict,
   source_ticket_id uuid references public.user_tickets(id) on delete set null,
   max_doubles smallint not null check (max_doubles between 0 and 16),
   generated_at timestamptz not null default now(),
@@ -457,7 +633,6 @@ create table public.diego_ticket_proposal_inputs (
   proposal_id uuid not null references public.diego_ticket_proposals(id) on delete cascade,
   round_game_id uuid not null references public.round_games(id) on delete cascade,
   analysis_id uuid not null references public.kapiloto_analyses(id) on delete restrict,
-  analysis_version integer not null,
   primary key (proposal_id, round_game_id)
 );
 
