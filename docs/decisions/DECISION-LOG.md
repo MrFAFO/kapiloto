@@ -42,9 +42,9 @@ Reason: preserves ticket context and enables compare/apply/recheck without losin
 Decision: every game independently shows upcoming date/time, live score/minute, or final score plus hit/miss/review state.
 Reason: a global live count is insufficient for a live weekly ticket.
 
-## D-011 — Kapiloto whole-ticket tools
-Decision: Kapiloto supports three ticket-level flows: recommend doubles, review current ticket, and generate a full draft.
-Reason: users need both per-match research and ticket-level optimization.
+## D-011 — Kapiloto whole-ticket tools [SUPERSEDED by D-018]
+Previous decision: Kapiloto would support whole-ticket tools.
+Status: superseded. Kapiloto is now fixture-scoped; Diego owns autonomous whole-ticket generation.
 
 ## D-012 — AI ticket optimization is validated deterministically
 Decision: AI-generated whole-ticket output must pass deterministic Toto-rule validation; double allocation should use structured outcome scores and a deterministic optimizer rather than relying on unconstrained prose generation.
@@ -56,8 +56,8 @@ Decision: there is no separate user control for “choose a double.” Selecting
 Reason: this matches the Toto mental model and removes redundant UI.
 
 ## D-014 — Kapiloto vs Diego responsibilities
-Decision: Kapiloto remains the research analyst/reviewer; Diego is the user-facing AI that fills an entire 16-match ticket.
-Reason: distinct personas make the two AI jobs understandable without changing backend flexibility.
+Decision: Kapiloto is the fixture analyst; Diego is the user-facing AI that fills an entire 16-match ticket.
+Reason: one clear scope per persona avoids overlapping whole-ticket actions.
 
 ## D-015 — Username-first authentication
 Decision: primary login UX is username + password. Registration requires at least one recovery contact (email or phone).
@@ -72,3 +72,16 @@ Reason: weekly repeated mobile use should not create unnecessary login friction.
 ## D-017 — 3D brand personas
 Decision: create original 3D characters for Kapiloto and Diego as a marketing/brand layer, starting with authentication/onboarding.
 Reason: establish recognizable product identity and make the AI personas memorable.
+
+
+## D-018 — Manual-first ticket flow
+Decision: the normal ticket is always the default experience. Users fill it manually and consult Kapiloto only on specific fixtures as needed.
+Reason: the core product remains a Toto form, not an AI wizard.
+
+## D-019 — Diego fills the normal ticket
+Decision: Diego is the only autonomous whole-ticket flow. It uses all 16 Kapiloto analyses, allocates doubles across the round, and writes the result into the same normal editable draft ticket.
+Reason: preserves one ticket model and makes AI assistance reversible and understandable.
+
+## D-020 — Double advice is round-relative
+Decision: Kapiloto may recommend a double for a specific fixture only with awareness of the full round and remaining/allowed double budget. The UI can show a relative priority such as "3 of 7".
+Reason: recommending a double has opportunity cost versus the other 15 matches.
