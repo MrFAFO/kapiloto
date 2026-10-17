@@ -62,16 +62,21 @@ export type ProviderSpikeFixtureInput = {
   apiFootballFixtureId?: number;
 };
 
+export type ProviderCapabilities = {
+  lineups: boolean | null;
+  injuries: boolean | null;
+  odds: boolean | null;
+  predictions: boolean | null;
+};
+
 export type ProviderFixtureCoverage = {
   gameNumber: number;
   input: ProviderSpikeFixtureInput;
   resolvedFixture: ProviderFixture | null;
   fixtureResolution: "provided_id" | "name_match" | "not_found" | "ambiguous";
-  lineupsAvailable: boolean;
+  capabilities: ProviderCapabilities;
   lineupEntries: number;
-  injuriesAvailable: boolean;
   injuryEntries: number;
-  oddsAvailable: boolean;
   completeBookmakers: number;
   marketPrior: MarketPrior | null;
   providerErrors: string[];
@@ -84,9 +89,12 @@ export type ProviderSpikeReport = {
   summary: {
     requestedFixtures: number;
     resolvedFixtures: number;
-    fixturesWithLineups: number;
-    fixturesWithInjuries: number;
-    fixturesWithOdds: number;
+    fixturesWithLineupCoverage: number;
+    fixturesWithObservedLineups: number;
+    fixturesWithInjuryCoverage: number;
+    fixturesWithObservedInjuries: number;
+    fixturesWithOddsCoverage: number;
+    fixturesWithObservedOdds: number;
     averageCompleteBookmakersWhenAvailable: number;
   };
 };
