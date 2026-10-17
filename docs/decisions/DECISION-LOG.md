@@ -94,3 +94,12 @@ Reason: this cleanly supports autosave, multi-device optimistic concurrency, his
 ## D-022 — Remove Kapiloto whole-consensus review
 Decision: remove the old Kapiloto round/consensus review entity from Schema v1.
 Reason: the approved product boundary is Kapiloto = fixture analysis and Diego = autonomous personal full-ticket generation. Group consensus remains its own deterministic group feature.
+
+## D-023 — Sol is the Kapiloto research model family
+Decision: Kapiloto's source-backed AI research uses the OpenAI Sol model family. The exact API model ID is configured server-side and stored as provenance rather than hard-coded into product logic.
+Reason: Sol provides the desired research/reasoning quality while keeping recurring round-research cost materially below the higher-cost Astra tier.
+
+## D-024 — Research is demand-driven, shared, and capped at three runs per round
+Decision: no Kapiloto research executes until a user explicitly requests Kapiloto, recheck, or Diego assistance. The first qualifying request triggers one shared all-16-fixture research run when needed. Results are cached centrally for every user. A round may start at most three research runs, and stale/refresh eligibility never triggers a run without a new user request.
+Reason: avoids spending AI/search budget on unused rounds, prevents per-user duplicate research, and preserves coherent round-relative double ranking.
+
