@@ -1,11 +1,28 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Kapiloto Research Output v1",
+  "title": "Kapiloto Fixture Research Output v1",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "protocol_version",
-    "fixtures"
+    "fixture_key",
+    "home_team_id",
+    "away_team_id",
+    "outcome",
+    "evidence",
+    "availability",
+    "factors",
+    "dimension_coverage",
+    "conflicts",
+    "p_sol",
+    "market_deviation",
+    "key_assumptions",
+    "main_risk",
+    "summary",
+    "watch_items",
+    "data_quality",
+    "suspicious_content_observed",
+    "model_self_confidence"
   ],
   "properties": {
     "protocol_version": {
@@ -14,187 +31,478 @@
         "kapiloto-research-v1"
       ]
     },
-    "fixtures": {
+    "fixture_key": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "home_team_id": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "away_team_id": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "analyzed",
+        "insufficient_data",
+        "void",
+        "carried_forward",
+        "research_unavailable"
+      ]
+    },
+    "evidence": {
       "type": "array",
-      "minItems": 16,
-      "maxItems": 16,
+      "maxItems": 20,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "round_game_id",
-          "outcome",
-          "scores",
-          "analysis_confidence",
-          "summary",
-          "main_risk",
-          "factors",
-          "data_quality",
-          "watch_items"
+          "evidence_id",
+          "url",
+          "quote",
+          "claim",
+          "claim_type",
+          "about_team",
+          "event_time"
         ],
         "properties": {
-          "round_game_id": {
-            "type": "string"
+          "evidence_id": {
+            "type": "string",
+            "maxLength": 40
           },
-          "outcome": {
+          "url": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "quote": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "claim": {
+            "type": "string",
+            "maxLength": 220
+          },
+          "claim_type": {
             "type": "string",
             "enum": [
-              "analyzed",
-              "insufficient_data",
-              "void",
-              "carried_forward"
+              "form",
+              "home_away",
+              "availability",
+              "schedule_fatigue",
+              "tactical",
+              "competition_context",
+              "club_coach_news",
+              "independent_model",
+              "draw_propensity",
+              "conditions",
+              "head_to_head",
+              "other"
             ]
           },
-          "scores": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "score_1",
-              "score_x",
-              "score_2"
+          "about_team": {
+            "type": "string",
+            "enum": [
+              "home",
+              "away",
+              "both",
+              "none"
+            ]
+          },
+          "event_time": {
+            "type": [
+              "string",
+              "null"
             ],
-            "properties": {
-              "score_1": {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 1
-              },
-              "score_x": {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 1
-              },
-              "score_2": {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 1
-              }
-            }
+            "maxLength": 80
+          }
+        }
+      }
+    },
+    "availability": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "team",
+          "player_name",
+          "status",
+          "role",
+          "certainty",
+          "evidence_ids"
+        ],
+        "properties": {
+          "team": {
+            "type": "string",
+            "enum": [
+              "home",
+              "away"
+            ]
           },
-          "analysis_confidence": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1
+          "player_name": {
+            "type": "string",
+            "maxLength": 120
           },
-          "summary": {
-            "type": "string"
+          "status": {
+            "type": "string",
+            "enum": [
+              "out",
+              "doubtful",
+              "suspended",
+              "returning",
+              "rotation_risk"
+            ]
           },
-          "main_risk": {
-            "type": "string"
+          "role": {
+            "type": "string",
+            "enum": [
+              "key_starter",
+              "regular",
+              "squad",
+              "unknown"
+            ]
           },
-          "factors": {
+          "certainty": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "probable",
+              "reported"
+            ]
+          },
+          "evidence_ids": {
             "type": "array",
-            "maxItems": 12,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "category",
-                "direction",
-                "importance",
-                "text",
-                "source_urls"
-              ],
-              "properties": {
-                "category": {
-                  "type": "string",
-                  "enum": [
-                    "current_form",
-                    "home_away",
-                    "availability",
-                    "load_schedule",
-                    "tactical_matchup",
-                    "competition_context",
-                    "team_news",
-                    "market_signal",
-                    "external_model",
-                    "head_to_head",
-                    "other"
-                  ]
-                },
-                "direction": {
-                  "type": "string",
-                  "enum": [
-                    "home",
-                    "draw",
-                    "away",
-                    "neutral",
-                    "risk"
-                  ]
-                },
-                "importance": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 5
-                },
-                "text": {
-                  "type": "string"
-                },
-                "source_urls": {
-                  "type": "array",
-                  "maxItems": 8,
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          },
-          "data_quality": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "coverage",
-              "conflict_present",
-              "missing_areas",
-              "conflict_note"
-            ],
-            "properties": {
-              "coverage": {
-                "type": "string",
-                "enum": [
-                  "good",
-                  "partial",
-                  "poor"
-                ]
-              },
-              "conflict_present": {
-                "type": "boolean"
-              },
-              "missing_areas": {
-                "type": "array",
-                "maxItems": 10,
-                "items": {
-                  "type": "string"
-                }
-              },
-              "conflict_note": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            }
-          },
-          "watch_items": {
-            "type": "array",
-            "maxItems": 8,
+            "maxItems": 5,
             "items": {
               "type": "string",
-              "enum": [
-                "lineup",
-                "injury",
-                "suspension",
-                "rotation",
-                "odds_move",
-                "kickoff_change",
-                "postponement",
-                "other"
-              ]
+              "maxLength": 40
             }
           }
         }
       }
+    },
+    "factors": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dimension",
+          "favors",
+          "magnitude",
+          "evidence_ids",
+          "rationale"
+        ],
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "baseline_form",
+              "home_away_draw",
+              "availability",
+              "load_schedule",
+              "tactical_matchup",
+              "competition_context",
+              "club_coach_news",
+              "independent_model",
+              "conditions",
+              "head_to_head"
+            ]
+          },
+          "favors": {
+            "type": "string",
+            "enum": [
+              "home",
+              "draw",
+              "away",
+              "none"
+            ]
+          },
+          "magnitude": {
+            "type": "string",
+            "enum": [
+              "small",
+              "medium",
+              "large"
+            ]
+          },
+          "evidence_ids": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "maxLength": 40
+            }
+          },
+          "rationale": {
+            "type": "string",
+            "maxLength": 300
+          }
+        }
+      }
+    },
+    "dimension_coverage": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dimension",
+          "status"
+        ],
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "baseline_form",
+              "home_away_draw",
+              "availability",
+              "load_schedule",
+              "tactical_matchup",
+              "competition_context",
+              "club_coach_news",
+              "independent_model",
+              "conditions",
+              "head_to_head"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "material_signal",
+              "no_material_signal",
+              "insufficient_data"
+            ]
+          }
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "topic",
+          "evidence_ids_a",
+          "evidence_ids_b",
+          "resolution"
+        ],
+        "properties": {
+          "topic": {
+            "type": "string",
+            "maxLength": 150
+          },
+          "evidence_ids_a": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "maxLength": 40
+            }
+          },
+          "evidence_ids_b": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "maxLength": 40
+            }
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "unresolved",
+              "superseded_by_newer",
+              "resolved_by_higher_tier"
+            ]
+          }
+        }
+      }
+    },
+    "p_sol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "home_bp",
+        "draw_bp",
+        "away_bp"
+      ],
+      "properties": {
+        "home_bp": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "draw_bp": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "away_bp": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      }
+    },
+    "market_deviation": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "summary",
+        "evidence_ids"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "evidence_ids": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        }
+      }
+    },
+    "key_assumptions": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "maxLength": 150
+      }
+    },
+    "main_risk": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 700
+    },
+    "watch_items": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "signal_type",
+          "team",
+          "player_name",
+          "condition",
+          "impact_if_triggered"
+        ],
+        "properties": {
+          "signal_type": {
+            "type": "string",
+            "enum": [
+              "lineup",
+              "injury",
+              "suspension",
+              "odds_move",
+              "kickoff_change",
+              "coach_news",
+              "weather",
+              "postponement"
+            ]
+          },
+          "team": {
+            "type": "string",
+            "enum": [
+              "home",
+              "away",
+              "both"
+            ]
+          },
+          "player_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 120
+          },
+          "condition": {
+            "type": "string",
+            "maxLength": 150
+          },
+          "impact_if_triggered": {
+            "type": "string",
+            "enum": [
+              "favors_home",
+              "favors_draw",
+              "favors_away",
+              "uncertain"
+            ]
+          }
+        }
+      }
+    },
+    "data_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sparse_coverage",
+        "language_limited",
+        "notes"
+      ],
+      "properties": {
+        "sparse_coverage": {
+          "type": "boolean"
+        },
+        "language_limited": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 220
+        }
+      }
+    },
+    "suspicious_content_observed": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url",
+          "description"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 220
+          }
+        }
+      }
+    },
+    "model_self_confidence": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
     }
   }
 }
