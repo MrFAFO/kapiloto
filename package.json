@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:providers": "tsx --test lib/providers/*.test.ts",
+    "spike:provider": "tsx scripts/provider-spike.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
@@ -21,7 +23,8 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "tailwindcss": "4.3.3",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "tsx": "4.23.15"
   },
   "engines": {
     "node": ">=22.0.0"
