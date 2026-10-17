@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:providers": "tsx --test lib/providers/*.test.ts",
-    "spike:provider": "tsx scripts/provider-spike.ts"
+    "spike:provider": "tsx scripts/provider-spike.ts",
+    "spike:compare": "tsx scripts/compare-provider-reports.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
