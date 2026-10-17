@@ -42,6 +42,14 @@ The database trigger checks the group's max-double limit.
 
 Final scoring uses pool settlement only.
 
+### Demand-driven AI research
+Kapiloto research is represented by shared round-level research runs:
+- no run exists until a user explicitly requests Kapiloto, recheck or Diego assistance;
+- each run produces the shared analyses for all 16 fixtures;
+- `run_number` is constrained to 1..3 and unique per round;
+- research-run creation is server-only and must use a transaction/advisory lock so concurrent requests cannot create duplicate runs;
+- stale data never starts a run by itself.
+
 ### Public vs private data
 `private.auth_username_aliases` contains the username-to-auth-identifier mapping and is never exposed to the Data API.
 
