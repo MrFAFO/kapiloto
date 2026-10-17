@@ -272,21 +272,20 @@ This records the sports-data/research versions that produced an analysis.
 
 ## AI personas
 ### Kapiloto
-Fixture research and ticket review.
+Fixture research only, including round-relative double value for that fixture.
 
 ### Diego
-Full-ticket draft generation and automatic double allocation.
+Full-ticket draft generation and automatic double allocation using the latest Kapiloto analyses for all 16 fixtures.
 
 The personas can share underlying infrastructure, but stored proposal type/persona must preserve what the user invoked.
 
-## Kapiloto / Diego ticket-level proposals
-### kapiloto_ticket_proposals
+## Diego ticket-level proposals
+### diego_ticket_proposals
 - id
 - group_id
 - round_id
 - user_id
-- persona: kapiloto/diego
-- proposal_type: review_ticket/fill_ticket
+- proposal_type: fill_ticket
 - source_submission_id
 - max_doubles
 - generated_at
@@ -294,13 +293,13 @@ The personas can share underlying infrastructure, but stored proposal type/perso
 - optimizer_version
 - status
 
-### kapiloto_ticket_proposal_inputs
+### diego_ticket_proposal_inputs
 - proposal_id
 - round_game_id
 - analysis_id
 - analysis_version
 
-### kapiloto_ticket_proposal_picks
+### diego_ticket_proposal_picks
 - proposal_id
 - round_game_id
 - current_pick
@@ -309,7 +308,7 @@ The personas can share underlying infrastructure, but stored proposal type/perso
 - rank
 - marginal_coverage_value
 
-A proposal never directly mutates a submitted ticket. The user previews and explicitly applies it to a draft.
+A Diego proposal produces/fills the normal editable user draft. It never mutates a submitted or locked ticket.
 
 ### kapiloto_round_reviews
 - id
