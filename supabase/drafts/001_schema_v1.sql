@@ -155,7 +155,13 @@ create table public.round_games (
   away_team_id uuid not null references public.teams(id),
   competition_id uuid references public.competitions(id),
   competition_name_snapshot text not null,
+  competition_stage_snapshot text,
+  leg_number smallint check (leg_number is null or leg_number > 0),
+  aggregate_home_score smallint check (aggregate_home_score is null or aggregate_home_score >= 0),
+  aggregate_away_score smallint check (aggregate_away_score is null or aggregate_away_score >= 0),
+  neutral_venue boolean not null default false,
   kickoff_at timestamptz not null,
+  actual_kickoff_at timestamptz,
   status text not null default 'upcoming'
     check (status in (
       'upcoming', 'live', 'halftime', 'finished', 'postponed',
@@ -194,6 +200,32 @@ create table public.provider_fixture_mappings (
   primary key (provider, provider_fixture_id),
   unique (round_game_id, provider)
 );
+
+-- ---------------------------------------------------------------------------
+-- Pre-match market snapshots
+-- ---------------------------------------------------------------------------
+
+create table public.fixture_market_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  round_game_id uuid not null references public.round_games(id) on delete cascade,
+  provider text not null,
+  market_type text not null default '1x2_90m' check (market_type = '1x2_90m'),
+  captured_at timestamptz not null,
+  raw_home_odds numeric(12,6) check (raw_home_odds is null or raw_home_odds > 1),
+  raw_draw_odds numeric(12,6) check (raw_draw_odds is null or raw_draw_odds > 1),
+  raw_away_odds numeric(12,6) check (raw_away_odds is null or raw_away_odds > 1),
+  overround numeric(8,6) check (overround is null or overround >= 0),
+  p_1_bp smallint not null check (p_1_bp between 0 and 10000),
+  p_x_bp smallint not null check (p_x_bp between 0 and 10000),
+  p_2_bp smallint not null check (p_2_bp between 0 and 10000),
+  source_version text,
+  created_at timestamptz not null default now(),
+  unique (id, round_game_id),
+  check (p_1_bp + p_x_bp + p_2_bp = 10000)
+);
+
+create index fixture_market_snapshots_game_time_idx
+  on public.fixture_market_snapshots (round_game_id, captured_at desc);
 
 -- ---------------------------------------------------------------------------
 -- Group round settings
@@ -390,14 +422,21 @@ create table public.kapiloto_research_runs (
   model_key text not null,
   research_protocol_version text not null,
   derivation_version text not null,
+  source_policy_version text not null,
+  recency_policy_version text not null,
+  reliability_formula_version text not null,
+  blend_policy_version text not null,
+  calibration_version text,
   prompt_template_sha256 text not null,
+  execution_topology text not null default 'fixture_fanout'
+    check (execution_topology in ('round_batch', 'fixture_fanout')),
+  research_cutoff_at timestamptz not null,
   fixture_set jsonb not null,
   fixture_set_sha256 text not null,
   input_snapshot jsonb,
   input_snapshot_at timestamptz,
-  max_attempts smallint not null default 3 check (max_attempts between 1 and 10),
-  attempt_count smallint not null default 0 check (attempt_count >= 0),
-  succeeded_attempt_id uuid,
+  max_attempts_per_task smallint not null default 3 check (max_attempts_per_task between 1 and 10),
+  attempt_count integer not null default 0 check (attempt_count >= 0),
   round_synthesis jsonb not null default '{}'::jsonb,
   failure_class text check (failure_class is null or failure_class in (
     'provider_transient', 'worker_lost', 'input_unavailable', 'internal',
@@ -416,7 +455,7 @@ create table public.kapiloto_research_runs (
   failed_at timestamptz,
   unique (round_id, seq_no),
   unique (id, round_id),
-  check (status <> 'completed' or (completed_at is not null and succeeded_attempt_id is not null)),
+  check (status <> 'completed' or completed_at is not null),
   check (status not in ('queued', 'running', 'completed') or budget_slot is not null)
 );
 
@@ -433,7 +472,10 @@ create index kapiloto_research_runs_round_seq_idx
 
 create table public.kapiloto_research_attempts (
   id uuid primary key default gen_random_uuid(),
-  run_id uuid not null references public.kapiloto_research_runs(id) on delete restrict,
+  run_id uuid not null,
+  round_id uuid not null,
+  task_key text not null,
+  round_game_id uuid,
   attempt_no smallint not null check (attempt_no > 0),
   status text not null default 'queued'
     check (status in ('queued', 'running', 'succeeded', 'failed', 'abandoned')),
@@ -465,14 +507,25 @@ create table public.kapiloto_research_attempts (
   )),
   failure_code text,
   failure_detail text,
+  raw_output_uri text,
+  raw_output_sha256 text,
+  validated_output jsonb,
   validation_report jsonb,
   trace_id text,
-  unique (run_id, attempt_no)
+  foreign key (run_id, round_id)
+    references public.kapiloto_research_runs(id, round_id) on delete restrict,
+  foreign key (round_game_id, round_id)
+    references public.round_games(id, round_id) on delete restrict,
+  unique (run_id, task_key, attempt_no)
 );
 
 create unique index kapiloto_research_attempts_one_active_uq
-  on public.kapiloto_research_attempts (run_id)
+  on public.kapiloto_research_attempts (run_id, task_key)
   where status in ('queued', 'running');
+
+create unique index kapiloto_research_attempts_one_success_uq
+  on public.kapiloto_research_attempts (run_id, task_key)
+  where status = 'succeeded';
 
 create index kapiloto_research_attempts_claim_idx
   on public.kapiloto_research_attempts (available_at)
@@ -481,10 +534,6 @@ create index kapiloto_research_attempts_claim_idx
 create index kapiloto_research_attempts_lease_idx
   on public.kapiloto_research_attempts (lease_expires_at)
   where status = 'running';
-
-alter table public.kapiloto_research_runs
-  add constraint kapiloto_runs_succeeded_attempt_fk
-  foreign key (succeeded_attempt_id) references public.kapiloto_research_attempts(id) on delete restrict;
 
 alter table public.kapiloto_research_requests
   add constraint kapiloto_requests_based_on_run_fk
@@ -498,38 +547,100 @@ alter table public.kapiloto_round_research_state
   add constraint kapiloto_state_current_run_fk
   foreign key (current_run_id, round_id) references public.kapiloto_research_runs(id, round_id) on delete restrict;
 
+create table public.kapiloto_source_registry (
+  domain text primary key,
+  publisher text,
+  tier_by_claim_type jsonb not null default '{}'::jsonb,
+  languages text[] not null default '{}',
+  coverage_metadata jsonb not null default '{}'::jsonb,
+  denied boolean not null default false,
+  reviewed_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb
+);
+
 create table public.kapiloto_analyses (
   id uuid primary key default gen_random_uuid(),
   research_run_id uuid not null,
   round_id uuid not null,
   round_game_id uuid not null,
   outcome text not null default 'analyzed'
-    check (outcome in ('analyzed', 'insufficient_data', 'void', 'carried_forward')),
+    check (outcome in ('analyzed', 'insufficient_data', 'void', 'carried_forward', 'research_unavailable')),
   carried_from_analysis_id uuid references public.kapiloto_analyses(id) on delete restrict,
+  research_cutoff_at timestamptz not null,
+  kickoff_at_snapshot timestamptz not null,
+  settlement_rule_snapshot text not null,
+  neutral_venue_snapshot boolean not null default false,
+  orientation_verified boolean not null default false,
+  prior_type text check (prior_type is null or prior_type in ('market', 'rating', 'league_base')),
+  market_snapshot_id uuid,
+  p_prior_1_bp smallint check (p_prior_1_bp is null or p_prior_1_bp between 0 and 10000),
+  p_prior_x_bp smallint check (p_prior_x_bp is null or p_prior_x_bp between 0 and 10000),
+  p_prior_2_bp smallint check (p_prior_2_bp is null or p_prior_2_bp between 0 and 10000),
+  p_sol_1_bp smallint check (p_sol_1_bp is null or p_sol_1_bp between 0 and 10000),
+  p_sol_x_bp smallint check (p_sol_x_bp is null or p_sol_x_bp between 0 and 10000),
+  p_sol_2_bp smallint check (p_sol_2_bp is null or p_sol_2_bp between 0 and 10000),
+  p_final_1_bp smallint check (p_final_1_bp is null or p_final_1_bp between 0 and 10000),
+  p_final_x_bp smallint check (p_final_x_bp is null or p_final_x_bp between 0 and 10000),
+  p_final_2_bp smallint check (p_final_2_bp is null or p_final_2_bp between 0 and 10000),
+  reliability numeric(5,4) check (reliability is null or reliability between 0 and 1),
+  reliability_band text check (reliability_band is null or reliability_band in ('low', 'medium', 'high')),
+  reliability_reasons jsonb not null default '[]'::jsonb,
+  model_self_confidence text check (model_self_confidence is null or model_self_confidence in ('low', 'medium', 'high')),
   primary_pick text check (primary_pick is null or primary_pick in ('1', 'X', '2')),
   suggested_double text check (suggested_double is null or suggested_double in ('1X', 'X2', '12')),
   double_priority_rank smallint check (double_priority_rank is null or double_priority_rank between 1 and 16),
   double_gain_score numeric(12,8) check (double_gain_score is null or double_gain_score >= 0),
-  analysis_confidence numeric(5,4) check (analysis_confidence is null or analysis_confidence between 0 and 1),
-  score_1 numeric(7,6) check (score_1 is null or score_1 between 0 and 1),
-  score_x numeric(7,6) check (score_x is null or score_x between 0 and 1),
-  score_2 numeric(7,6) check (score_2 is null or score_2 between 0 and 1),
+  blend_weight numeric(5,4) check (blend_weight is null or blend_weight between 0 and 1),
+  deviation_cap_applied boolean not null default false,
   summary text,
   main_risk text,
-  input_data_version text,
+  availability jsonb not null default '[]'::jsonb,
+  dimension_coverage jsonb not null default '[]'::jsonb,
+  conflicts jsonb not null default '[]'::jsonb,
+  watch_items jsonb not null default '[]'::jsonb,
+  key_assumptions jsonb not null default '[]'::jsonb,
+  data_quality jsonb not null default '{}'::jsonb,
+  suspicious_content jsonb not null default '[]'::jsonb,
   valid_until timestamptz,
-  sources_count smallint not null default 0 check (sources_count >= 0),
   generated_at timestamptz not null default now(),
   foreign key (research_run_id, round_id)
     references public.kapiloto_research_runs(id, round_id) on delete restrict,
   foreign key (round_game_id, round_id)
     references public.round_games(id, round_id) on delete restrict,
+  foreign key (market_snapshot_id, round_game_id)
+    references public.fixture_market_snapshots(id, round_game_id) on delete restrict,
   unique (research_run_id, round_game_id),
   unique (id, research_run_id),
-  check (outcome not in ('analyzed', 'carried_forward') or
-    (primary_pick is not null and score_1 is not null and score_x is not null and score_2 is not null)),
-  check (score_1 is null or abs((score_1 + score_x + score_2) - 1.0) <= 0.001),
-  check (outcome <> 'analyzed' or (suggested_double is not null and double_priority_rank is not null and double_gain_score is not null)),
+  check (
+    (p_prior_1_bp is null and p_prior_x_bp is null and p_prior_2_bp is null)
+    or (p_prior_1_bp is not null and p_prior_x_bp is not null and p_prior_2_bp is not null
+        and p_prior_1_bp + p_prior_x_bp + p_prior_2_bp = 10000)
+  ),
+  check (
+    (p_sol_1_bp is null and p_sol_x_bp is null and p_sol_2_bp is null)
+    or (p_sol_1_bp is not null and p_sol_x_bp is not null and p_sol_2_bp is not null
+        and p_sol_1_bp + p_sol_x_bp + p_sol_2_bp = 10000)
+  ),
+  check (
+    (p_final_1_bp is null and p_final_x_bp is null and p_final_2_bp is null)
+    or (p_final_1_bp is not null and p_final_x_bp is not null and p_final_2_bp is not null
+        and p_final_1_bp + p_final_x_bp + p_final_2_bp = 10000)
+  ),
+  check (
+    outcome <> 'analyzed'
+    or (
+      orientation_verified
+      and prior_type is not null
+      and p_sol_1_bp is not null
+      and p_final_1_bp is not null
+      and reliability is not null
+      and reliability_band is not null
+      and primary_pick is not null
+      and suggested_double is not null
+      and double_priority_rank is not null
+      and double_gain_score is not null
+    )
+  ),
   check ((outcome = 'carried_forward') = (carried_from_analysis_id is not null))
 );
 
@@ -537,25 +648,53 @@ create unique index kapiloto_analyses_double_rank_uq
   on public.kapiloto_analyses (research_run_id, double_priority_rank)
   where double_priority_rank is not null;
 
+create table public.kapiloto_evidence (
+  id uuid primary key default gen_random_uuid(),
+  analysis_id uuid not null references public.kapiloto_analyses(id) on delete restrict,
+  model_evidence_id text not null,
+  url_canonical text not null,
+  domain text not null,
+  claim_type text not null,
+  about_team text not null check (about_team in ('home', 'away', 'both', 'none')),
+  quote text not null,
+  claim text not null,
+  source_event_time text,
+  published_at timestamptz,
+  retrieved_at timestamptz not null,
+  trust_tier smallint check (trust_tier is null or trust_tier between 1 and 4),
+  quote_verified boolean not null default false,
+  entailment text not null default 'not_checked'
+    check (entailment in ('supported', 'unsupported', 'not_checked')),
+  syndication_cluster_id text,
+  content_sha256 text,
+  status text not null default 'accepted' check (status in ('accepted', 'rejected')),
+  rejected_reason text,
+  unique (analysis_id, model_evidence_id),
+  unique (id, analysis_id)
+);
+
+create index kapiloto_evidence_analysis_idx
+  on public.kapiloto_evidence (analysis_id, status);
+
 create table public.kapiloto_factors (
   id uuid primary key default gen_random_uuid(),
   analysis_id uuid not null references public.kapiloto_analyses(id) on delete restrict,
-  factor_type text not null,
-  text text not null,
-  direction text check (direction is null or direction in ('home', 'draw', 'away', 'neutral', 'risk')),
-  importance smallint check (importance is null or importance between 1 and 5)
+  dimension text not null,
+  favors text not null check (favors in ('home', 'draw', 'away', 'none')),
+  magnitude text not null check (magnitude in ('small', 'medium', 'large')),
+  rationale text not null,
+  unique (id, analysis_id)
 );
 
-create table public.kapiloto_sources (
-  id uuid primary key default gen_random_uuid(),
-  analysis_id uuid not null references public.kapiloto_analyses(id) on delete restrict,
-  title text not null,
-  url text not null,
-  publisher text,
-  source_type text,
-  published_at timestamptz,
-  accessed_at timestamptz not null default now(),
-  trust_tier smallint check (trust_tier is null or trust_tier between 1 and 5)
+create table public.kapiloto_factor_evidence (
+  factor_id uuid not null,
+  evidence_id uuid not null,
+  analysis_id uuid not null,
+  foreign key (factor_id, analysis_id)
+    references public.kapiloto_factors(id, analysis_id) on delete restrict,
+  foreign key (evidence_id, analysis_id)
+    references public.kapiloto_evidence(id, analysis_id) on delete restrict,
+  primary key (factor_id, evidence_id)
 );
 
 create table public.kapiloto_analysis_inputs (
@@ -570,9 +709,12 @@ create table public.kapiloto_freshness_signals (
   id bigint generated always as identity primary key,
   round_game_id uuid not null references public.round_games(id) on delete cascade,
   signal_type text not null check (signal_type in (
-    'lineup', 'injury', 'suspension', 'odds_move', 'kickoff_change', 'postponed', 'cancelled'
+    'lineup', 'injury', 'suspension', 'odds_move', 'kickoff_change', 'coach_news',
+    'weather', 'postponed', 'cancelled'
   )),
   severity smallint not null check (severity between 1 and 3),
+  subject_team_id uuid references public.teams(id) on delete set null,
+  subject_player text,
   data_version text,
   observed_at timestamptz not null,
   payload jsonb not null default '{}'::jsonb
@@ -595,12 +737,16 @@ create trigger kapiloto_analyses_immutable
 before update or delete on public.kapiloto_analyses
 for each row execute function private.reject_kapiloto_immutable_change();
 
+create trigger kapiloto_evidence_immutable
+before update or delete on public.kapiloto_evidence
+for each row execute function private.reject_kapiloto_immutable_change();
+
 create trigger kapiloto_factors_immutable
 before update or delete on public.kapiloto_factors
 for each row execute function private.reject_kapiloto_immutable_change();
 
-create trigger kapiloto_sources_immutable
-before update or delete on public.kapiloto_sources
+create trigger kapiloto_factor_evidence_immutable
+before update or delete on public.kapiloto_factor_evidence
 for each row execute function private.reject_kapiloto_immutable_change();
 
 create trigger kapiloto_analysis_inputs_immutable
