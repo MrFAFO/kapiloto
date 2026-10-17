@@ -1,0 +1,92 @@
+export type ProviderName = "api-football" | "sportmonks";
+
+export type ThreeWayBasisPoints = {
+  home: number;
+  draw: number;
+  away: number;
+};
+
+export type DecimalThreeWayOdds = {
+  home: number;
+  draw: number;
+  away: number;
+};
+
+export type TeamRef = {
+  id: string;
+  name: string;
+};
+
+export type ProviderFixture = {
+  provider: ProviderName;
+  providerFixtureId: string;
+  kickoffAt: string;
+  status: string;
+  season: number | null;
+  competition: {
+    id: string;
+    name: string;
+    country: string | null;
+    round: string | null;
+  };
+  home: TeamRef;
+  away: TeamRef;
+};
+
+export type BookmakerThreeWayQuote = {
+  provider: ProviderName;
+  providerFixtureId: string;
+  bookmakerId: string;
+  bookmakerName: string;
+  capturedAt: string | null;
+  odds: DecimalThreeWayOdds;
+};
+
+export type MarketPrior = {
+  probabilitiesBp: ThreeWayBasisPoints;
+  bookmakerCount: number;
+  method: "median-devig-v1";
+  degraded: boolean;
+};
+
+export type ProviderSpikeFixtureInput = {
+  gameNumber: number;
+  homeTeam: string;
+  awayTeam: string;
+  kickoffAt: string;
+  competition?: string;
+  aliases?: {
+    home?: string[];
+    away?: string[];
+  };
+  apiFootballFixtureId?: number;
+};
+
+export type ProviderFixtureCoverage = {
+  gameNumber: number;
+  input: ProviderSpikeFixtureInput;
+  resolvedFixture: ProviderFixture | null;
+  fixtureResolution: "provided_id" | "name_match" | "not_found" | "ambiguous";
+  lineupsAvailable: boolean;
+  lineupEntries: number;
+  injuriesAvailable: boolean;
+  injuryEntries: number;
+  oddsAvailable: boolean;
+  completeBookmakers: number;
+  marketPrior: MarketPrior | null;
+  providerErrors: string[];
+};
+
+export type ProviderSpikeReport = {
+  provider: ProviderName;
+  generatedAt: string;
+  fixtures: ProviderFixtureCoverage[];
+  summary: {
+    requestedFixtures: number;
+    resolvedFixtures: number;
+    fixturesWithLineups: number;
+    fixturesWithInjuries: number;
+    fixturesWithOdds: number;
+    averageCompleteBookmakersWhenAvailable: number;
+  };
+};
