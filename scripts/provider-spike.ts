@@ -2,19 +2,23 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { ApiFootballClient } from "../lib/providers/api-football";
+import { SportmonksClient } from "../lib/providers/sportmonks";
 import type {
   ProviderFixtureCoverage,
+  ProviderName,
   ProviderSpikeFixtureInput,
   ProviderSpikeReport,
 } from "../lib/providers/types";
 
 type Args = {
+  provider: ProviderName;
   input: string;
   out: string | null;
   concurrency: number;
 };
 
 function parseArgs(argv: string[]): Args {
+  let provider: ProviderName = "api-football";
   let input = "";
   let out: string | null = null;
   let concurrency = 2;
@@ -22,6 +26,14 @@ function parseArgs(argv: string[]): Args {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
 
+    if (arg === "--provider") {
+      const value = argv[++index];
+      if (value !== "api-football" && value !== "sportmonks") {
+        throw new Error("--provider must be api-football or sportmonks.");
+      }
+      provider = value;
+      continue;
+    }
     if (arg === "--input") {
       input = argv[++index] ?? "";
       continue;
@@ -38,14 +50,14 @@ function parseArgs(argv: string[]): Args {
 
   if (!input) {
     throw new Error(
-      "Usage: npm run spike:provider -- --input <fixtures.json> [--out report.json] [--concurrency 2]",
+      "Usage: npm run spike:provider -- --provider <api-football|sportmonks> --input <fixtures.json> [--out report.json] [--concurrency 2]",
     );
   }
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) {
     throw new Error("--concurrency must be an integer between 1 and 8.");
   }
 
-  return { input, out, concurrency };
+  return { provider, input, out, concurrency };
 }
 
 function validateFixtures(value: unknown): ProviderSpikeFixtureInput[] {
@@ -99,7 +111,10 @@ async function mapWithConcurrency<T, R>(
   return result;
 }
 
-function buildReport(fixtures: ProviderFixtureCoverage[]): ProviderSpikeReport {
+function buildReport(
+  provider: ProviderName,
+  fixtures: ProviderFixtureCoverage[],
+): ProviderSpikeReport {
   const observedOdds = fixtures.filter((item) => item.completeBookmakers > 0);
   const bookmakerAverage =
     observedOdds.length === 0
@@ -110,7 +125,7 @@ function buildReport(fixtures: ProviderFixtureCoverage[]): ProviderSpikeReport {
         ) / observedOdds.length;
 
   return {
-    provider: "api-football",
+    provider,
     generatedAt: new Date().toISOString(),
     fixtures,
     summary: {
@@ -140,17 +155,27 @@ function buildReport(fixtures: ProviderFixtureCoverage[]): ProviderSpikeReport {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const apiKey = process.env.API_FOOTBALL_API_KEY;
-
-  if (!apiKey) {
-    throw new Error(
-      "API_FOOTBALL_API_KEY is missing. Add it to your local environment; never commit it.",
-    );
-  }
-
   const raw = await readFile(args.input, "utf8");
   const fixtures = validateFixtures(JSON.parse(raw) as unknown);
-  const client = new ApiFootballClient(apiKey);
+
+  const client =
+    args.provider === "api-football"
+      ? new ApiFootballClient(
+          process.env.API_FOOTBALL_API_KEY ??
+            (() => {
+              throw new Error(
+                "API_FOOTBALL_API_KEY is missing. Add it to your local environment; never commit it.",
+              );
+            })(),
+        )
+      : new SportmonksClient(
+          process.env.SPORTMONKS_API_TOKEN ??
+            (() => {
+              throw new Error(
+                "SPORTMONKS_API_TOKEN is missing. Add it to your local environment; never commit it.",
+              );
+            })(),
+        );
 
   const coverage = await mapWithConcurrency(
     fixtures,
@@ -163,7 +188,7 @@ async function main(): Promise<void> {
     },
   );
 
-  const report = buildReport(coverage);
+  const report = buildReport(args.provider, coverage);
   const serialized = JSON.stringify(report, null, 2) + "\n";
 
   if (args.out) {
