@@ -1,0 +1,14 @@
+[
+  {
+    "gameNumber": 1,
+    "homeTeam": "Home Team",
+    "awayTeam": "Away Team",
+    "kickoffAt": "2026-10-18T18:00:00Z",
+    "competition": "Competition Name",
+    "aliases": {
+      "home": ["Provider English Home Name"],
+      "away": ["Provider English Away Name"]
+    },
+    "apiFootballFixtureId": 123456
+  }
+]
