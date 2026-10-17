@@ -157,6 +157,14 @@ The analysis is source-backed and includes:
 
 Kapiloto does not fill the user's entire personal ticket.
 
+### Research execution
+- Research is lazy/on-demand: a new round costs nothing in AI research until a user asks for Kapiloto, recheck, or Diego assistance.
+- When research is required, one shared run researches all 16 fixtures and stores the result for reuse by every user.
+- A round may start at most three research runs.
+- Staleness can make another run eligible but never triggers it automatically; another user request is required.
+- Concurrent requests must share one in-progress run rather than launching duplicate Sol jobs.
+- Sol is the approved research model family; the exact API model ID is server-configured.
+
 ## Diego
 Diego is the optional autonomous full-ticket builder.
 
