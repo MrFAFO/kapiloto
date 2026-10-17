@@ -616,14 +616,16 @@ create table public.diego_ticket_proposals (
   group_id uuid not null references public.groups(id) on delete cascade,
   round_id uuid not null references public.rounds(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  research_run_id uuid not null references public.kapiloto_research_runs(id) on delete restrict,
+  research_run_id uuid not null,
   source_ticket_id uuid references public.user_tickets(id) on delete set null,
   max_doubles smallint not null check (max_doubles between 0 and 16),
   generated_at timestamptz not null default now(),
   model_key text,
   optimizer_version text not null,
   status text not null default 'ready'
-    check (status in ('generating', 'ready', 'applied', 'discarded', 'stale', 'failed'))
+    check (status in ('generating', 'ready', 'applied', 'discarded', 'stale', 'failed')),
+  foreign key (research_run_id, round_id)
+    references public.kapiloto_research_runs(id, round_id) on delete restrict
 );
 
 create index diego_proposals_user_round_idx
@@ -635,6 +637,37 @@ create table public.diego_ticket_proposal_inputs (
   analysis_id uuid not null references public.kapiloto_analyses(id) on delete restrict,
   primary key (proposal_id, round_game_id)
 );
+
+create or replace function private.validate_diego_proposal_analysis_run()
+returns trigger
+language plpgsql
+set search_path = ''
+as $
+declare
+  proposal_run uuid;
+begin
+  select p.research_run_id
+    into proposal_run
+  from public.diego_ticket_proposals p
+  where p.id = new.proposal_id;
+
+  if proposal_run is null or not exists (
+    select 1
+    from public.kapiloto_analyses a
+    where a.id = new.analysis_id
+      and a.research_run_id = proposal_run
+      and a.round_game_id = new.round_game_id
+  ) then
+    raise exception 'Diego proposal inputs must come from the proposal research run';
+  end if;
+
+  return new;
+end;
+$;
+
+create trigger diego_proposal_inputs_validate_run
+before insert or update on public.diego_ticket_proposal_inputs
+for each row execute function private.validate_diego_proposal_analysis_run();
 
 create table public.diego_ticket_proposal_picks (
   proposal_id uuid not null references public.diego_ticket_proposals(id) on delete cascade,
