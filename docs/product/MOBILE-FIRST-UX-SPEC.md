@@ -11,6 +11,7 @@ The current round is the default home screen.
 Every fixture row must show:
 - game number;
 - home and away teams;
+- competition / league label;
 - kickoff date/time if upcoming;
 - live score + minute if in progress;
 - final score if finished;
