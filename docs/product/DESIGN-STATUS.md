@@ -42,3 +42,14 @@ The mobile experience is the source priority. Desktop is a later responsive adap
 - admin round settings;
 - onboarding/create-group/join-group in Dark Stadium;
 - desktop adaptation of the approved mobile behavior.
+
+
+## Authentication
+Figma page: **11 — Auth · Dark Stadium**
+- username/password login;
+- remember-me control;
+- signup with username/password + email-or-phone recovery contact;
+- password-recovery state;
+- reserved hero stage for future 3D Kapiloto and Diego character assets.
+
+The placeholder circles on the current auth mock are intentionally temporary and will be replaced by the final 3D character art.
