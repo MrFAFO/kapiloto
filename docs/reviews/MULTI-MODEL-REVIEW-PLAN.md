@@ -99,3 +99,8 @@ Run the full review set:
 - after Auth/Groups/RLS;
 - after live-data integration;
 - before public beta.
+
+## Completed focused external reviews
+- **Kapiloto research concurrency / cost architecture — Opus 5.5**: completed and reconciled in `docs/reviews/OPUS-KAPILOTO-RESEARCH-REVIEW-001.md`.
+- Accepted findings were propagated into the data model, Schema v1 draft, RLS boundary, API contract, UX behavior and decision log.
+- The review is advisory evidence, not an authority; final decisions remain in `DECISION-LOG.md`.
