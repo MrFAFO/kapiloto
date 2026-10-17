@@ -43,9 +43,11 @@ The envelope contains:
 - request outcome
 - poll retry_after_seconds
 
-Analysis includes outcome, deterministically derived primary_pick and suggested_double, global double_priority_rank/double_gain_score, group-specific double_recommended, analysis_confidence, normalized relative scores, summary, main_risk, generated_at and validated sources.
+Analysis includes outcome, deterministically derived primary_pick and suggested_double, global double_priority_rank/double_gain_score, group-specific double_recommended, reliability/reliability_band, server-derived p_final basis points, summary, main_risk, generated_at and validated evidence/sources.
 
-`double_recommended` in the API is contextual to the requesting group's configured double budget; it is not stored as a universal model output. The shared stored scores/rank remain identical for every group.
+`double_recommended` in the API is contextual to the requesting group's configured double budget; it is not stored as a universal model output. The shared stored probabilities/rank remain identical for every group.
+
+`reliability` means trust in the research quality, not the chance that the top outcome occurs. Precise p_final percentages are primarily optimizer/internal data and should not be presented to users as calibrated win probabilities until calibration is validated.
 
 ## HTTP behavior
 | Scenario | HTTP | State | Request outcome |
@@ -72,22 +74,26 @@ Do not use 429 for the three-run business limit.
 Store (user_id, idempotency_key, request_sha256). Same key + same body returns the current state of the original request/run and never creates another run. Same key + different body returns 422.
 
 ## Model-output boundary
-Sol's strict structured output contains evidence, normalized 1/X/2 relative scores, analysis confidence, material factors, data quality/conflicts and watch items.
+Sol's fixture-scoped strict structured output contains claim-level evidence, availability, dimension coverage, conflicts, raw pre-match home/draw/away probability estimates, material factors, data quality, structured watch items, suspicious-content flags and a logged self-confidence enum.
 
-Sol does **not** author the persisted primary pick, suggested double, global double rank or group-specific double recommendation. Those are derived deterministically under the run's derivation version after schema/source validation.
+Sol does **not** author the persisted Toto pick, suggested double, global double rank, group-specific double recommendation, source tier, final reliability or p_final. Server code validates identity/evidence, blends p_sol with the versioned prior/reliability/calibration policy, maps home/draw/away to 1/X/2, then derives decisions deterministically.
 
-Every source URL supplied by the structured output must match a URL actually observed from the Responses API web-search tool.
+Every evidence URL must correspond to a page actually retrieved, not merely listed. Material evidence carries a short supporting quote that the server verifies against fetched content; source tier and published_at are assigned/extracted server-side.
+
+## Pre-match cutoff
+Each logical run freezes `research_cutoff_at`. Fixture tasks inside the configured kickoff safety window do not perform new web research. Evidence published after the cutoff is rejected. Research workers have no access to actual-results/settlement tables used for later evaluation.
 
 ## Research lifecycle
 1. Request path performs an optimistic read.
 2. Possible create path locks kapiloto_round_research_state FOR UPDATE.
 3. It re-checks active run, published run, refresh eligibility, budget and circuit breaker.
-4. It creates one logical run and one queued attempt in one short transaction.
-5. Worker claims an attempt with FOR UPDATE SKIP LOCKED.
-6. Sol/web research happens without an open DB transaction.
-7. Completion validates the frozen fixture set.
-8. One short completion transaction inserts the immutable 16-analysis snapshot and changes current_run_id.
-9. Realtime/poll clients observe the new round-state version.
+4. It creates one logical run and the task set for the configured execution topology in one short transaction.
+5. Workers claim fixture/round tasks with FOR UPDATE SKIP LOCKED.
+6. Sol/web research happens without an open DB transaction; task retries stay inside the same logical run.
+7. Server validates fixture identity, evidence, p_sol, cutoff rules and deterministic p_final derivation.
+8. Completion validates the full frozen fixture set.
+9. One short completion transaction inserts the immutable 16-analysis snapshot and changes current_run_id.
+10. Realtime/poll clients observe the new round-state version.
 
 ## Freshness
 Freshness is computed when read. A fixture is stale when deterministic TTL or a material signal/data-version change occurred after the published run input snapshot. Freshness signals never create runs.
