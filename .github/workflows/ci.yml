@@ -34,5 +34,8 @@ jobs:
       - name: Provider tests
         run: npm run test:providers
 
+      - name: Kapiloto core tests
+        run: npm run test:kapiloto
+
       - name: Build
         run: npm run build
