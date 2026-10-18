@@ -20,7 +20,6 @@ export class SupabaseKapilotoResearchRpc implements KapilotoResearchRpc {
       p_idempotency_key: input.request.idempotencyKey,
       p_request_sha256: input.requestSha256,
       p_based_on_run_id: input.request.basedOnRunId,
-      p_refresh_eligible: input.request.refreshEligible,
       p_breaker_open: input.request.breakerOpen,
       p_model_key: input.config.modelKey,
       p_research_protocol_version: input.config.researchProtocolVersion,
