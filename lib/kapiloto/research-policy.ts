@@ -77,19 +77,19 @@ export function decideKapilotoResearchRequest(
     };
   }
 
-  if (state.activeRunId != null) {
-    return {
-      action: "join_active",
-      outcome: "joined_run",
-      runId: state.activeRunId,
-    };
-  }
-
   if (state.roundClosed) {
     return {
       action: "serve_current",
       outcome: "round_closed",
       runId: state.currentRunId,
+    };
+  }
+
+  if (state.activeRunId != null) {
+    return {
+      action: "join_active",
+      outcome: "joined_run",
+      runId: state.activeRunId,
     };
   }
 
