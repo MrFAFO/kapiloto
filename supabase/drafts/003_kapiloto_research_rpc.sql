@@ -16,7 +16,6 @@ create or replace function public.kapiloto_request_research(
   p_idempotency_key text,
   p_request_sha256 text,
   p_based_on_run_id uuid,
-  p_refresh_eligible boolean,
   p_breaker_open boolean,
   p_model_key text,
   p_research_protocol_version text,
@@ -50,6 +49,8 @@ declare
   v_target_run_id uuid;
   v_trigger_type text;
   v_task_count integer;
+  v_refresh_eligible boolean := false;
+  v_current_completed_at timestamptz;
 begin
   if p_user_id is null or p_round_id is null then
     raise exception 'user_id and round_id are required';
@@ -106,7 +107,8 @@ begin
       'round_id', v_existing_request.round_id,
       'active_run_id', v_state.active_run_id,
       'current_run_id', v_state.current_run_id,
-      'runs_consumed', v_state.runs_consumed
+      'runs_consumed', v_state.runs_consumed,
+      'refresh_eligible', v_refresh_eligible
     );
   end if;
 
@@ -138,6 +140,34 @@ begin
   where s.round_id = p_round_id
   for update;
 
+  if p_intent = 'recheck' and v_state.current_run_id is not null then
+    select coalesce(r.completed_at, r.research_cutoff_at)
+      into v_current_completed_at
+    from public.kapiloto_research_runs r
+    where r.id = v_state.current_run_id;
+
+    select
+      exists (
+        select 1
+        from public.kapiloto_analyses a
+        where a.research_run_id = v_state.current_run_id
+          and a.valid_until is not null
+          and a.valid_until <= now()
+      )
+      or exists (
+        select 1
+        from public.kapiloto_freshness_signals fs
+        join public.round_games g on g.id = fs.round_game_id
+        where g.round_id = p_round_id
+          and fs.severity >= 2
+          and (
+            v_current_completed_at is null
+            or fs.observed_at > v_current_completed_at
+          )
+      )
+      into v_refresh_eligible;
+  end if;
+
   -- based_on_run_id is an optimistic freshness token. A request based on an
   -- older snapshot never consumes another budget slot.
   if p_based_on_run_id is not null
@@ -165,7 +195,7 @@ begin
 
   elsif v_state.current_run_id is not null
         and p_intent = 'recheck'
-        and not p_refresh_eligible then
+        and not v_refresh_eligible then
     v_outcome := 'refresh_ineligible';
     v_target_run_id := v_state.current_run_id;
 
@@ -222,7 +252,8 @@ begin
       'active_run_id', v_state.active_run_id,
       'current_run_id', v_state.current_run_id,
       'runs_consumed', v_state.runs_consumed,
-      'next_budget_slot', v_state.runs_consumed + 1
+      'next_budget_slot', v_state.runs_consumed + 1,
+      'refresh_eligible', v_refresh_eligible
     );
   end if;
 
@@ -413,13 +444,13 @@ end;
 $kapiloto$;
 
 revoke all on function public.kapiloto_request_research(
-  uuid, uuid, uuid, text, text, text, uuid, boolean, boolean,
+  uuid, uuid, uuid, text, text, text, uuid, boolean,
   text, text, text, text, text, text, text, text, text,
   timestamptz, jsonb, text, jsonb, uuid[], smallint
 ) from public, anon, authenticated;
 
 grant execute on function public.kapiloto_request_research(
-  uuid, uuid, uuid, text, text, text, uuid, boolean, boolean,
+  uuid, uuid, uuid, text, text, text, uuid, boolean,
   text, text, text, text, text, text, text, text, text,
   timestamptz, jsonb, text, jsonb, uuid[], smallint
 ) to service_role;
