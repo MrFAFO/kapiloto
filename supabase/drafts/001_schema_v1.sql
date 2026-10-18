@@ -89,6 +89,21 @@ create table public.teams (
   created_at timestamptz not null default now()
 );
 
+create table public.team_aliases (
+  id uuid primary key default gen_random_uuid(),
+  team_id uuid not null references public.teams(id) on delete cascade,
+  alias text not null check (char_length(trim(alias)) between 1 and 120),
+  normalized_alias text generated always as (lower(trim(alias))) stored,
+  language_code text,
+  source text not null default 'manual',
+  is_preferred boolean not null default false,
+  created_at timestamptz not null default now(),
+  unique (team_id, normalized_alias)
+);
+
+create index team_aliases_normalized_idx
+  on public.team_aliases (normalized_alias);
+
 create table public.provider_team_mappings (
   provider text not null,
   provider_team_id text not null,
