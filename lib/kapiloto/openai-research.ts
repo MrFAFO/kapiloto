@@ -36,7 +36,7 @@ export type SolFixtureResearchResult = {
 export type SolFixtureResearchOptions = {
   model: string;
   reasoningEffort?: KapilotoSolReasoningEffort;
-  blockedDomains?: string[];
+  allowedDomains?: string[];
   maxOutputTokens?: number;
 };
 
@@ -154,14 +154,20 @@ export async function researchFixtureWithSol(
 ): Promise<SolFixtureResearchResult> {
   try {
     const webSearchTool =
-      options.blockedDomains && options.blockedDomains.length > 0
+      options.allowedDomains && options.allowedDomains.length > 0
         ? {
             type: "web_search" as const,
             filters: {
-              blocked_domains: options.blockedDomains.slice(0, 100),
+              allowed_domains: options.allowedDomains.slice(0, 100),
             },
+            search_context_size: "high" as const,
+            user_location: { type: "approximate" as const },
           }
-        : { type: "web_search" as const };
+        : {
+            type: "web_search" as const,
+            search_context_size: "high" as const,
+            user_location: { type: "approximate" as const },
+          };
 
     const response = await client.responses.create({
       model: options.model,
