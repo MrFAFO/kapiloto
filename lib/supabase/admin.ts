@@ -6,16 +6,20 @@ export function createAdminClient(): SupabaseClient {
   if (adminClient) return adminClient;
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const secretKey =
+    process.env.SUPABASE_SECRET_KEY?.trim() ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
   if (!url) {
     throw new Error("NEXT_PUBLIC_SUPABASE_URL is required.");
   }
-  if (!serviceRoleKey) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY is required on the server.");
+  if (!secretKey) {
+    throw new Error(
+      "SUPABASE_SECRET_KEY (preferred) or SUPABASE_SERVICE_ROLE_KEY is required on the server.",
+    );
   }
 
-  adminClient = createClient(url, serviceRoleKey, {
+  adminClient = createClient(url, secretKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
