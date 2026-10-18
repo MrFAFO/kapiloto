@@ -19,8 +19,7 @@ revoke all on all tables in schema private from public, anon, authenticated;
 -- ---------------------------------------------------------------------------
 
 create or replace function private.is_active_group_member(
-  p_group_id uuid,
-  p_user_id uuid
+  p_group_id uuid
 )
 returns boolean
 language sql
@@ -32,14 +31,13 @@ as $$
     select 1
     from public.group_members gm
     where gm.group_id = p_group_id
-      and gm.user_id = p_user_id
+      and gm.user_id = (select auth.uid())
       and gm.status = 'active'
   );
 $$;
 
 create or replace function private.is_group_admin(
-  p_group_id uuid,
-  p_user_id uuid
+  p_group_id uuid
 )
 returns boolean
 language sql
@@ -58,8 +56,7 @@ as $$
 $$;
 
 create or replace function private.users_share_active_group(
-  p_user_a uuid,
-  p_user_b uuid
+  p_other_user uuid
 )
 returns boolean
 language sql
@@ -71,16 +68,15 @@ as $$
     select 1
     from public.group_members a
     join public.group_members b on b.group_id = a.group_id
-    where a.user_id = p_user_a
-      and b.user_id = p_user_b
+    where a.user_id = (select auth.uid())
+      and b.user_id = p_other_user
       and a.status = 'active'
       and b.status = 'active'
   );
 $$;
 
 create or replace function private.can_view_user_ticket(
-  p_ticket_id uuid,
-  p_viewer uuid
+  p_ticket_id uuid
 )
 returns boolean
 language sql
@@ -97,10 +93,10 @@ as $$
     join public.rounds r on r.id = target.round_id
     where target.id = p_ticket_id
       and (
-        target.user_id = p_viewer
+        target.user_id = (select auth.uid())
         or (
           target.state in ('submitted', 'locked')
-          and private.is_active_group_member(target.group_id, p_viewer)
+          and private.is_active_group_member(target.group_id)
           and (
             settings.visibility_policy = 'immediate'
             or (
@@ -114,7 +110,7 @@ as $$
                 from public.user_tickets viewer_ticket
                 where viewer_ticket.group_id = target.group_id
                   and viewer_ticket.round_id = target.round_id
-                  and viewer_ticket.user_id = p_viewer
+                  and viewer_ticket.user_id = (select auth.uid())
                   and viewer_ticket.state in ('submitted', 'locked')
               )
             )
@@ -124,21 +120,22 @@ as $$
   );
 $$;
 
-revoke all on function private.is_active_group_member(uuid, uuid) from public, anon;
-revoke all on function private.is_group_admin(uuid, uuid) from public, anon;
-revoke all on function private.users_share_active_group(uuid, uuid) from public, anon;
-revoke all on function private.can_view_user_ticket(uuid, uuid) from public, anon;
+revoke all on function private.is_active_group_member(uuid) from public, anon;
+revoke all on function private.is_group_admin(uuid) from public, anon;
+revoke all on function private.users_share_active_group(uuid) from public, anon;
+revoke all on function private.can_view_user_ticket(uuid) from public, anon;
 
 grant usage on schema private to authenticated;
-grant execute on function private.is_active_group_member(uuid, uuid) to authenticated;
-grant execute on function private.is_group_admin(uuid, uuid) to authenticated;
-grant execute on function private.users_share_active_group(uuid, uuid) to authenticated;
-grant execute on function private.can_view_user_ticket(uuid, uuid) to authenticated;
+grant execute on function private.is_active_group_member(uuid) to authenticated;
+grant execute on function private.is_group_admin(uuid) to authenticated;
+grant execute on function private.users_share_active_group(uuid) to authenticated;
+grant execute on function private.can_view_user_ticket(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Enable RLS on every public table
 -- ---------------------------------------------------------------------------
 
+alter table private.auth_username_aliases enable row level security;
 alter table public.profiles enable row level security;
 alter table public.groups enable row level security;
 alter table public.group_members enable row level security;
@@ -238,7 +235,7 @@ for select
 to authenticated
 using (
   id = (select auth.uid())
-  or private.users_share_active_group((select auth.uid()), id)
+  or private.users_share_active_group(id)
 );
 
 create policy profiles_update_self
@@ -260,7 +257,7 @@ on public.groups
 for select
 to authenticated
 using (
-  private.is_active_group_member(id, (select auth.uid()))
+  private.is_active_group_member(id)
 );
 
 create policy group_members_select_same_group
@@ -268,7 +265,7 @@ on public.group_members
 for select
 to authenticated
 using (
-  private.is_active_group_member(group_id, (select auth.uid()))
+  private.is_active_group_member(group_id)
 );
 
 create policy join_requests_select_requester_or_admin
@@ -277,7 +274,7 @@ for select
 to authenticated
 using (
   user_id = (select auth.uid())
-  or private.is_group_admin(group_id, (select auth.uid()))
+  or private.is_group_admin(group_id)
 );
 
 -- Create group, request join by code, approve/reject, role changes, member removal,
@@ -308,7 +305,7 @@ on public.group_round_settings
 for select
 to authenticated
 using (
-  private.is_active_group_member(group_id, (select auth.uid()))
+  private.is_active_group_member(group_id)
 );
 
 -- ---------------------------------------------------------------------------
@@ -320,7 +317,7 @@ on public.user_tickets
 for select
 to authenticated
 using (
-  private.can_view_user_ticket(id, (select auth.uid()))
+  private.can_view_user_ticket(id)
 );
 
 create policy user_tickets_insert_self_member
@@ -329,7 +326,7 @@ for insert
 to authenticated
 with check (
   user_id = (select auth.uid())
-  and private.is_active_group_member(group_id, (select auth.uid()))
+  and private.is_active_group_member(group_id)
   and state = 'draft'
 );
 
@@ -356,7 +353,7 @@ on public.user_ticket_picks
 for select
 to authenticated
 using (
-  private.can_view_user_ticket(user_ticket_id, (select auth.uid()))
+  private.can_view_user_ticket(user_ticket_id)
 );
 
 create policy user_ticket_picks_insert_own_open_ticket
@@ -427,7 +424,7 @@ on public.ticket_versions
 for select
 to authenticated
 using (
-  private.can_view_user_ticket(user_ticket_id, (select auth.uid()))
+  private.can_view_user_ticket(user_ticket_id)
 );
 
 create policy ticket_version_picks_select_visible_version
@@ -439,7 +436,7 @@ using (
     select 1
     from public.ticket_versions v
     where v.id = ticket_version_id
-      and private.can_view_user_ticket(v.user_ticket_id, (select auth.uid()))
+      and private.can_view_user_ticket(v.user_ticket_id)
   )
 );
 
@@ -454,7 +451,7 @@ on public.consensus_versions
 for select
 to authenticated
 using (
-  private.is_active_group_member(group_id, (select auth.uid()))
+  private.is_active_group_member(group_id)
 );
 
 create policy consensus_sources_select_member
@@ -466,7 +463,7 @@ using (
     select 1
     from public.consensus_versions c
     where c.id = consensus_version_id
-      and private.is_active_group_member(c.group_id, (select auth.uid()))
+      and private.is_active_group_member(c.group_id)
   )
 );
 
@@ -479,7 +476,7 @@ using (
     select 1
     from public.consensus_versions c
     where c.id = consensus_version_id
-      and private.is_active_group_member(c.group_id, (select auth.uid()))
+      and private.is_active_group_member(c.group_id)
   )
 );
 
@@ -498,7 +495,7 @@ using (
     select 1
     from public.ticket_versions v
     where v.id = ticket_version_id
-      and private.can_view_user_ticket(v.user_ticket_id, (select auth.uid()))
+      and private.can_view_user_ticket(v.user_ticket_id)
   )
 );
 
@@ -511,7 +508,7 @@ using (
     select 1
     from public.consensus_versions c
     where c.id = consensus_version_id
-      and private.is_active_group_member(c.group_id, (select auth.uid()))
+      and private.is_active_group_member(c.group_id)
   )
 );
 
@@ -570,7 +567,7 @@ for select
 to authenticated
 using (
   group_id is not null
-  and private.is_group_admin(group_id, (select auth.uid()))
+  and private.is_group_admin(group_id)
 );
 
 -- ---------------------------------------------------------------------------
