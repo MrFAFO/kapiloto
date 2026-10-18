@@ -43,7 +43,7 @@ export type FixtureCardInput = {
   recentMatches?: Record<string, unknown>[];
   squadSnapshotId?: string | null;
   coach?: string | null;
-  prior: FixturePriorInput;
+  prior: FixturePriorInput | null;
 };
 
 export type KapilotoFixtureCard = {
@@ -93,6 +93,7 @@ export type FixtureResearchEligibility =
       reason:
         | "kickoff_too_close"
         | "already_started"
+        | "missing_prior"
         | "post_cutoff_prior"
         | "invalid_fixture";
     };
@@ -191,7 +192,6 @@ export function assessFixtureResearchEligibility(
 ): FixtureResearchEligibility {
   try {
     assertFixtureIdentity(input);
-    assertBasisPoints(input.prior.probabilitiesBp);
 
     const kickoffMs = parseTimestamp(input.kickoffAt, "kickoffAt");
     const cutoffMs = parseTimestamp(researchCutoffAt, "researchCutoffAt");
@@ -203,6 +203,12 @@ export function assessFixtureResearchEligibility(
     if (kickoffMs - cutoffMs <= safetyMs) {
       return { eligible: false, reason: "kickoff_too_close" };
     }
+
+    if (input.prior == null) {
+      return { eligible: false, reason: "missing_prior" };
+    }
+
+    assertBasisPoints(input.prior.probabilitiesBp);
 
     if (input.prior.capturedAt != null) {
       const priorMs = parseTimestamp(input.prior.capturedAt, "prior.capturedAt");
@@ -223,7 +229,6 @@ export function buildKapilotoFixtureCard(
   safetyWindowMinutes = DEFAULT_RESEARCH_SAFETY_WINDOW_MINUTES,
 ): KapilotoFixtureCard {
   assertFixtureIdentity(input);
-  assertBasisPoints(input.prior.probabilitiesBp);
 
   const eligibility = assessFixtureResearchEligibility(
     input,
@@ -235,6 +240,14 @@ export function buildKapilotoFixtureCard(
       `Fixture ${input.gameNumber} is not eligible for fresh research: ${eligibility.reason}`,
     );
   }
+
+  if (input.prior == null) {
+    throw new Error(
+      `Fixture ${input.gameNumber} is not eligible for fresh research: missing_prior`,
+    );
+  }
+
+  assertBasisPoints(input.prior.probabilitiesBp);
 
   const aggregate =
     input.competition.aggregateHome != null &&
