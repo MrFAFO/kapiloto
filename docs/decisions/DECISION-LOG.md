@@ -134,3 +134,12 @@ Reason: separates outcome uncertainty from confidence in the evidence/research p
 ## D-032 — Fixture fan-out is the preferred research topology, pending shadow comparison
 Decision: the worker architecture supports both a whole-round batch arm and fixture-scoped fan-out. The preferred first implementation is one task per eligible fixture with bounded concurrency and fixture-scoped retries, followed by deterministic round synthesis and atomic publication. Whole-round execution remains a shadow comparison arm until quality/cost data settles the choice.
 Reason: deterministic server synthesis removes the need for one 16-game model context, while fan-out improves isolation, retry cost and grounding depth.
+
+## D-033 — API-Football is the provisional MVP structured provider
+Decision: use API-Football as the first structured fixture/market provider for MVP implementation, behind the existing provider abstraction. This is provisional and remains replaceable by Sportmonks or another provider.
+
+Evidence: live spike on Winner 16 round 264101 resolved 16/16 fixtures, returned pre-match 1X2 odds for 16/16 fixtures with an average of 5.94 complete bookmakers, observed lineups on all six already-finished fixtures, and observed injury rows on 11/16 fixtures.
+
+Caveat: the Israeli fixtures returned zero injury rows in this spike, so structured injury coverage must not be treated as complete for Israel. Kapiloto availability research continues to rely on verified web/official evidence and may use provider injury data only as one structured input.
+
+Reason: API-Football demonstrated full round mapping and market-prior coverage at low MVP cost, which are the two hard dependencies for the frozen fixture card and p_prior pipeline.
