@@ -1,19 +1,20 @@
 # Schema v1 — Pre-Migration Design
 
-Status: **draft, not applied to Supabase**.
+Status: **applied to the Kapiloto development Supabase project on 2026-10-18; production use is not yet enabled**.
 
-Files:
+Source drafts:
 - `supabase/drafts/001_schema_v1.sql`
 - `supabase/drafts/002_rls_v1.sql`
+- `supabase/drafts/003_kapiloto_research_rpc.sql`
+- `supabase/drafts/004_kapiloto_attempt_rpc.sql`
 
-## Why this is still a draft
+Applied migration history is tracked under `supabase/migrations/`.
 
-We have intentionally not created/applied a Supabase project schema yet. The next database step should happen only after:
-1. external architecture/security reviews are reconciled;
-2. a Supabase project is explicitly created/approved;
-3. the draft is iterated with `execute_sql`;
-4. advisors and isolation tests pass;
-5. a clean migration is generated.
+## Current database state
+
+The dedicated Kapiloto development project now contains Schema v1, RLS v1, the research-request RPC and attempt-queue RPC. All public/private application tables have RLS enabled. Raw Kapiloto/provider tables intentionally have no authenticated Data API grants. The five Kapiloto execution RPCs are executable by `service_role` only.
+
+Before production use, complete authenticated cross-user/group isolation tests, configure runtime secrets, seed canonical round data, and finish the remaining auth/application flows.
 
 ## Important Schema v1 choices
 
