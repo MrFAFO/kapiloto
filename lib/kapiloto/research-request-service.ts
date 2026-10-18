@@ -9,7 +9,6 @@ export type KapilotoResearchRequestInput = {
   intent: KapilotoRequestIntent;
   idempotencyKey: string;
   basedOnRunId: string | null;
-  refreshEligible: boolean;
   breakerOpen: boolean;
 };
 
