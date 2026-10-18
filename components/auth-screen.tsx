@@ -42,7 +42,7 @@ function AuthHero() {
   return (
     <div className="relative aspect-[390/286] w-full shrink-0 overflow-hidden bg-[#0a1120]">
       <img
-        src="/brand/kapiloto-auth-hero.jpg"
+        src="/brand/kapiloto-auth-hero.svg"
         alt=""
         loading="eager"
         fetchPriority="high"
