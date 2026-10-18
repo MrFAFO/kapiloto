@@ -12,6 +12,8 @@ export const KAPILOTO_RELIABILITY_FORMULA_VERSION =
   "kapiloto-reliability-shadow-v1";
 export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v1";
 
+export type KapilotoEnv = Readonly<Record<string, string | undefined>>;
+
 export function sha256Text(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
@@ -34,7 +36,7 @@ function parsePositiveInteger(
 }
 
 export function getKapilotoOpenAIModel(
-  env: NodeJS.ProcessEnv = process.env,
+  env: KapilotoEnv = process.env,
 ): string {
   const model = env.KAPILOTO_OPENAI_MODEL?.trim();
   if (!model) {
@@ -46,7 +48,7 @@ export function getKapilotoOpenAIModel(
 }
 
 export function getKapilotoReasoningEffort(
-  env: NodeJS.ProcessEnv = process.env,
+  env: KapilotoEnv = process.env,
 ): KapilotoSolReasoningEffort {
   const effort = (env.KAPILOTO_OPENAI_REASONING_EFFORT ?? "high").trim();
   if (effort !== "low" && effort !== "medium" && effort !== "high") {
@@ -58,7 +60,7 @@ export function getKapilotoReasoningEffort(
 }
 
 export function getApiFootballMinRequestIntervalMs(
-  env: NodeJS.ProcessEnv = process.env,
+  env: KapilotoEnv = process.env,
 ): number {
   const raw = env.API_FOOTBALL_MIN_REQUEST_INTERVAL_MS;
   if (raw == null || raw.trim() === "") return 6_500;
@@ -73,7 +75,7 @@ export function getApiFootballMinRequestIntervalMs(
 }
 
 export function getKapilotoRunConfig(
-  env: NodeJS.ProcessEnv = process.env,
+  env: KapilotoEnv = process.env,
 ): KapilotoRunConfig {
   return {
     modelKey: getKapilotoOpenAIModel(env),
