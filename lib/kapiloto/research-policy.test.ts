@@ -166,3 +166,21 @@ test("round close and circuit breaker never create a new run", () => {
     "serve_current",
   );
 });
+
+test("closed round does not join an active run", () => {
+  assert.deepEqual(
+    decideKapilotoResearchRequest(
+      state({
+        runsConsumed: 1,
+        activeRunId: "run-1",
+        roundClosed: true,
+      }),
+      { intent: "consult", basedOnRunId: null },
+    ),
+    {
+      action: "serve_current",
+      outcome: "round_closed",
+      runId: null,
+    },
+  );
+});
