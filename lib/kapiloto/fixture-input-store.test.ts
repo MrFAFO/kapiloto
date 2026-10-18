@@ -75,6 +75,7 @@ test("assembles 16 fixture inputs and uses the latest pre-cutoff prior", () => {
   );
 
   assert.equal(inputs.length, 16);
+  assert.ok(inputs[0].prior);
   assert.equal(inputs[0].prior.snapshotId, "latest-1");
   assert.deepEqual(inputs[0].prior.probabilitiesBp, {
     home: 4200,
