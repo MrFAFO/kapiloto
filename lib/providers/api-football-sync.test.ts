@@ -105,7 +105,7 @@ test("sync resolves and persists a complete 16-game market snapshot", async () =
     store,
     client,
     "round-1",
-    () => new Date(1_800_000_000_000 + tick++ * 1000),
+    () => new Date(Date.parse("2026-10-18T12:00:00Z") + tick++ * 1000),
   );
 
   assert.equal(result.summary.saved, 16);
@@ -178,4 +178,37 @@ test("known provider-team orientation mismatch is rejected", async () => {
   assert.equal(result.fixtures[0].status, "error");
   assert.match(result.fixtures[0].error ?? "", /home-team mapping mismatch/);
   assert.equal(result.summary.saved, 15);
+});
+
+test("skips fixtures that are already inside the kickoff safety window", async () => {
+  const store = new MemoryStore();
+  const lateGames = games();
+  lateGames[0].kickoffAt = "2026-10-18T12:10:00Z";
+  store.loadRoundGames = async () => lateGames;
+
+  let resolveCalls = 0;
+  const client: ApiFootballSyncClient = {
+    async resolveFixture(input) {
+      resolveCalls += 1;
+      return {
+        fixture: providerFixture(input.gameNumber),
+        resolution: "name_match",
+      };
+    },
+    async getThreeWayQuotes(fixture) {
+      return quotes(fixture);
+    },
+  };
+
+  const result = await syncApiFootballRoundMarket(
+    store,
+    client,
+    "round-1",
+    () => new Date("2026-10-18T12:00:00Z"),
+  );
+
+  assert.equal(result.fixtures[0].status, "skipped_kickoff");
+  assert.equal(result.summary.skippedKickoff, 1);
+  assert.equal(resolveCalls, 15);
+  assert.equal(store.saved.length, 15);
 });
