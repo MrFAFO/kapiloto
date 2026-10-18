@@ -50,7 +50,13 @@ export interface ApiFootballSyncClient {
 export type ApiFootballFixtureSyncResult = {
   gameNumber: number;
   roundGameId: string;
-  status: "saved" | "not_found" | "ambiguous" | "no_market" | "error";
+  status:
+    | "saved"
+    | "skipped_kickoff"
+    | "not_found"
+    | "ambiguous"
+    | "no_market"
+    | "error";
   providerFixtureId: string | null;
   bookmakerCount: number;
   error: string | null;
@@ -64,6 +70,7 @@ export type ApiFootballRoundSyncResult = {
   summary: {
     requested: number;
     saved: number;
+    skippedKickoff: number;
     notFound: number;
     ambiguous: number;
     noMarket: number;
@@ -114,14 +121,34 @@ export async function syncApiFootballRoundMarket(
   client: ApiFootballSyncClient,
   roundId: string,
   clock: () => Date = () => new Date(),
+  safetyWindowMinutes = 15,
 ): Promise<ApiFootballRoundSyncResult> {
-  const startedAt = clock().toISOString();
+  const started = clock();
+  const startedAt = started.toISOString();
+  const syncBoundaryMs = started.getTime();
+  const safetyWindowMs = safetyWindowMinutes * 60_000;
   const games = await store.loadRoundGames(roundId);
   validateRoundGames(games);
 
   const fixtures: ApiFootballFixtureSyncResult[] = [];
 
   for (const game of [...games].sort((a, b) => a.gameNumber - b.gameNumber)) {
+    const kickoffMs = Date.parse(game.kickoffAt);
+    if (
+      !Number.isFinite(kickoffMs) ||
+      kickoffMs - syncBoundaryMs <= safetyWindowMs
+    ) {
+      fixtures.push({
+        gameNumber: game.gameNumber,
+        roundGameId: game.roundGameId,
+        status: "skipped_kickoff",
+        providerFixtureId: game.providerFixtureId?.toString() ?? null,
+        bookmakerCount: 0,
+        error: Number.isFinite(kickoffMs) ? null : "invalid kickoff timestamp",
+      });
+      continue;
+    }
+
     try {
       const input: ProviderSpikeFixtureInput = {
         gameNumber: game.gameNumber,
@@ -207,6 +234,9 @@ export async function syncApiFootballRoundMarket(
     summary: {
       requested: fixtures.length,
       saved: fixtures.filter((fixture) => fixture.status === "saved").length,
+      skippedKickoff: fixtures.filter(
+        (fixture) => fixture.status === "skipped_kickoff",
+      ).length,
       notFound: fixtures.filter((fixture) => fixture.status === "not_found")
         .length,
       ambiguous: fixtures.filter((fixture) => fixture.status === "ambiguous")
