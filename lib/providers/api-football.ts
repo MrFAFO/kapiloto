@@ -227,7 +227,8 @@ function fixtureMatchScore(
 }
 
 export class ApiFootballClient {
-  private readonly coverageCache = new Map<string, ProviderCapabilities>();
+  private readonly fixturesByDateCache = new Map<string, ProviderFixture[]>();
+  private nextRequestAt = 0;
 
   constructor(
     private readonly apiKey: string,
@@ -236,10 +237,22 @@ export class ApiFootballClient {
     if (!apiKey) throw new Error("API_FOOTBALL_API_KEY is required.");
   }
 
+  private async waitForRateSlot(): Promise<void> {
+    const now = Date.now();
+    const waitMs = Math.max(0, this.nextRequestAt - now);
+    this.nextRequestAt = Math.max(this.nextRequestAt, now) + 6_500;
+
+    if (waitMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+
   private async request<T>(
     path: string,
     params: Record<string, string | number | undefined>,
   ): Promise<ApiFootballEnvelope<T>> {
+    await this.waitForRateSlot();
+
     const url = new URL(path, this.baseUrl);
     for (const [key, value] of Object.entries(params)) {
       if (value != null) url.searchParams.set(key, String(value));
@@ -254,8 +267,12 @@ export class ApiFootballClient {
     });
 
     if (!response.ok) {
+      const remainingMinute = response.headers.get("x-ratelimit-remaining");
+      const remainingDaily = response.headers.get("x-ratelimit-requests-remaining");
       throw new Error(
-        `API-Football HTTP ${response.status} for ${url.pathname}`,
+        `API-Football HTTP ${response.status} for ${url.pathname}` +
+          (remainingMinute != null ? ` minute_remaining=${remainingMinute}` : "") +
+          (remainingDaily != null ? ` daily_remaining=${remainingDaily}` : ""),
       );
     }
 
@@ -289,13 +306,20 @@ export class ApiFootballClient {
     }
 
     const date = new Date(input.kickoffAt).toISOString().slice(0, 10);
-    const envelope = await this.request<ApiFootballFixtureRow>("/fixtures", {
-      date,
-      timezone: "UTC",
-    });
-    const candidates = requireResponse(envelope, "fixture resolution")
-      .map(toProviderFixture)
-      .filter((fixture): fixture is ProviderFixture => fixture != null)
+    let dateFixtures = this.fixturesByDateCache.get(date);
+
+    if (!dateFixtures) {
+      const envelope = await this.request<ApiFootballFixtureRow>("/fixtures", {
+        date,
+        timezone: "UTC",
+      });
+      dateFixtures = requireResponse(envelope, "fixture resolution")
+        .map(toProviderFixture)
+        .filter((fixture): fixture is ProviderFixture => fixture != null);
+      this.fixturesByDateCache.set(date, dateFixtures);
+    }
+
+    const candidates = dateFixtures
       .map((fixture) => ({ fixture, score: fixtureMatchScore(input, fixture) }))
       .filter(({ score }) => score >= 0.72)
       .sort((a, b) => b.score - a.score);
@@ -312,36 +336,6 @@ export class ApiFootballClient {
     }
 
     return { fixture: candidates[0].fixture, resolution: "name_match" };
-  }
-
-  async getLeagueCoverage(
-    leagueId: string,
-    season: number | null,
-  ): Promise<ProviderCapabilities> {
-    if (season == null) {
-      return { lineups: null, injuries: null, odds: null, predictions: null };
-    }
-
-    const cacheKey = `${leagueId}:${season}`;
-    const cached = this.coverageCache.get(cacheKey);
-    if (cached) return cached;
-
-    const envelope = await this.request<ApiFootballLeagueRow>("/leagues", {
-      id: leagueId,
-      season,
-    });
-    const row = requireResponse(envelope, "league coverage")[0];
-    const seasonRow = row?.seasons?.find((item) => item.year === season);
-    const coverage = seasonRow?.coverage;
-
-    const capabilities: ProviderCapabilities = {
-      lineups: coverage?.fixtures?.lineups ?? null,
-      injuries: coverage?.injuries ?? null,
-      odds: coverage?.odds ?? null,
-      predictions: coverage?.predictions ?? null,
-    };
-    this.coverageCache.set(cacheKey, capabilities);
-    return capabilities;
   }
 
   async getLineupEntryCount(fixtureId: string): Promise<number> {
@@ -432,28 +426,22 @@ export class ApiFootballClient {
     let quotes: BookmakerThreeWayQuote[] = [];
 
     try {
-      capabilities = await this.getLeagueCoverage(
-        fixture.competition.id,
-        fixture.season,
-      );
-    } catch (error) {
-      providerErrors.push(error instanceof Error ? error.message : String(error));
-    }
-
-    try {
       lineupEntries = await this.getLineupEntryCount(fixture.providerFixtureId);
+      capabilities.lineups = true;
     } catch (error) {
       providerErrors.push(error instanceof Error ? error.message : String(error));
     }
 
     try {
       injuryEntries = await this.getInjuryEntryCount(fixture.providerFixtureId);
+      capabilities.injuries = true;
     } catch (error) {
       providerErrors.push(error instanceof Error ? error.message : String(error));
     }
 
     try {
       quotes = await this.getThreeWayQuotes(fixture);
+      capabilities.odds = true;
     } catch (error) {
       providerErrors.push(error instanceof Error ? error.message : String(error));
     }
