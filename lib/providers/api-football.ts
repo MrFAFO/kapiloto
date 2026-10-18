@@ -9,7 +9,13 @@ import type {
 } from "./types";
 
 const DEFAULT_BASE_URL = "https://v3.football.api-sports.io";
+const DEFAULT_MIN_REQUEST_INTERVAL_MS = 6_500;
 const MATCH_WINNER_BET_ID = 1;
+
+export type ApiFootballClientOptions = {
+  baseUrl?: string;
+  minRequestIntervalMs?: number;
+};
 
 type ApiFootballEnvelope<T> = {
   errors?: Record<string, string> | string[];
@@ -229,18 +235,32 @@ function fixtureMatchScore(
 export class ApiFootballClient {
   private readonly fixturesByDateCache = new Map<string, ProviderFixture[]>();
   private nextRequestAt = 0;
+  private readonly baseUrl: string;
+  private readonly minRequestIntervalMs: number;
 
   constructor(
     private readonly apiKey: string,
-    private readonly baseUrl = DEFAULT_BASE_URL,
+    options: ApiFootballClientOptions = {},
   ) {
     if (!apiKey) throw new Error("API_FOOTBALL_API_KEY is required.");
+
+    this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+    this.minRequestIntervalMs =
+      options.minRequestIntervalMs ?? DEFAULT_MIN_REQUEST_INTERVAL_MS;
+
+    if (
+      !Number.isFinite(this.minRequestIntervalMs) ||
+      this.minRequestIntervalMs < 0
+    ) {
+      throw new Error("minRequestIntervalMs must be a non-negative number.");
+    }
   }
 
   private async waitForRateSlot(): Promise<void> {
     const now = Date.now();
     const waitMs = Math.max(0, this.nextRequestAt - now);
-    this.nextRequestAt = Math.max(this.nextRequestAt, now) + 6_500;
+    this.nextRequestAt =
+      Math.max(this.nextRequestAt, now) + this.minRequestIntervalMs;
 
     if (waitMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, waitMs));
