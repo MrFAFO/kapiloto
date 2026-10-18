@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test:providers": "tsx --test lib/providers/*.test.ts",
     "spike:provider": "tsx scripts/provider-spike.ts",
-    "spike:compare": "tsx scripts/compare-provider-reports.ts"
+    "spike:compare": "tsx scripts/compare-provider-reports.ts",
+    "test:kapiloto": "tsx --test lib/kapiloto/*.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
