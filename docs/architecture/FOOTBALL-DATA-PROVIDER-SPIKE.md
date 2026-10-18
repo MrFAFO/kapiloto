@@ -188,3 +188,61 @@ Start the empirical spike with API-Football's free tier.
 Use Sportmonks as the quality benchmark on a trial/free account for the same sampled fixtures.
 
 Only after comparing real Winner 16 rounds should D-006's provider implementation be bound to a concrete vendor.
+
+## Round 264101 live spike result
+
+Executed against API-Football Free on 2026-10-18 using the repository spike harness with free-tier throttling.
+
+### Summary
+- requested fixtures: 16
+- resolved fixtures: **16/16**
+- fixtures with observed odds: **16/16**
+- average complete 1X2 bookmakers when odds were available: **5.94**
+- fixtures with observed lineups: **6/16**
+- fixtures with observed injuries: **11/16**
+- degraded one-bookmaker priors: **0**
+
+The six observed lineups correspond to fixtures that had already finished by the time of the spike. Future fixtures correctly had no published lineup yet, so 6/16 must not be interpreted as poor lineup coverage.
+
+### Israeli coverage observations
+All five Israeli fixtures mapped correctly, including Ligat Ha'al and Liga Leumit.
+
+Completed Ligat Ha'al fixtures returned full lineup payloads (40 entries per fixture), demonstrating usable lineup coverage.
+
+However, all five Israeli fixtures returned zero injury rows in this sample. This is a material limitation for availability research and must be supplemented with official/web evidence.
+
+### Market-prior quality
+Every fixture returned a usable non-degraded 1X2 prior from 5–6 complete bookmakers.
+
+Example priors (basis points):
+- Beitar Jerusalem vs Maccabi Tel Aviv: 3186 / 2464 / 4350
+- Bournemouth vs Sunderland: 4520 / 2766 / 2714
+- Leeds United vs Manchester United: 4034 / 2692 / 3274
+- Celta Vigo vs Alaves: 4302 / 2911 / 2787
+- Borussia Mönchengladbach vs Hoffenheim: 3058 / 2357 / 4585
+
+These are de-vigged aggregated market priors produced by Kapiloto's shared market function; they are not bookmaker raw implied probabilities.
+
+### Free-tier operational finding
+API-Football Free is limited to 10 requests/minute and 100/day. The first burst test hit HTTP 429 after several fixtures.
+
+The spike harness was then changed to:
+- cache fixtures by date;
+- skip the current-season league-coverage endpoint on Free;
+- throttle requests to one slot every 6.5 seconds;
+- wait for the previous rate-limit window before retrying.
+
+The throttled full-round run completed successfully with no provider errors.
+
+### Decision
+API-Football is accepted as the **provisional MVP structured provider** for:
+- canonical fixture resolution/mapping;
+- kickoff/status;
+- league/round context;
+- lineup payloads when published;
+- structured pre-match 1X2 market prior;
+- injury data when present.
+
+It is **not** accepted as the sole injury/team-news source.
+
+The provider abstraction remains mandatory, and Sportmonks remains the benchmark/fallback candidate.
