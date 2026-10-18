@@ -52,7 +52,7 @@ jobs:
             --provider api-football \
             --input scripts/provider-spike.round-264101.json \
             --out artifacts/provider-spike/api-football.json \
-            --concurrency "${{ inputs.concurrency }}"
+            --concurrency "${{ inputs.concurrency || '2' }}"
 
       - name: Probe Sportmonks
         if: ${{ github.event_name == 'workflow_dispatch' && (inputs.provider == 'both' || inputs.provider == 'sportmonks') }}
@@ -63,7 +63,7 @@ jobs:
             --provider sportmonks \
             --input scripts/provider-spike.round-264101.json \
             --out artifacts/provider-spike/sportmonks.json \
-            --concurrency "${{ inputs.concurrency }}"
+            --concurrency "${{ inputs.concurrency || '2' }}"
 
       - name: Compare providers
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.provider == 'both' }}
