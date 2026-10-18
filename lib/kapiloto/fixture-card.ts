@@ -230,6 +230,17 @@ export function buildKapilotoFixtureCard(
 ): KapilotoFixtureCard {
   assertFixtureIdentity(input);
 
+  if (input.prior == null) {
+    throw new Error(
+      `Fixture ${input.gameNumber} is not eligible for fresh research: missing_prior`,
+    );
+  }
+
+  // The builder is a developer-facing invariant boundary, so malformed
+  // probabilities fail with a precise diagnostic instead of the policy-level
+  // generic invalid_fixture reason.
+  assertBasisPoints(input.prior.probabilitiesBp);
+
   const eligibility = assessFixtureResearchEligibility(
     input,
     researchCutoffAt,
@@ -240,14 +251,6 @@ export function buildKapilotoFixtureCard(
       `Fixture ${input.gameNumber} is not eligible for fresh research: ${eligibility.reason}`,
     );
   }
-
-  if (input.prior == null) {
-    throw new Error(
-      `Fixture ${input.gameNumber} is not eligible for fresh research: missing_prior`,
-    );
-  }
-
-  assertBasisPoints(input.prior.probabilitiesBp);
 
   const aggregate =
     input.competition.aggregateHome != null &&
