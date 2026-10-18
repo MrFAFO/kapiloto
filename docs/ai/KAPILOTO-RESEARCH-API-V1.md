@@ -73,7 +73,7 @@ Analysis includes outcome, deterministically derived primary_pick and suggested_
 | Eligible explicit recheck | 202 | researching | created_run |
 | Recheck not eligible | 200 | ready/stale | refresh_ineligible |
 | Recheck based on older run | 200 | ready/stale | served_newer |
-| Three budget slots consumed | 200 | limit_reached when stale | limit_reached |
+| Explicit request after three budget slots are consumed | 200 | limit_reached when no fresh usable analysis is available | limit_reached |
 | Round closed | 200 | ready/stale/limit_reached | served_cache |
 | No usable analysis after terminal failure | 200 | error | n/a |
 | Backend/worker unavailable and no useful cached response | 503 | n/a | n/a |
@@ -82,6 +82,12 @@ Analysis includes outcome, deterministically derived primary_pick and suggested_
 | Unauthorized/forbidden/not found | 401/403/404 | n/a | n/a |
 
 Do not use 429 for the three-run business limit.
+
+For read-only GETs, a stale published analysis may remain `stale` while
+`research.runs_remaining = 0`; the client renders that combination as
+research-budget-exhausted while preserving the newest analysis. The
+`limit_reached` request outcome is reserved for an explicit POST that asks
+for another run after the logical-run budget is exhausted.
 
 ## Idempotency
 Store (user_id, idempotency_key, request_sha256). Same key + same body returns the current state of the original request/run and never creates another run. Same key + different body returns 422.
