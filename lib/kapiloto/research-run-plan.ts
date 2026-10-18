@@ -24,7 +24,11 @@ export type ResearchFixtureDisposition =
       roundGameId: string;
       mode: "carried_forward";
       carriedFromAnalysisId: string;
-      reason: "kickoff_too_close" | "already_started";
+      reason:
+        | "kickoff_too_close"
+        | "already_started"
+        | "missing_prior"
+        | "post_cutoff_prior";
     }
   | {
       gameNumber: number;
@@ -33,6 +37,7 @@ export type ResearchFixtureDisposition =
       reason:
         | "kickoff_too_close"
         | "already_started"
+        | "missing_prior"
         | "post_cutoff_prior"
         | "invalid_fixture";
     };
@@ -92,7 +97,9 @@ export function buildKapilotoResearchRunPlan(
     if (
       previousAnalysisId &&
       (eligibility.reason === "kickoff_too_close" ||
-        eligibility.reason === "already_started")
+        eligibility.reason === "already_started" ||
+        eligibility.reason === "missing_prior" ||
+        eligibility.reason === "post_cutoff_prior")
     ) {
       return {
         gameNumber: input.gameNumber,
