@@ -105,3 +105,40 @@ test("snapshot hash is independent of object key insertion order", () => {
 
   assert.equal(sha256Hex(a), sha256Hex(b));
 });
+
+test("missing future prior carries forward when an earlier analysis exists", () => {
+  const inputs = Array.from({ length: 16 }, (_, index) => fixture(index + 1));
+  inputs[0].prior = null;
+
+  const plan = buildKapilotoResearchRunPlan(
+    inputs,
+    "2026-10-18T12:00:00Z",
+    [{ roundGameId: "game-1", analysisId: "analysis-old-1" }],
+  );
+
+  assert.deepEqual(plan.fixtures[0], {
+    gameNumber: 1,
+    roundGameId: "game-1",
+    mode: "carried_forward",
+    carriedFromAnalysisId: "analysis-old-1",
+    reason: "missing_prior",
+  });
+  assert.equal(plan.taskGameIds.length, 15);
+});
+
+test("missing future prior is explicit research_unavailable on the first run", () => {
+  const inputs = Array.from({ length: 16 }, (_, index) => fixture(index + 1));
+  inputs[0].prior = null;
+
+  const plan = buildKapilotoResearchRunPlan(
+    inputs,
+    "2026-10-18T12:00:00Z",
+  );
+
+  assert.deepEqual(plan.fixtures[0], {
+    gameNumber: 1,
+    roundGameId: "game-1",
+    mode: "research_unavailable",
+    reason: "missing_prior",
+  });
+});
