@@ -87,7 +87,7 @@ test("assembles 16 fixture inputs and uses the latest pre-cutoff prior", () => {
   ]);
 });
 
-test("fails closed when a fixture lacks a pre-cutoff market prior", () => {
+test("preserves a fixture with null prior when no pre-cutoff market exists", () => {
   const marketSnapshots = games.slice(1).map((game) => ({
     id: `market-${game.game_number}`,
     round_game_id: game.id,
@@ -97,18 +97,17 @@ test("fails closed when a fixture lacks a pre-cutoff market prior", () => {
     p_2_bp: 3000,
   }));
 
-  assert.throws(
-    () =>
-      assembleFixtureCardInputs(
-        {
-          games,
-          teams,
-          teamAliases: [],
-          teamMappings: [],
-          marketSnapshots,
-        },
-        "2026-10-18T12:00:00Z",
-      ),
-    /Missing pre-cutoff market prior for Toto game 1/,
+  const inputs = assembleFixtureCardInputs(
+    {
+      games,
+      teams,
+      teamAliases: [],
+      teamMappings: [],
+      marketSnapshots,
+    },
+    "2026-10-18T12:00:00Z",
   );
+
+  assert.equal(inputs[0].prior, null);
+  assert.equal(inputs[1].prior?.snapshotId, "market-2");
 });
