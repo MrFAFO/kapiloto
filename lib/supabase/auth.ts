@@ -10,6 +10,14 @@ import { createClient } from "./server";
 export async function getAuthenticatedUserId(
   client?: SupabaseClient,
 ): Promise<string | null> {
+  if (
+    !client &&
+    (!process.env.NEXT_PUBLIC_SUPABASE_URL ||
+      !process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY)
+  ) {
+    return null;
+  }
+
   const supabase = client ?? (await createClient());
   const { data, error } = await supabase.auth.getClaims();
 

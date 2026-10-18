@@ -11,7 +11,8 @@
     "spike:provider": "tsx scripts/provider-spike.ts",
     "spike:compare": "tsx scripts/compare-provider-reports.ts",
     "test:kapiloto": "tsx --test lib/kapiloto/*.test.ts",
-    "test:ui": "tsx --test components/*.test.tsx"
+    "test:ui": "tsx --test components/*.test.tsx",
+    "test:auth": "tsx --test lib/auth/*.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",

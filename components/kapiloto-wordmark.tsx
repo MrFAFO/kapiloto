@@ -1,20 +1,33 @@
-/** Brand/Kapiloto Wordmark · Size=Header (Figma node 69:11). */
-export function KapilotoWordmark() {
+type KapilotoWordmarkProps = {
+  size?: "header" | "hero";
+  className?: string;
+};
+
+/** Official Brand/Kapiloto Wordmark (Figma component 69:20). */
+export function KapilotoWordmark({
+  size = "header",
+  className = "",
+}: KapilotoWordmarkProps) {
+  const hero = size === "hero";
+
   return (
-    <div className="flex items-center justify-center gap-[5px] p-1" aria-label="קפילוטו">
+    <div
+      className={`flex items-center justify-center p-1 ${hero ? "gap-2" : "gap-[5px]"} ${className}`}
+      aria-label="קפילוטו"
+    >
       <span
         aria-hidden
-        className="whitespace-nowrap bg-gradient-to-r from-[#fafaff] via-[#cca3ff] via-[58%] to-[#8c3dfa] bg-clip-text text-[22px] font-extrabold leading-none text-transparent [filter:drop-shadow(0_3px_8px_rgba(112,56,250,0.26))]"
-        style={{ fontFamily: "var(--font-wordmark), Rubik, sans-serif" }}
+        className={`whitespace-nowrap bg-gradient-to-r from-[#fafaff] via-[#cca3ff] via-[58%] to-[#8c3dfa] bg-clip-text font-extrabold leading-none text-transparent [filter:drop-shadow(0_3px_8px_rgba(112,56,250,0.26))] ${hero ? "text-[42px]" : "text-[22px]"}`}
+        style={{ fontFamily: "var(--font-rubik), Rubik, sans-serif" }}
       >
         קפילוטו
       </span>
       <img
         src="/brand/kapiloto-football-mark.svg"
         alt=""
-        width={19}
-        height={19}
-        className="block size-[19px] shrink-0"
+        width={hero ? 34 : 19}
+        height={hero ? 34 : 19}
+        className={`block shrink-0 ${hero ? "size-[34px]" : "size-[19px]"}`}
       />
     </div>
   );

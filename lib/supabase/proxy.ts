@@ -1,6 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { KAPILOTO_REMEMBER_COOKIE } from "@/lib/auth/session";
+import type { Database } from "@/lib/supabase/database.types";
+
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -11,18 +14,32 @@ export async function updateSession(request: NextRequest) {
     return response;
   }
 
-  const supabase = createServerClient(url, publishableKey, {
+  const remember =
+    request.cookies.get(KAPILOTO_REMEMBER_COOKIE)?.value !== "0";
+
+  const supabase = createServerClient<Database>(url, publishableKey, {
     cookies: {
       getAll() {
         return request.cookies.getAll();
       },
       setAll(cookiesToSet, headers) {
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+        cookiesToSet.forEach(({ name, value }) => {
+          request.cookies.set(name, value);
+        });
 
         response = NextResponse.next({ request });
 
         cookiesToSet.forEach(({ name, value, options }) => {
-          response.cookies.set(name, value, options);
+          if (!remember) {
+            const {
+              maxAge: _maxAge,
+              expires: _expires,
+              ...sessionOnlyOptions
+            } = options;
+            response.cookies.set(name, value, sessionOnlyOptions);
+          } else {
+            response.cookies.set(name, value, options);
+          }
         });
 
         Object.entries(headers).forEach(([key, value]) => {
@@ -32,8 +49,8 @@ export async function updateSession(request: NextRequest) {
     },
   });
 
-  // Keep this immediately after client creation: it validates/refreshes the
-  // auth token and prevents stale SSR cookies from drifting out of sync.
+  // Keep identity validation adjacent to client creation. The proxy exists to
+  // refresh cookie-backed sessions; authorization still happens in routes/RLS.
   await supabase.auth.getClaims();
 
   return response;

@@ -3,7 +3,11 @@ import { cookies } from "next/headers";
 
 import type { Database } from "./database.types";
 
-export async function createClient() {
+export type ServerSupabaseOptions = {
+  remember?: boolean;
+};
+
+export async function createClient(options: ServerSupabaseOptions = {}) {
   const cookieStore = await cookies();
 
   return createServerClient<Database>(
@@ -16,8 +20,17 @@ export async function createClient() {
         },
         setAll(cookiesToSet) {
           try {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
+            cookiesToSet.forEach(({ name, value, options: cookieOptions }) => {
+              if (options.remember === false) {
+                const {
+                  maxAge: _maxAge,
+                  expires: _expires,
+                  ...sessionOnlyOptions
+                } = cookieOptions;
+                cookieStore.set(name, value, sessionOnlyOptions);
+                return;
+              }
+              cookieStore.set(name, value, cookieOptions);
             });
           } catch {
             // Server Components cannot write cookies. proxy.ts will refresh

@@ -9,10 +9,10 @@ const hebrew = Noto_Sans_Hebrew({
   display: "swap",
 });
 
-const wordmark = Rubik({
+const rubik = Rubik({
   subsets: ["hebrew", "latin"],
-  weight: ["800"],
-  variable: "--font-wordmark",
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-rubik",
   display: "swap",
 });
 
@@ -27,7 +27,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="he" dir="rtl" className={`${hebrew.variable} ${wordmark.variable}`}>
+    <html lang="he" dir="rtl" className={`${hebrew.variable} ${rubik.variable}`}>
       <body>{children}</body>
     </html>
   );
