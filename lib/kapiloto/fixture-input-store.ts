@@ -24,6 +24,11 @@ type TeamRow = {
   canonical_name: string;
 };
 
+type TeamAliasRow = {
+  team_id: string;
+  alias: string;
+};
+
 type TeamMappingRow = {
   team_id: string;
   provider_name: string | null;
@@ -41,6 +46,7 @@ type MarketSnapshotRow = {
 export type FixtureInputRows = {
   games: RoundGameRow[];
   teams: TeamRow[];
+  teamAliases: TeamAliasRow[];
   teamMappings: TeamMappingRow[];
   marketSnapshots: MarketSnapshotRow[];
 };
@@ -72,19 +78,29 @@ function latestSnapshotByGame(
   return latest;
 }
 
-function aliasesByTeam(rows: TeamMappingRow[]): Map<string, string[]> {
+function aliasesByTeam(
+  aliasRows: TeamAliasRow[],
+  mappingRows: TeamMappingRow[],
+): Map<string, string[]> {
   const map = new Map<string, string[]>();
 
-  for (const row of rows) {
-    const alias = row.provider_name?.trim();
-    if (!alias) continue;
+  const add = (teamId: string, rawAlias: string | null | undefined) => {
+    const alias = rawAlias?.trim();
+    if (!alias) return;
 
-    const aliases = map.get(row.team_id) ?? [];
-    if (!aliases.some((value) => value.toLocaleLowerCase() === alias.toLocaleLowerCase())) {
+    const aliases = map.get(teamId) ?? [];
+    if (
+      !aliases.some(
+        (value) => value.toLocaleLowerCase() === alias.toLocaleLowerCase(),
+      )
+    ) {
       aliases.push(alias);
     }
-    map.set(row.team_id, aliases);
-  }
+    map.set(teamId, aliases);
+  };
+
+  for (const row of aliasRows) add(row.team_id, row.alias);
+  for (const row of mappingRows) add(row.team_id, row.provider_name);
 
   return map;
 }
@@ -107,7 +123,7 @@ export function assembleFixtureCardInputs(
   }
 
   const teams = new Map(rows.teams.map((team) => [team.id, team]));
-  const aliases = aliasesByTeam(rows.teamMappings);
+  const aliases = aliasesByTeam(rows.teamAliases, rows.teamMappings);
   const priors = latestSnapshotByGame(rows.marketSnapshots, researchCutoffAt);
 
   return sortedGames.map((game) => {
@@ -189,10 +205,15 @@ export async function loadRoundFixtureCardInputs(
 
   const [
     { data: teamsData, error: teamsError },
+    { data: aliasesData, error: aliasesError },
     { data: mappingsData, error: mappingsError },
     { data: marketsData, error: marketsError },
   ] = await Promise.all([
     client.from("teams").select("id,canonical_name").in("id", teamIds),
+    client
+      .from("team_aliases")
+      .select("team_id,alias")
+      .in("team_id", teamIds),
     client
       .from("provider_team_mappings")
       .select("team_id,provider_name")
@@ -210,8 +231,11 @@ export async function loadRoundFixtureCardInputs(
   if (teamsError) {
     throw new Error(`Failed to load teams: ${teamsError.message}`);
   }
+  if (aliasesError) {
+    throw new Error(`Failed to load canonical team aliases: ${aliasesError.message}`);
+  }
   if (mappingsError) {
-    throw new Error(`Failed to load team aliases: ${mappingsError.message}`);
+    throw new Error(`Failed to load provider team aliases: ${mappingsError.message}`);
   }
   if (marketsError) {
     throw new Error(`Failed to load market priors: ${marketsError.message}`);
@@ -221,6 +245,7 @@ export async function loadRoundFixtureCardInputs(
     {
       games,
       teams: (teamsData ?? []) as TeamRow[],
+      teamAliases: (aliasesData ?? []) as TeamAliasRow[],
       teamMappings: (mappingsData ?? []) as TeamMappingRow[],
       marketSnapshots: (marketsData ?? []) as MarketSnapshotRow[],
     },
