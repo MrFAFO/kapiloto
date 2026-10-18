@@ -1,8 +1,10 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-let adminClient: SupabaseClient | null = null;
+import type { Database } from "./database.types";
 
-export function createAdminClient(): SupabaseClient {
+let adminClient: SupabaseClient<Database> | null = null;
+
+export function createAdminClient(): SupabaseClient<Database> {
   if (adminClient) return adminClient;
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -19,7 +21,7 @@ export function createAdminClient(): SupabaseClient {
     );
   }
 
-  adminClient = createClient(url, secretKey, {
+  adminClient = createClient<Database>(url, secretKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
