@@ -134,12 +134,6 @@ export function assembleFixtureCardInputs(
     if (!home || !away) {
       throw new Error(`Missing canonical team row for Toto game ${game.game_number}.`);
     }
-    if (!prior) {
-      throw new Error(
-        `Missing pre-cutoff market prior for Toto game ${game.game_number}.`,
-      );
-    }
-
     return {
       roundId: game.round_id,
       roundGameId: game.id,
@@ -165,16 +159,19 @@ export function assembleFixtureCardInputs(
       kickoffAt: game.kickoff_at,
       neutralVenue: game.neutral_venue,
       settlementRule: game.settlement_rule,
-      prior: {
-        type: "market",
-        snapshotId: prior.id,
-        capturedAt: prior.captured_at,
-        probabilitiesBp: {
-          home: prior.p_1_bp,
-          draw: prior.p_x_bp,
-          away: prior.p_2_bp,
-        },
-      },
+      prior:
+        prior == null
+          ? null
+          : {
+              type: "market",
+              snapshotId: prior.id,
+              capturedAt: prior.captured_at,
+              probabilitiesBp: {
+                home: prior.p_1_bp,
+                draw: prior.p_x_bp,
+                away: prior.p_2_bp,
+              },
+            },
     };
   });
 }
