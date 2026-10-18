@@ -43,6 +43,10 @@ jobs:
       - name: Prepare artifact directory
         run: mkdir -p artifacts/provider-spike
 
+      - name: Cooldown API-Football free tier
+        if: ${{ github.event_name == 'push' }}
+        run: sleep 65
+
       - name: Probe API-Football
         if: ${{ github.event_name == 'push' || inputs.provider == 'both' || inputs.provider == 'api-football' }}
         env:
