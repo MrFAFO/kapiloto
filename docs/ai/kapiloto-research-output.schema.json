@@ -42,10 +42,7 @@
       "type": "string",
       "enum": [
         "analyzed",
-        "insufficient_data",
-        "void",
-        "carried_forward",
-        "research_unavailable"
+        "insufficient_data"
       ]
     },
     "evidence": {
