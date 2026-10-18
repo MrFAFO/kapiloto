@@ -68,6 +68,7 @@ test("builds a deterministic fixture card with locked 1/2 orientation", () => {
 
 test("rejects a prior captured after the research cutoff", () => {
   const input = fixture();
+  assert.ok(input.prior);
   input.prior.capturedAt = "2026-10-18T12:01:00Z";
 
   const eligibility = assessFixtureResearchEligibility(
@@ -97,6 +98,7 @@ test("does not research inside the kickoff safety window", () => {
 
 test("rejects malformed market probabilities", () => {
   const input = fixture();
+  assert.ok(input.prior);
   input.prior.probabilitiesBp.away = 2_899;
 
   assert.throws(
