@@ -445,12 +445,12 @@ $kapiloto$;
 
 revoke all on function public.kapiloto_request_research(
   uuid, uuid, uuid, text, text, text, uuid, boolean,
-  text, text, text, text, text, text, text, text, text,
+  text, text, text, text, text, text, text, text, text, text,
   timestamptz, jsonb, text, jsonb, uuid[], smallint
 ) from public, anon, authenticated;
 
 grant execute on function public.kapiloto_request_research(
   uuid, uuid, uuid, text, text, text, uuid, boolean,
-  text, text, text, text, text, text, text, text, text,
+  text, text, text, text, text, text, text, text, text, text,
   timestamptz, jsonb, text, jsonb, uuid[], smallint
 ) to service_role;
