@@ -31,7 +31,6 @@ const request = {
   intent: "consult" as const,
   idempotencyKey: "idem-1",
   basedOnRunId: null,
-  refreshEligible: false,
   breakerOpen: false,
 };
 
