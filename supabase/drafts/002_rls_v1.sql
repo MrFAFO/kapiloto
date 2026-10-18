@@ -49,7 +49,7 @@ as $$
     select 1
     from public.group_members gm
     where gm.group_id = p_group_id
-      and gm.user_id = p_user_id
+      and gm.user_id = (select auth.uid())
       and gm.status = 'active'
       and gm.role in ('owner', 'admin')
   );
