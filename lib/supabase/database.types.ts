@@ -2052,6 +2052,15 @@ export type Database = {
         Args: { p_limit?: number; p_retry_delay_seconds?: number }
         Returns: Json
       }
+      kapiloto_register_identity: {
+        Args: {
+          p_identifier_type: string
+          p_preferred_auth_identifier: string
+          p_user_id: string
+          p_username: string
+        }
+        Returns: undefined
+      }
       kapiloto_request_research: {
         Args: {
           p_based_on_run_id: string
@@ -2080,6 +2089,13 @@ export type Database = {
           p_user_id: string
         }
         Returns: Json
+      }
+      kapiloto_resolve_username: {
+        Args: { p_normalized_username: string }
+        Returns: {
+          identifier_type: string
+          preferred_auth_identifier: string
+        }[]
       }
     }
     Enums: {
