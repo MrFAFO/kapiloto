@@ -127,11 +127,6 @@ begin
     raise exception 'round_game_id does not belong to round';
   end if;
 
-  if jsonb_typeof(p_fixture_set) <> 'array'
-     or jsonb_array_length(p_fixture_set) <> 16 then
-    raise exception 'fixture_set must contain exactly 16 rows';
-  end if;
-
   insert into public.kapiloto_round_research_state (round_id)
   values (p_round_id)
   on conflict (round_id) do nothing;
@@ -214,6 +209,34 @@ begin
       'current_run_id', v_state.current_run_id,
       'runs_consumed', v_state.runs_consumed
     );
+  end if;
+
+  -- Phase 1 may intentionally omit the expensive prepared fixture snapshot.
+  -- Return without recording a request; the server prepares inputs and retries
+  -- with the SAME idempotency key. The second call re-locks/re-evaluates state.
+  if p_fixture_set is null then
+    return jsonb_build_object(
+      'replayed', false,
+      'outcome', 'prepare_required',
+      'round_id', p_round_id,
+      'active_run_id', v_state.active_run_id,
+      'current_run_id', v_state.current_run_id,
+      'runs_consumed', v_state.runs_consumed,
+      'next_budget_slot', v_state.runs_consumed + 1
+    );
+  end if;
+
+  if jsonb_typeof(p_fixture_set) <> 'array'
+     or jsonb_array_length(p_fixture_set) <> 16 then
+    raise exception 'fixture_set must contain exactly 16 rows';
+  end if;
+
+  if p_research_cutoff_at is null then
+    raise exception 'research_cutoff_at is required when creating a run';
+  end if;
+
+  if nullif(trim(p_fixture_set_sha256), '') is null then
+    raise exception 'fixture_set_sha256 is required when creating a run';
   end if;
 
   if p_execution_topology = 'fixture_fanout' then
