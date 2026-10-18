@@ -70,6 +70,20 @@ Historical submissions remain attributed even after a member leaves.
 - country_code
 - created_at
 
+### team_aliases
+- id
+- team_id
+- alias
+- normalized_alias
+- language_code
+- source
+- is_preferred
+- created_at
+
+Unique: (team_id, normalized_alias).
+
+Purpose: preserve stable multilingual/transliterated names independently of any one data provider. Provider discovery/matching may use these aliases before a provider-specific id mapping exists.
+
 ### provider_team_mappings
 - provider
 - provider_team_id
