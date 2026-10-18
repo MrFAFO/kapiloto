@@ -4,8 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
-import { KapilotoWordmark } from "@/components/kapiloto-wordmark";
-
 export type AuthMode = "login" | "signup" | "recovery" | "reset";
 
 type Props = {
@@ -40,23 +38,13 @@ async function postJson<T>(
 
 function AuthHero() {
   return (
-    <div className="relative h-[260px] w-full shrink-0 overflow-hidden">
+    <div className="relative w-full shrink-0 overflow-hidden">
       <img
         src="/brand/kapiloto-auth-hero.jpg"
-        alt=""
-        className="pointer-events-none absolute inset-0 size-full object-cover"
+        alt="Kapiloto"
+        className="pointer-events-none block h-auto w-full"
       />
-      <KapilotoWordmark
-        size="hero"
-        className="absolute left-1/2 top-[14px] -translate-x-1/2"
-      />
-      <p
-        className="absolute left-1/2 top-[64px] -translate-x-1/2 whitespace-nowrap text-[10.5px] font-semibold text-[#bdc7e5]"
-        style={{ fontFamily: "var(--font-rubik), Rubik, sans-serif" }}
-      >
-        המגרש של הקבוצה שלך
-      </p>
-      <div className="pointer-events-none absolute inset-0 shadow-[inset_0_-18px_36px_rgba(0,0,0,0.38)]" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-[#04060f] to-transparent" />
     </div>
   );
 }
