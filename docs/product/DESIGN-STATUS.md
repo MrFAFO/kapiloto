@@ -65,8 +65,11 @@ Figma page: **00 — Auth · Dark Stadium**
 - approved full-width 3:2 Kapiloto + Diego stadium hero on all three auth screens;
 - logo treatment matches the approved Kapiloto wordmark used in the app.
 
+## Implemented in code
+- Current Round (10.1 / 10.2) and inline Kapiloto states (10.12 researching, 10.13 stale, 10.14 error) in `components/current-round-ticket.tsx` and `components/kapiloto-panel.tsx`. Changed, budget-exhausted and rate-limited reuse the 10.2 panel template; status-pill tone follows the locked color rules (success / signal / live) instead of a single green. Analysis body text is 10px/1.6 instead of 9px for readability. Diego bar is visual only.
+
 ## Next design work
-- Kapiloto loading / stale / changed / error / rate-limit states;
+- dedicated Figma frames for Kapiloto changed / budget-exhausted / rate-limited (code currently reuses the 10.2 template);
 - draft Saving / Saved / Save failed / offline behavior;
 - explicit eighth-double rejection interaction;
 - admin round settings and member-management edge states;

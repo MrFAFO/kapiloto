@@ -1,7 +1,53 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { deriveKapilotoApiState } from "./response-state";
+import {
+  deriveKapilotoApiState,
+  deriveKapilotoReadState,
+} from "./response-state";
+
+test("read state: active run is researching even with a previous analysis", () => {
+  for (const hasAnalysis of [false, true]) {
+    assert.equal(
+      deriveKapilotoReadState({
+        hasAnalysis,
+        freshness: hasAnalysis ? "stale" : null,
+        activeRunId: "run",
+        runsRemaining: 2,
+      }),
+      "researching",
+    );
+  }
+});
+
+test("read state: analysis maps to ready/stale; none maps to unresearched or limit", () => {
+  const base = { activeRunId: null, runsRemaining: 2 };
+  assert.equal(
+    deriveKapilotoReadState({ ...base, hasAnalysis: true, freshness: "fresh" }),
+    "ready",
+  );
+  assert.equal(
+    deriveKapilotoReadState({ ...base, hasAnalysis: true, freshness: "locked" }),
+    "ready",
+  );
+  assert.equal(
+    deriveKapilotoReadState({ ...base, hasAnalysis: true, freshness: "stale" }),
+    "stale",
+  );
+  assert.equal(
+    deriveKapilotoReadState({ ...base, hasAnalysis: false, freshness: null }),
+    "unresearched",
+  );
+  assert.equal(
+    deriveKapilotoReadState({
+      hasAnalysis: false,
+      freshness: null,
+      activeRunId: null,
+      runsRemaining: 0,
+    }),
+    "limit_reached",
+  );
+});
 
 test("created/joined runs return 202 researching", () => {
   assert.deepEqual(

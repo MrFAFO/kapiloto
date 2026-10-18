@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import type { KapilotoFixtureEnvelope } from "@/lib/kapiloto/api-types";
 import { computeFixtureFreshness } from "@/lib/kapiloto/freshness";
 import {
   KapilotoAuthorizationError,
@@ -194,7 +195,7 @@ export async function POST(
         ? research.run_id ?? null
         : null);
 
-    const response = {
+    const response: KapilotoFixtureEnvelope = {
       state: derived.state,
       analysis,
       analysis_run:

@@ -22,6 +22,33 @@ export type KapilotoRequestOutcome =
   | "round_closed"
   | "breaker_open";
 
+export type KapilotoReadState =
+  | "unresearched"
+  | "researching"
+  | "ready"
+  | "stale"
+  | "limit_reached";
+
+/**
+ * State for read-only GET responses. Unlike the POST state, there is no
+ * request outcome: the state is derived purely from the published snapshot
+ * and the round research state row.
+ */
+export function deriveKapilotoReadState(input: {
+  hasAnalysis: boolean;
+  freshness: KapilotoFreshness;
+  activeRunId: string | null;
+  runsRemaining: number;
+}): KapilotoReadState {
+  if (input.activeRunId) return "researching";
+
+  if (input.hasAnalysis) {
+    return input.freshness === "stale" ? "stale" : "ready";
+  }
+
+  return input.runsRemaining <= 0 ? "limit_reached" : "unresearched";
+}
+
 export function deriveKapilotoApiState(input: {
   outcome: KapilotoRequestOutcome;
   hasAnalysis: boolean;

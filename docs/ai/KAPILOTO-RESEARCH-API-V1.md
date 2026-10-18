@@ -1,6 +1,6 @@
 # Kapiloto Research API Contract v1
 
-Status: architecture contract; implementation pending.
+Status: architecture contract; POST and both read-only GET routes implemented against the draft schema (not yet applied to production).
 
 ## Principles
 - GET never starts research.
@@ -28,15 +28,28 @@ Rules:
 - concurrent requests join the one active run.
 - maximum three non-refunded budget slots per round.
 
-### GET /api/v1/rounds/{roundId}/kapiloto/fixtures/{roundGameId}
-Read only. Never starts research. Supports ETag / If-None-Match.
+Implemented body (camelCase, validated by `lib/kapiloto/http-contract.ts`): `groupId`, `roundGameId`, `intent`, `basedOnRunId`. The browser never sends refresh eligibility, model or provider configuration.
 
-### GET /api/v1/rounds/{roundId}/kapiloto/state
-Read-only poll/realtime fallback for round research state.
+### GET /api/v1/rounds/{roundId}/kapiloto/fixtures/{roundGameId}?group_id={groupId}
+Read only. Never starts research, never calls provider sync, Sol or the create-run RPC. Order of checks: 400 malformed ids / missing `group_id` → 401 no session → 403 no active membership or group not configured for the round → 404 fixture not in round.
+
+Reads only the current published run (`kapiloto_round_research_state.current_run_id`). Returns the same envelope as POST without `request`. Read states:
+- `unresearched`: no published analysis, no active run, budget remaining;
+- `researching`: an active run exists; a previously published analysis, if any, is still returned;
+- `ready` / `stale`: published analysis with freshness computed at read time;
+- `limit_reached`: no published analysis and no budget remaining.
+
+`ETag` is a weak tag over current run id, analysis id, freshness state/reasons, read state, active run id, runs used, closed flag and the group's max doubles/lock (so a group budget change cannot be served a stale `doubleRecommended`). `If-None-Match` returns 304. `Cache-Control: private, no-cache`.
+
+### GET /api/v1/rounds/{roundId}/kapiloto/state?group_id={groupId}
+Read-only poll/realtime fallback. Same auth/membership checks. Reads only `kapiloto_round_research_state` and returns `research: { active_run_id, current_run_id, runs_used, runs_max, runs_remaining, closed, version }` plus `poll`. `Retry-After` is set while a run is active.
+
+### Browser client and polling
+`lib/kapiloto/client.ts` generates one UUID Idempotency-Key per explicit Consult/Recheck and reuses it for transport retries of that action. Polling uses only the two GET routes, honours `Retry-After`, and stops when `current_run_id` changes, the active run ends, or the request is aborted.
 
 ## Response state
 The envelope contains:
-- state: ready | researching | stale | limit_reached | error
+- state: ready | researching | stale | limit_reached | error (POST); GET adds unresearched
 - analysis and analysis_run
 - freshness: fresh | stale | locked | void plus stale reasons
 - research: active run, runs used/max/remaining, refresh eligibility, last failure

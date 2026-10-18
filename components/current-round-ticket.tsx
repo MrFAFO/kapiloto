@@ -1,40 +1,64 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
 import {
-  OUTCOMES,
-  outcomesToPick,
+  KapilotoDoubleContextNote,
+  KapilotoPanel,
+  KapilotoToggleBar,
+  useKapilotoPanel,
+} from "@/components/kapiloto-panel";
+import { KapilotoWordmark } from "@/components/kapiloto-wordmark";
+import { createKapilotoClient } from "@/lib/kapiloto/client";
+import {
+  createKapilotoDemoFetch,
+  type KapilotoDemoScenario,
+} from "@/lib/kapiloto/demo-fetch";
+import { KapilotoPanelController } from "@/lib/kapiloto/panel-controller";
+import {
   pickToOutcomes,
+  toggleOutcomeInPicks,
   type Outcome,
   type Pick,
 } from "@/lib/toto";
 
+/*
+ * Current Round — Dark Stadium screens 10.1 / 10.2 (Figma
+ * 2Pp5ae9bgqhTfwcU2JcIlK, page "01 — Mobile App · Dark Stadium").
+ */
+
 type Fixture = {
   number: number;
+  /** Prototype placeholder until rounds are loaded from Supabase. */
+  roundGameId: string;
   home: string;
   away: string;
+  league: string;
   day: string;
   time: string;
 };
 
+const prototypeGameId = (number: number) =>
+  `00000000-0000-4000-8000-${number.toString(16).padStart(12, "0")}`;
+
 const fixtures: Fixture[] = [
-  { number: 1, home: 'בית"ר ירושלים', away: 'מכבי ת"א', day: "שני", time: "20:30" },
-  { number: 2, home: "מכבי נתניה", away: "קריית שמונה", day: "שבת", time: "19:00" },
-  { number: 3, home: "בני סכנין", away: 'הפועל פ"ת', day: "שבת", time: "18:00" },
-  { number: 4, home: "הפועל חיפה", away: 'הפועל ר"ג', day: "שבת", time: "18:00" },
-  { number: 5, home: "בני ריינה", away: 'ראשל"צ', day: "שני", time: "19:00" },
-  { number: 6, home: "ברנטפורד", away: "ליברפול", day: "שבת", time: "18:30" },
-  { number: 7, home: "בורנמות׳", away: "סנדרלנד", day: "ראשון", time: "16:00" },
-  { number: 8, home: "לידס", away: "מנצ׳סטר יונייטד", day: "ראשון", time: "18:30" },
-  { number: 9, home: "סלטה ויגו", away: "אלאבס", day: "ראשון", time: "17:15" },
-  { number: 10, home: "מלאגה", away: "ריאל סוסיאדד", day: "ראשון", time: "19:30" },
-  { number: 11, home: "מונזה", away: "קליארי", day: "שני", time: "21:45" },
-  { number: 12, home: "אלברסברג", away: "אוגסבורג", day: "שבת", time: "16:30" },
-  { number: 13, home: "שאלקה 04", away: "מיינץ", day: "שבת", time: "16:30" },
-  { number: 14, home: "מנשנגלדבאך", away: "הופנהיים", day: "ראשון", time: "18:30" },
-  { number: 15, home: "לה האבר", away: "אוקזר", day: "ראשון", time: "18:00" },
-  { number: 16, home: "פאריס FC", away: "ראן", day: "ראשון", time: "21:45" },
-];
+  { number: 1, home: "בית״ר ירושלים", away: "מכבי ת״א", league: "ליגת העל", day: "שני", time: "20:30" },
+  { number: 2, home: "מכבי נתניה", away: "קריית שמונה", league: "ליגת העל", day: "שבת", time: "19:00" },
+  { number: 3, home: "בני סכנין", away: "הפועל פ״ת", league: "ליגת העל", day: "שבת", time: "18:00" },
+  { number: 4, home: "הפועל חיפה", away: "הפועל ר״ג", league: "ליגת העל", day: "שבת", time: "18:00" },
+  { number: 5, home: "בני ריינה", away: "ראשל״צ", league: "ליגת העל", day: "שני", time: "19:00" },
+  { number: 6, home: "ברנטפורד", away: "ליברפול", league: "פרמייר ליג", day: "שבת", time: "18:30" },
+  { number: 7, home: "בורנמות׳", away: "סנדרלנד", league: "פרמייר ליג", day: "ראשון", time: "16:00" },
+  { number: 8, home: "לידס", away: "מנצ׳סטר יונייטד", league: "פרמייר ליג", day: "ראשון", time: "18:30" },
+  { number: 9, home: "סלטה ויגו", away: "אלאבס", league: "לה ליגה", day: "ראשון", time: "17:15" },
+  { number: 10, home: "מלאגה", away: "ריאל סוסיאדד", league: "לה ליגה", day: "ראשון", time: "19:30" },
+  { number: 11, home: "מונזה", away: "קליארי", league: "סרייה A", day: "שני", time: "21:45" },
+  { number: 12, home: "אלברסברג", away: "אוגסבורג", league: "בונדסליגה", day: "שבת", time: "16:30" },
+  { number: 13, home: "שאלקה 04", away: "מיינץ", league: "בונדסליגה", day: "שבת", time: "16:30" },
+  { number: 14, home: "מנשנגלדבאך", away: "הופנהיים", league: "בונדסליגה", day: "ראשון", time: "18:30" },
+  { number: 15, home: "לה האבר", away: "אוקזר", league: "ליג 1", day: "ראשון", time: "18:00" },
+  { number: 16, home: "פאריס FC", away: "ראן", league: "ליג 1", day: "ראשון", time: "21:45" },
+].map((fixture) => ({ ...fixture, roundGameId: prototypeGameId(fixture.number) }));
 
 const initialPicks: Record<number, Pick> = {
   1: "2",
@@ -48,78 +72,191 @@ const initialPicks: Record<number, Pick> = {
   9: "1",
   10: "2",
   11: "12",
-  12: "12",
+  12: "1",
   13: "2",
   14: "12",
   15: "1",
-  16: "12",
+  16: "X",
 };
 
 const MAX_DOUBLES = 7;
+const PICK_ORDER: Outcome[] = ["2", "X", "1"];
 
-function FixtureRow({
+export type CurrentRoundKapilotoConfig = {
+  roundId: string;
+  groupId: string;
+  /** Set only in local development; production always uses the real API. */
+  demoScenario: KapilotoDemoScenario | null;
+};
+
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [intervalMs]);
+  return now;
+}
+
+function Chip({
+  children,
+  className = "bg-[var(--elevated)] text-[var(--muted)]",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-full px-[9px] py-[5px] text-[9px] font-bold leading-none ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function FixtureCard({
   fixture,
   pick,
   onOutcomeClick,
-  onConsult,
+  controller,
+  now,
+  demo,
 }: {
   fixture: Fixture;
   pick: Pick;
   onOutcomeClick: (outcome: Outcome) => void;
-  onConsult: () => void;
+  controller: KapilotoPanelController;
+  now: number;
+  demo: boolean;
 }) {
   const selected = pickToOutcomes(pick);
+  const isDouble = selected.length === 2;
+  const view = useKapilotoPanel(controller);
+  const panelId = `kapiloto-panel-${fixture.number}`;
+  const expanded = view.kind !== "closed" && view.kind !== "collapsed";
 
   return (
-    <article className="rounded-2xl border border-[var(--border)] bg-white p-3 shadow-[0_1px_2px_rgba(16,24,40,0.03)]">
-      <div className="mb-2 flex items-center justify-between text-[11px] font-medium text-[var(--muted)]">
-        <span>{fixture.day} · {fixture.time}</span>
-        <span>משחק {fixture.number}</span>
-      </div>
-
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={onConsult}
-          className="shrink-0 rounded-full bg-[var(--kapiloto-soft)] px-3 py-1.5 text-[11px] font-bold text-[var(--kapiloto)]"
-        >
-          התייעץ עם קפילוטו
-        </button>
-        <div className="min-w-0 text-right text-[14px] font-bold">
-          {fixture.home} <span className="text-[var(--muted)]">—</span> {fixture.away}
+    <>
+      <article className="flex w-full flex-col gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-3">
+        <div className="flex h-[26px] items-center justify-between">
+          <span className="text-[10px] font-bold text-[var(--muted)]">
+            משחק {fixture.number}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Chip>
+              {fixture.day} · {fixture.time}
+            </Chip>
+            {isDouble ? <Chip className="bg-[var(--kapiloto)] text-white">כפולה</Chip> : null}
+          </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-3 gap-2" dir="ltr">
-        {["2", "X", "1"].map((outcome) => {
-          const value = outcome as Outcome;
-          const active = selected.includes(value);
+        <div className="flex flex-col gap-0.5">
+          <p className="text-[13px] font-bold text-[var(--text)]">
+            {fixture.home} — {fixture.away}
+          </p>
+          <p className="text-[8px] text-[var(--muted)]">
+            {fixture.league} · טרם שוחק
+          </p>
+        </div>
 
-          return (
-            <button
-              key={value}
-              type="button"
-              onClick={() => onOutcomeClick(value)}
-              aria-pressed={active}
-              className={[
-                "h-10 rounded-xl border text-sm font-bold transition",
-                active
-                  ? "border-[var(--brand)] bg-[var(--brand)] text-white"
-                  : "border-[var(--border)] bg-[#f6f8fc] text-[var(--text)]",
-              ].join(" ")}
-            >
-              {value}
-            </button>
-          );
-        })}
-      </div>
-    </article>
+        <div className="grid grid-cols-3 gap-3" dir="ltr">
+          {PICK_ORDER.map((value) => {
+            const active = selected.includes(value);
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => onOutcomeClick(value)}
+                aria-pressed={active}
+                aria-label={`${value}${active ? (isDouble ? " · חלק מכפולה" : " · נבחר") : ""}`}
+                className={[
+                  "h-[46px] rounded-[13px] border text-[14px] font-bold transition-colors",
+                  active
+                    ? isDouble
+                      ? "border-[var(--kapiloto)] bg-[var(--kapiloto)] text-white"
+                      : "border-[var(--action)] bg-[var(--action)] text-white"
+                    : "border-[var(--border)] bg-[var(--elevated)] text-[var(--muted)]",
+                ].join(" ")}
+              >
+                {value}
+              </button>
+            );
+          })}
+        </div>
+
+        <KapilotoToggleBar
+          view={view}
+          panelId={panelId}
+          onToggle={() => controller.toggle()}
+        />
+        <KapilotoPanel
+          view={view}
+          panelId={panelId}
+          now={now}
+          demo={demo}
+          onConsult={() => void controller.consult()}
+          onRecheck={() => void controller.recheck()}
+          onRetry={() => controller.retry()}
+        />
+      </article>
+      {expanded ? <KapilotoDoubleContextNote /> : null}
+    </>
   );
 }
 
-export function CurrentRoundTicket() {
+function createControllers(
+  config: CurrentRoundKapilotoConfig,
+): Map<number, KapilotoPanelController> {
+  const client = config.demoScenario
+    ? createKapilotoClient({
+        fetch: createKapilotoDemoFetch({
+          scenario: config.demoScenario,
+          roundId: config.roundId,
+          roundGameIds: fixtures.map((fixture) => fixture.roundGameId),
+          maxDoubles: MAX_DOUBLES,
+        }),
+      })
+    : createKapilotoClient();
+
+  const controllers = new Map<number, KapilotoPanelController>();
+  for (const fixture of fixtures) {
+    controllers.set(
+      fixture.number,
+      new KapilotoPanelController(
+        client,
+        {
+          roundId: config.roundId,
+          groupId: config.groupId,
+          roundGameId: fixture.roundGameId,
+        },
+        {
+          onRoundRunPublished(runId) {
+            for (const [number, other] of controllers) {
+              if (number !== fixture.number) other.syncRoundRun(runId);
+            }
+          },
+        },
+      ),
+    );
+  }
+  return controllers;
+}
+
+export function CurrentRoundTicket({
+  kapiloto,
+}: {
+  kapiloto: CurrentRoundKapilotoConfig;
+}) {
   const [picks, setPicks] = useState<Record<number, Pick>>(initialPicks);
-  const [consulting, setConsulting] = useState<Fixture | null>(null);
+  const [controllers] = useState(() => createControllers(kapiloto));
+  const now = useNow(30_000);
+
+  useEffect(
+    () => () => {
+      for (const controller of controllers.values()) controller.dispose();
+    },
+    [controllers],
+  );
 
   const doublesUsed = useMemo(
     () =>
@@ -129,143 +266,102 @@ export function CurrentRoundTicket() {
   );
 
   function toggleOutcome(gameNumber: number, outcome: Outcome) {
-    setPicks((current) => {
-      const currentOutcomes = pickToOutcomes(current[gameNumber]);
-      const isSelected = currentOutcomes.includes(outcome);
-
-      let nextOutcomes: Outcome[];
-
-      if (isSelected) {
-        if (currentOutcomes.length === 1) return current;
-        nextOutcomes = currentOutcomes.filter((value) => value !== outcome);
-      } else if (currentOutcomes.length === 2) {
-        nextOutcomes = [outcome];
-      } else {
-        const doublesNow = Object.values(current).filter(
-          (pick) => pickToOutcomes(pick).length === 2,
-        ).length;
-
-        if (doublesNow >= MAX_DOUBLES) return current;
-        nextOutcomes = [...currentOutcomes, outcome];
-      }
-
-      return {
-        ...current,
-        [gameNumber]: outcomesToPick(nextOutcomes),
-      };
-    });
+    setPicks((current) =>
+      toggleOutcomeInPicks(current, gameNumber, outcome, MAX_DOUBLES),
+    );
   }
 
   return (
-    <>
-      <main className="mx-auto min-h-dvh w-full max-w-[430px] bg-[var(--background)] pb-24">
-        <header className="bg-white px-4 pb-4 pt-5">
-          <div className="mb-4 flex items-center justify-between" dir="ltr">
-            <div className="grid h-9 w-9 place-items-center rounded-full bg-[var(--ink)] text-xs font-bold text-white">
-              O
-            </div>
-            <div className="text-lg font-black tracking-tight">KAPILOTO</div>
-          </div>
+    <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-[var(--canvas)]">
+      <header className="flex flex-col gap-2.5 bg-gradient-to-r from-[var(--header-from)] to-[var(--header-to)] px-[18px] pb-3 pt-[18px]">
+        <div className="flex h-8 items-center justify-between">
+          <KapilotoWordmark />
+          <span
+            aria-label="פרופיל"
+            className="inline-flex items-center justify-center rounded-full bg-[var(--elevated)] px-[9px] py-[5px] text-[9px] font-bold text-white"
+          >
+            O
+          </span>
+        </div>
 
-          <div className="flex items-center justify-between">
-            <button className="h-10 w-10 rounded-xl border border-[var(--border)] bg-[#f8f9fc] text-xl">
-              ›
-            </button>
-            <div className="text-center">
-              <h1 className="text-xl font-black">מחזור 264101</h1>
-              <p className="mt-0.5 text-xs text-[var(--muted)]">17–19 באוקטובר 2026</p>
-            </div>
-            <button className="h-10 w-10 rounded-xl border border-[var(--border)] bg-[#f8f9fc] text-xl">
-              ‹
-            </button>
+        <div className="flex h-[46px] items-center justify-between">
+          <button
+            type="button"
+            className="rounded-full bg-[var(--elevated)] px-[9px] py-[5px] text-[9px] font-bold text-[var(--text)]"
+          >
+            ‹ קודם
+          </button>
+          <div className="flex flex-col items-center gap-px text-center">
+            <h1 className="text-[21px] font-bold leading-tight text-white">מחזור 264101</h1>
+            <p className="text-[9px] font-medium text-[var(--muted)]">17–19 באוקטובר</p>
           </div>
+          <button
+            type="button"
+            disabled
+            className="rounded-full bg-[var(--elevated)] px-[9px] py-[5px] text-[9px] font-bold text-[var(--muted-strong)]"
+          >
+            הבא ›
+          </button>
+        </div>
 
-          <div className="mt-4 flex items-center justify-between text-xs">
-            <span className="font-medium text-[var(--warning)]">נסגר בעוד יום ו־6 שעות</span>
-            <span className="font-medium text-[var(--muted)]">הקבוצה של אופק</span>
-          </div>
-        </header>
+        <div className="flex h-7 items-center justify-between">
+          <p className="text-[9px] font-medium text-[var(--muted)]">נסגר מחר · 16:24</p>
+          <span
+            className="inline-flex items-center rounded-full bg-[var(--kapiloto)] px-[9px] py-[5px] text-[9px] font-bold text-white"
+            data-doubles-counter
+          >
+            כפולות · {doublesUsed} / {MAX_DOUBLES}
+          </span>
+        </div>
+      </header>
 
-        <section className="flex items-center justify-between bg-[var(--ink)] px-5 py-3 text-white">
-          <div className="flex items-baseline gap-1" dir="ltr">
-            <strong className="text-xl">{doublesUsed}</strong>
-            <span className="text-xs text-[#bdc6d9]">/ {MAX_DOUBLES} כפולות</span>
-          </div>
-          <div className="text-right">
-            <div className="text-sm font-bold">הטופס שלי</div>
-            <div className="text-[11px] text-[#bdc6d9]">16 מתוך 16 משחקים מולאו</div>
-          </div>
-        </section>
+      <section className="flex h-16 items-center justify-between bg-[var(--panel)] px-[18px]">
+        <div className="flex flex-col items-start gap-0.5">
+          <p className="text-[10px] font-medium text-[var(--text)]">ממלאים לבד</p>
+          <p className="text-[8px] text-[var(--muted)]">קפילוטו עוזר בכל משחק</p>
+        </div>
+        <button
+          type="button"
+          aria-disabled
+          title="דייגו יגיע בשלב הבא"
+          className="flex h-10 w-[190px] items-center justify-center rounded-xl bg-[var(--diego-surface)] text-[10px] font-bold text-[var(--diego)]"
+        >
+          דייגו · מלא לי את כל הטופס
+        </button>
+      </section>
 
-        <section className="space-y-2.5 px-3.5 py-3">
-          {fixtures.map((fixture) => (
-            <FixtureRow
-              key={fixture.number}
-              fixture={fixture}
-              pick={picks[fixture.number]}
-              onOutcomeClick={(outcome) => toggleOutcome(fixture.number, outcome)}
-              onConsult={() => setConsulting(fixture)}
-            />
-          ))}
-        </section>
+      <main className="flex flex-1 flex-col gap-2.5 px-[18px] pb-[96px] pt-3">
+        {fixtures.map((fixture) => (
+          <FixtureCard
+            key={fixture.number}
+            fixture={fixture}
+            pick={picks[fixture.number]}
+            onOutcomeClick={(outcome) => toggleOutcome(fixture.number, outcome)}
+            controller={controllers.get(fixture.number)!}
+            now={now}
+            demo={kapiloto.demoScenario != null}
+          />
+        ))}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex h-20 max-w-[430px] items-center justify-around border-t border-[var(--border)] bg-white px-4">
-        <button className="text-xs text-[var(--muted)]">סטטיסטיקות</button>
-        <button className="text-xs text-[var(--muted)]">קבוצה</button>
-        <button className="rounded-2xl bg-[var(--brand-soft)] px-8 py-3 text-xs font-bold text-[var(--brand)]">
+      <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex h-[72px] max-w-[430px] items-center justify-between bg-[var(--nav)] px-3 pb-3 pt-[9px]">
+        <button
+          type="button"
+          aria-current="page"
+          className="flex h-11 w-[82px] items-center justify-center rounded-xl bg-[var(--elevated)] text-[9px] font-bold text-[var(--kapiloto)]"
+        >
           טופס
         </button>
-      </nav>
-
-      {consulting ? (
-        <div
-          className="fixed inset-0 z-30 flex items-end justify-center bg-black/35"
-          role="dialog"
-          aria-modal="true"
-          aria-label="ייעוץ קפילוטו"
-          onClick={() => setConsulting(null)}
-        >
-          <section
-            className="w-full max-w-[430px] rounded-t-[28px] bg-white p-5"
-            onClick={(event) => event.stopPropagation()}
+        {["קבוצה", "סטטיסטיקות", "עוד"].map((label) => (
+          <button
+            key={label}
+            type="button"
+            className="flex h-11 w-[82px] items-center justify-center rounded-xl text-[9px] font-medium text-[var(--muted)]"
           >
-            <div className="mx-auto mb-4 h-1.5 w-12 rounded-full bg-[#d6dbe6]" />
-            <div className="mb-3 flex items-start justify-between gap-4">
-              <button
-                type="button"
-                className="text-sm text-[var(--muted)]"
-                onClick={() => setConsulting(null)}
-              >
-                סגור
-              </button>
-              <div className="text-right">
-                <div className="text-xs font-bold text-[var(--kapiloto)]">KAPILOTO</div>
-                <h2 className="mt-1 font-black">
-                  {consulting.home} — {consulting.away}
-                </h2>
-              </div>
-            </div>
-
-            <div className="rounded-2xl bg-[var(--kapiloto-soft)] p-4">
-              <div className="flex items-center justify-between">
-                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-[var(--kapiloto)]">
-                  ביטחון בינוני–גבוה
-                </span>
-                <strong className="text-lg">המלצה: X2</strong>
-              </div>
-              <p className="mt-3 text-sm leading-6 text-[#31384a]">
-                זהו תוכן דמה ל־MVP. בגרסה המחוברת קפילוטו יבצע מחקר עדכני על
-                כושר, בית/חוץ, פציעות והרחקות, עומס משחקים, מודלים, אנליסטים
-                ויחסי שוק לפני הצגת ההמלצה.
-              </p>
-              <div className="mt-3 text-xs text-[var(--muted)]">
-                הניתוח האמיתי יציג גם זמן עדכון ומקורות.
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
-    </>
+            {label}
+          </button>
+        ))}
+      </nav>
+    </div>
   );
 }
