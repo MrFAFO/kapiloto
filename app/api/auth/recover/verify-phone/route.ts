@@ -4,6 +4,7 @@ import {
   parseRecoveryIdentifier,
   passwordValidationError,
 } from "@/lib/auth/identity";
+import { consumeAuthRateLimit } from "@/lib/auth/rate-limit";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +30,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       return NextResponse.json(
         { error: { code: "invalid_recovery", message: "Invalid recovery." } },
         { status: 400, headers: { "cache-control": "private, no-store" } },
+      );
+    }
+
+    const allowed = await consumeAuthRateLimit({
+      bucket: "recovery_phone_verify",
+      key: phone.value,
+      limit: 8,
+      windowSeconds: 15 * 60,
+    });
+    if (!allowed) {
+      return NextResponse.json(
+        { error: { code: "rate_limited", message: "Try again later." } },
+        { status: 429, headers: { "cache-control": "private, no-store" } },
       );
     }
 

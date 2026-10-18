@@ -10,6 +10,7 @@ import {
   normalizeUsername,
   usernameValidationError,
 } from "@/lib/auth/identity";
+import { consumeAuthRateLimit } from "@/lib/auth/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -47,6 +48,19 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     if (usernameValidationError(username) || password.length === 0) {
       return invalidCredentials();
+    }
+
+    const allowed = await consumeAuthRateLimit({
+      bucket: "login_username",
+      key: username,
+      limit: 10,
+      windowSeconds: 15 * 60,
+    });
+    if (!allowed) {
+      return response(
+        { error: { code: "rate_limited", message: "Try again later." } },
+        429,
+      );
     }
 
     const admin = createAdminClient();

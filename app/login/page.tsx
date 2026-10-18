@@ -22,11 +22,12 @@ export default async function LoginPage({
     <AuthScreen
       mode="login"
       initialNotice={
-        reset === "1"
-          ? "הסיסמה עודכנה. אפשר להתחבר."
-          : authError === "1"
-            ? "קישור האימות אינו תקין או שפג תוקפו."
-            : null
+        reset === "1" ? "הסיסמה עודכנה. אפשר להתחבר." : null
+      }
+      initialError={
+        authError === "1"
+          ? "קישור האימות אינו תקין או שפג תוקפו."
+          : null
       }
     />
   );

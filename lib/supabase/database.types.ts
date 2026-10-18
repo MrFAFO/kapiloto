@@ -2011,6 +2011,15 @@ export type Database = {
         Args: { p_lease_seconds?: number; p_worker_id: string }
         Returns: Json
       }
+      kapiloto_consume_auth_rate_limit: {
+        Args: {
+          p_bucket: string
+          p_key_hash: string
+          p_limit: number
+          p_window_seconds: number
+        }
+        Returns: boolean
+      }
       kapiloto_finish_research_attempt: {
         Args: {
           p_attempt_id: string

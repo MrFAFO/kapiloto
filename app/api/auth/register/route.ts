@@ -6,6 +6,7 @@ import {
   usernameValidationError,
   normalizeUsername,
 } from "@/lib/auth/identity";
+import { consumeAuthRateLimit } from "@/lib/auth/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -45,6 +46,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       return response(
         { error: { code: "invalid_registration", message: "Invalid registration." } },
         400,
+      );
+    }
+
+    const allowed = await consumeAuthRateLimit({
+      bucket: "signup_username",
+      key: normalizedUsername,
+      limit: 5,
+      windowSeconds: 15 * 60,
+    });
+    if (!allowed) {
+      return response(
+        { error: { code: "rate_limited", message: "Try again later." } },
+        429,
       );
     }
 

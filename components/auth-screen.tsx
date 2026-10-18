@@ -11,6 +11,7 @@ export type AuthMode = "login" | "signup" | "recovery" | "reset";
 type Props = {
   mode: AuthMode;
   initialNotice?: string | null;
+  initialError?: string | null;
 };
 
 type ApiError = {
@@ -162,7 +163,11 @@ function StatusMessage({
   );
 }
 
-export function AuthScreen({ mode, initialNotice = null }: Props) {
+export function AuthScreen({
+  mode,
+  initialNotice = null,
+  initialError = null,
+}: Props) {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -173,7 +178,7 @@ export function AuthScreen({ mode, initialNotice = null }: Props) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [phoneStep, setPhoneStep] = useState<"signup" | "recovery" | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   const [notice, setNotice] = useState<string | null>(initialNotice);
 
   async function submitLogin(event: FormEvent) {
@@ -189,7 +194,11 @@ export function AuthScreen({ mode, initialNotice = null }: Props) {
     setBusy(false);
 
     if (!result.ok) {
-      setError("שם המשתמש או הסיסמה אינם נכונים.");
+      setError(
+        result.status === 429
+          ? "יותר מדי ניסיונות. נסה שוב בעוד מספר דקות."
+          : "שם המשתמש או הסיסמה אינם נכונים.",
+      );
       return;
     }
 
@@ -215,7 +224,9 @@ export function AuthScreen({ mode, initialNotice = null }: Props) {
     setBusy(false);
 
     if (!result.ok) {
-      if (result.status === 409) {
+      if (result.status === 429) {
+        setError("יותר מדי ניסיונות. נסה שוב בעוד מספר דקות.");
+      } else if (result.status === 409) {
         setError("שם המשתמש אינו זמין.");
       } else {
         setError("לא ניתן ליצור את החשבון כרגע. בדוק את הפרטים ונסה שוב.");
@@ -276,7 +287,11 @@ export function AuthScreen({ mode, initialNotice = null }: Props) {
     setBusy(false);
 
     if (!result.ok) {
-      setError("פרטי השחזור אינם בפורמט תקין.");
+      setError(
+        result.status === 429
+          ? "יותר מדי ניסיונות. נסה שוב בעוד מספר דקות."
+          : "פרטי השחזור אינם בפורמט תקין.",
+      );
       return;
     }
 
