@@ -144,6 +144,7 @@ alter table public.groups enable row level security;
 alter table public.group_members enable row level security;
 alter table public.join_requests enable row level security;
 alter table public.teams enable row level security;
+alter table public.team_aliases enable row level security;
 alter table public.provider_team_mappings enable row level security;
 alter table public.competitions enable row level security;
 alter table public.provider_competition_mappings enable row level security;
@@ -576,6 +577,7 @@ using (
 -- Server-only tables: no authenticated policies/grants
 -- ---------------------------------------------------------------------------
 -- private.auth_username_aliases
+-- public.team_aliases
 -- public.provider_team_mappings
 -- public.provider_competition_mappings
 -- public.provider_fixture_mappings
