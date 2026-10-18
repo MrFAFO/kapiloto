@@ -18,7 +18,7 @@ import {
 } from "@/lib/kapiloto/response-state";
 import { ensureServerKapilotoResearch } from "@/lib/kapiloto/server-research";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedUserId } from "@/lib/supabase/auth";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -95,13 +95,8 @@ export async function POST(
 
     const body = parseKapilotoConsultBody(rawBody);
 
-    const sessionClient = await createClient();
-    const {
-      data: { user },
-      error: userError,
-    } = await sessionClient.auth.getUser();
-
-    if (userError || !user) {
+    const userId = await getAuthenticatedUserId();
+    if (!userId) {
       return jsonError(401, "unauthorized", "Authentication is required.");
     }
 
@@ -129,13 +124,13 @@ export async function POST(
 
     const groupContext = await loadGroupRoundKapilotoContext(
       admin,
-      user.id,
+      userId,
       body.groupId,
       roundId,
     );
 
     const research = await ensureServerKapilotoResearch(admin, {
-      userId: user.id,
+      userId: userId,
       roundId,
       roundGameId: body.roundGameId,
       intent: body.intent,
