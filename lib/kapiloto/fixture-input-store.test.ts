@@ -57,6 +57,12 @@ test("assembles 16 fixture inputs and uses the latest pre-cutoff prior", () => {
     {
       games,
       teams,
+      teamAliases: [
+        {
+          team_id: "home-1",
+          alias: "בית אחת",
+        },
+      ],
       teamMappings: [
         {
           team_id: "home-1",
@@ -75,7 +81,10 @@ test("assembles 16 fixture inputs and uses the latest pre-cutoff prior", () => {
     draw: 2800,
     away: 3000,
   });
-  assert.deepEqual(inputs[0].home.aliases, ["Provider Home One"]);
+  assert.deepEqual(inputs[0].home.aliases, [
+    "בית אחת",
+    "Provider Home One",
+  ]);
 });
 
 test("fails closed when a fixture lacks a pre-cutoff market prior", () => {
@@ -94,6 +103,7 @@ test("fails closed when a fixture lacks a pre-cutoff market prior", () => {
         {
           games,
           teams,
+          teamAliases: [],
           teamMappings: [],
           marketSnapshots,
         },
