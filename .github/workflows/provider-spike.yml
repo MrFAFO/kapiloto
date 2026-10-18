@@ -1,6 +1,11 @@
 name: Provider Spike
 
 on:
+  push:
+    branches:
+      - design/mobile-first-dark-stadium
+    paths:
+      - .github/provider-spike-trigger
   workflow_dispatch:
     inputs:
       provider:
@@ -39,7 +44,7 @@ jobs:
         run: mkdir -p artifacts/provider-spike
 
       - name: Probe API-Football
-        if: ${{ inputs.provider == 'both' || inputs.provider == 'api-football' }}
+        if: ${{ github.event_name == 'push' || inputs.provider == 'both' || inputs.provider == 'api-football' }}
         env:
           API_FOOTBALL_API_KEY: ${{ secrets.API_FOOTBALL_API_KEY }}
         run: |
@@ -50,7 +55,7 @@ jobs:
             --concurrency "${{ inputs.concurrency }}"
 
       - name: Probe Sportmonks
-        if: ${{ inputs.provider == 'both' || inputs.provider == 'sportmonks' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.provider == 'both' || inputs.provider == 'sportmonks') }}
         env:
           SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
         run: |
@@ -61,12 +66,19 @@ jobs:
             --concurrency "${{ inputs.concurrency }}"
 
       - name: Compare providers
-        if: ${{ inputs.provider == 'both' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.provider == 'both' }}
         run: |
           npm run spike:compare -- \
             --left artifacts/provider-spike/api-football.json \
             --right artifacts/provider-spike/sportmonks.json \
             > artifacts/provider-spike/comparison.json
+
+      - name: Print API-Football report
+        if: ${{ always() && (github.event_name == 'push' || inputs.provider == 'both' || inputs.provider == 'api-football') }}
+        run: |
+          if [ -f artifacts/provider-spike/api-football.json ]; then
+            cat artifacts/provider-spike/api-football.json
+          fi
 
       - name: Upload spike reports
         if: always()
