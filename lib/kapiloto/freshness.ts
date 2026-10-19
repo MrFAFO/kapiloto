@@ -5,7 +5,7 @@ import type { KapilotoFreshness } from "./response-state";
 export async function computeFixtureFreshness(
   admin: SupabaseClient,
   input: {
-    roundGameId: string;
+    fixtureId: string;
     analysisOutcome: string;
     generatedAt: string;
     validUntil: string | null;
@@ -37,7 +37,7 @@ export async function computeFixtureFreshness(
   const { data, error } = await admin
     .from("kapiloto_freshness_signals")
     .select("signal_type,severity,observed_at")
-    .eq("round_game_id", input.roundGameId)
+    .eq("fixture_id", input.fixtureId)
     .gte("severity", 2)
     .gt("observed_at", input.generatedAt)
     .order("observed_at", { ascending: false })
