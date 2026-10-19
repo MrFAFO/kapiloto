@@ -8,6 +8,7 @@ import type {
 
 type GameRow = {
   id: string;
+  fixture_id: string;
   game_number: number;
   kickoff_at: string;
   competition_id: string | null;
@@ -33,7 +34,7 @@ type TeamMappingRow = {
 };
 
 type FixtureMappingRow = {
-  round_game_id: string;
+  fixture_id: string;
   provider_fixture_id: string;
 };
 
@@ -64,7 +65,7 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
     const { data: gamesData, error: gamesError } = await this.client
       .from("round_games")
       .select(
-        "id,game_number,kickoff_at,competition_id,competition_name_snapshot,home_team_id,away_team_id",
+        "id,fixture_id,game_number,kickoff_at,competition_id,competition_name_snapshot,home_team_id,away_team_id",
       )
       .eq("round_id", roundId)
       .order("game_number", { ascending: true });
@@ -77,7 +78,7 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
     const teamIds = [
       ...new Set(games.flatMap((game) => [game.home_team_id, game.away_team_id])),
     ];
-    const gameIds = games.map((game) => game.id);
+    const fixtureIds = games.map((game) => game.fixture_id);
 
     const [
       { data: teamsData, error: teamsError },
@@ -97,9 +98,9 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
         .in("team_id", teamIds),
       this.client
         .from("provider_fixture_mappings")
-        .select("round_game_id,provider_fixture_id")
+        .select("fixture_id,provider_fixture_id")
         .eq("provider", "api-football")
-        .in("round_game_id", gameIds),
+        .in("fixture_id", fixtureIds),
     ]);
 
     if (teamsError) {
@@ -131,7 +132,7 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
     );
     const fixtureMappings = new Map(
       ((fixtureMappingsData ?? []) as FixtureMappingRow[]).map((mapping) => [
-        mapping.round_game_id,
+        mapping.fixture_id,
         mapping.provider_fixture_id,
       ]),
     );
@@ -153,7 +154,7 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
       if (homeMapping?.provider_name) homeAliases.push(homeMapping.provider_name);
       if (awayMapping?.provider_name) awayAliases.push(awayMapping.provider_name);
 
-      const providerFixtureIdRaw = fixtureMappings.get(game.id);
+      const providerFixtureIdRaw = fixtureMappings.get(game.fixture_id);
       const providerFixtureId =
         providerFixtureIdRaw != null && /^\d+$/.test(providerFixtureIdRaw)
           ? Number(providerFixtureIdRaw)
@@ -161,6 +162,7 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
 
       return {
         roundGameId: game.id,
+        fixtureId: game.fixture_id,
         gameNumber: game.game_number,
         kickoffAt: game.kickoff_at,
         competitionId: game.competition_id,
@@ -191,6 +193,7 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
     const mappingWrites = [
       this.client.from("provider_fixture_mappings").upsert(
         {
+          fixture_id: snapshot.game.fixtureId,
           round_game_id: snapshot.game.roundGameId,
           provider: "api-football",
           provider_fixture_id: snapshot.fixture.providerFixtureId,
@@ -198,7 +201,7 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
           mapping_confidence: mappingConfidence,
           mapped_at: snapshot.capturedAt,
         },
-        { onConflict: "round_game_id,provider" },
+        { onConflict: "fixture_id,provider" },
       ),
       this.client.from("provider_team_mappings").upsert(
         {
@@ -253,6 +256,7 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
     const { error: marketError } = await this.client
       .from("fixture_market_snapshots")
       .insert({
+        fixture_id: snapshot.game.fixtureId,
         round_game_id: snapshot.game.roundGameId,
         provider: "api-football",
         market_type: "1x2_90m",
@@ -269,10 +273,22 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
       );
     }
 
-    const { error: gameError } = await this.client
-      .from("round_games")
-      .update({ last_synced_at: snapshot.capturedAt })
-      .eq("id", snapshot.game.roundGameId);
+    const [{ error: fixtureError }, { error: gameError }] = await Promise.all([
+      this.client
+        .from("fixtures")
+        .update({ last_synced_at: snapshot.capturedAt })
+        .eq("id", snapshot.game.fixtureId),
+      this.client
+        .from("round_games")
+        .update({ last_synced_at: snapshot.capturedAt })
+        .eq("id", snapshot.game.roundGameId),
+    ]);
+
+    if (fixtureError) {
+      throw new Error(
+        `Failed to update canonical fixture sync timestamp: ${fixtureError.message}`,
+      );
+    }
 
     if (gameError) {
       throw new Error(
