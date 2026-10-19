@@ -68,6 +68,17 @@ export type ProviderCapabilities = {
   injuries: boolean | null;
   odds: boolean | null;
   predictions: boolean | null;
+  statistics?: boolean | null;
+  xg?: boolean | null;
+  pressure?: boolean | null;
+};
+
+export type ProviderAnalyticsCoverage = {
+  statisticsEntries: number;
+  xgEntries: number;
+  xgMetricDeveloperNames: string[];
+  pressureEntries: number;
+  pressureParticipants: number;
 };
 
 export type ProviderFixtureCoverage = {
@@ -80,6 +91,7 @@ export type ProviderFixtureCoverage = {
   injuryEntries: number;
   completeBookmakers: number;
   marketPrior: MarketPrior | null;
+  analytics?: ProviderAnalyticsCoverage;
   providerErrors: string[];
 };
 
@@ -96,6 +108,12 @@ export type ProviderSpikeReport = {
     fixturesWithObservedInjuries: number;
     fixturesWithOddsCoverage: number;
     fixturesWithObservedOdds: number;
+    fixturesWithStatisticsCoverage: number;
+    fixturesWithObservedStatistics: number;
+    fixturesWithXgCoverage: number;
+    fixturesWithObservedXg: number;
+    fixturesWithPressureCoverage: number;
+    fixturesWithObservedPressure: number;
     averageCompleteBookmakersWhenAvailable: number;
   };
 };
