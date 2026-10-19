@@ -16,7 +16,7 @@ import {
 import { KAPILOTO_RESEARCH_DIMENSIONS } from "./research-output";
 
 const card: KapilotoFixtureCard = {
-  fixture_card_version: "kapiloto-fixture-card-v1",
+  fixture_card_version: "kapiloto-fixture-card-v2",
   fixture_key: "round-1:1",
   round_game_id: "game-1",
   toto_number: 1,
