@@ -115,6 +115,30 @@ This prevents supplier naming differences from leaking into product logic.
 
 Unique: (provider, provider_competition_id).
 
+## Canonical fixtures
+### fixtures
+One row per real football match, independent of Toto/Winner rounds.
+
+- id
+- competition_id
+- home_team_id
+- away_team_id
+- season_key
+- stage_name
+- round_name
+- leg_number
+- neutral_venue
+- kickoff_at
+- actual_kickoff_at
+- status
+- home_score
+- away_score
+- last_synced_at
+- created_at
+- updated_at
+
+This is the shared football identity used by Match Intelligence, Toto, future Free Slip flows and provider ingestion. A fixture may exist even when it is not present in any Toto round.
+
 ## Rounds
 ### rounds
 - id
@@ -129,8 +153,11 @@ Unique: (provider, provider_competition_id).
 `lock_at` is explicit. It is never derived from the first fixture kickoff.
 
 ### round_games
+Toto-specific wrapper around one canonical fixture. It stores Toto order/orientation, settlement and compatibility snapshots; it is not the canonical football match.
+
 - id
 - round_id
+- fixture_id
 - game_number (1..16)
 - home_team_id
 - away_team_id
@@ -157,7 +184,8 @@ Unique: (round_id, game_number).
 For Kapiloto research, Toto `1` maps to the stored listed-first/home team and Toto `2` to the listed-second/away team. `neutral_venue` prevents the model from interpreting that orientation as a true home-field advantage. Research also snapshots the applicable 90-minute settlement rule.
 
 ### provider_fixture_mappings
-- round_game_id
+- fixture_id
+- round_game_id: nullable transitional compatibility link
 - provider
 - provider_fixture_id
 - mapping_status
@@ -166,15 +194,17 @@ For Kapiloto research, Toto `1` maps to the stored listed-first/home team and To
 - mapped_by
 
 Unique: (provider, provider_fixture_id).
+Unique: (fixture_id, provider).
 
-The football-data provider is authoritative only for football-state data, not Toto settlement.
+The football-data provider is authoritative only for football-state data, not Toto settlement. Provider identity belongs to the canonical fixture rather than the Toto row.
 
 
 ### fixture_market_snapshots
 Server-ingested pre-match 90-minute 1X2 market snapshots.
 
 - id
-- round_game_id
+- fixture_id
+- round_game_id: nullable transitional compatibility link
 - provider
 - captured_at
 - market_type: 1x2_90m
@@ -185,6 +215,51 @@ Server-ingested pre-match 90-minute 1X2 market snapshots.
 - created_at
 
 Market data is structured input, never scraped by Sol from articles. Odds movement is computed from comparable snapshots.
+
+## Fixture fact provenance
+
+### fixture_fact_snapshots
+Immutable structured football facts attached to a canonical fixture.
+
+- id
+- fixture_id
+- fact_key
+- subject_type: fixture/team/player
+- subject_team_id
+- subject_ref
+- exactly one value field: value_numeric/value_text/value_boolean/value_json
+- unit
+- provenance_type: provider_raw/deterministic_derived
+- provider
+- provider_endpoint
+- provider_record_id
+- calculation_version
+- source_observed_at
+- captured_at
+- source_version
+- source_fingerprint
+- metadata
+
+Rules:
+- provider_raw requires an explicit provider and cannot pretend to be a local calculation;
+- deterministic_derived requires a versioned calculation;
+- rows are append-only/immutable;
+- a displayed metric must be traceable to either a raw provider fact or a versioned deterministic calculation.
+
+Examples:
+- Sportmonks fixture xG or Pressure Index row -> provider_raw;
+- Kapiloto-computed rolling xG differential or field tilt from raw events -> deterministic_derived.
+
+### fixture_fact_inputs
+Provenance edges for deterministic calculations.
+
+- derived_fact_id
+- input_fact_id
+- input_role
+
+A derived metric can therefore be reproduced from the immutable fact snapshots it consumed.
+
+AI interpretation is a third, separate layer: it lives in kapiloto_analyses, factors and evidence. AI output must not be stored or presented as if it were a provider fact or deterministic metric.
 
 ## Group round settings
 ### group_round_settings
