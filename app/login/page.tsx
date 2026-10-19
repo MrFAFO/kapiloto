@@ -17,12 +17,19 @@ export default async function LoginPage({
   const authError = Array.isArray(params.auth_error)
     ? params.auth_error[0]
     : params.auth_error;
+  const confirmed = Array.isArray(params.confirmed)
+    ? params.confirmed[0]
+    : params.confirmed;
 
   return (
     <AuthScreen
       mode="login"
       initialNotice={
-        reset === "1" ? "הסיסמה עודכנה. אפשר להתחבר." : null
+        confirmed === "1"
+          ? "המייל אומת בהצלחה. אפשר להתחבר."
+          : reset === "1"
+            ? "הסיסמה עודכנה. אפשר להתחבר."
+            : null
       }
       initialError={
         authError === "1"
