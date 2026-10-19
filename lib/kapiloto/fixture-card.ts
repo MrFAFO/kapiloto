@@ -1,4 +1,4 @@
-export const KAPILOTO_FIXTURE_CARD_VERSION = "kapiloto-fixture-card-v1" as const;
+export const KAPILOTO_FIXTURE_CARD_VERSION = "kapiloto-fixture-card-v2" as const;
 export const KAPILOTO_SETTLEMENT_90M =
   "result_after_90_minutes_including_stoppage_time" as const;
 export const DEFAULT_RESEARCH_SAFETY_WINDOW_MINUTES = 15;
@@ -23,6 +23,7 @@ export type FixtureCardTeamInput = {
 };
 
 export type FixtureCardInput = {
+  fixtureId: string;
   roundId: string;
   roundGameId: string;
   gameNumber: number;
@@ -49,6 +50,7 @@ export type FixtureCardInput = {
 export type KapilotoFixtureCard = {
   fixture_card_version: typeof KAPILOTO_FIXTURE_CARD_VERSION;
   fixture_key: string;
+  fixture_id: string;
   round_game_id: string;
   toto_number: number;
   settlement: typeof KAPILOTO_SETTLEMENT_90M;
@@ -125,8 +127,11 @@ function assertBasisPoints(probabilities: BasisPointTriple): void {
 }
 
 function assertFixtureIdentity(input: FixtureCardInput): void {
+  if (!input.fixtureId) {
+    throw new Error("Canonical fixture id is required.");
+  }
   if (!input.roundId || !input.roundGameId) {
-    throw new Error("Round and round-game ids are required.");
+    throw new Error("Round and round-game ids are required for Toto context.");
   }
   if (!Number.isInteger(input.gameNumber) || input.gameNumber < 1 || input.gameNumber > 16) {
     throw new Error(`Invalid Toto game number: ${input.gameNumber}`);
@@ -263,7 +268,8 @@ export function buildKapilotoFixtureCard(
 
   return {
     fixture_card_version: KAPILOTO_FIXTURE_CARD_VERSION,
-    fixture_key: `${input.roundId}:${input.gameNumber}`,
+    fixture_key: input.fixtureId,
+    fixture_id: input.fixtureId,
     round_game_id: input.roundGameId,
     toto_number: input.gameNumber,
     settlement: KAPILOTO_SETTLEMENT_90M,
