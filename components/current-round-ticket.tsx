@@ -249,6 +249,7 @@ export function CurrentRoundTicket({
 }) {
   const [picks, setPicks] = useState<Record<number, Pick>>(initialPicks);
   const [controllers] = useState(() => createControllers(kapiloto));
+  const [profileOpen, setProfileOpen] = useState(false);
   const now = useNow(30_000);
 
   useEffect(
@@ -276,12 +277,29 @@ export function CurrentRoundTicket({
       <header className="flex flex-col gap-2.5 bg-gradient-to-r from-[var(--header-from)] to-[var(--header-to)] px-[18px] pb-3 pt-[18px]">
         <div className="flex h-8 items-center justify-between">
           <KapilotoWordmark />
-          <span
-            aria-label="פרופיל"
-            className="inline-flex items-center justify-center rounded-full bg-[var(--elevated)] px-[9px] py-[5px] text-[9px] font-bold text-white"
-          >
-            O
-          </span>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="פרופיל"
+              aria-expanded={profileOpen}
+              onClick={() => setProfileOpen((open) => !open)}
+              className="inline-flex items-center justify-center rounded-full bg-[var(--elevated)] px-[9px] py-[5px] text-[9px] font-bold text-white"
+            >
+              O
+            </button>
+            {profileOpen ? (
+              <div className="absolute left-0 top-[34px] z-30 w-[126px] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-1.5 shadow-xl">
+                <form action="/api/auth/logout" method="post">
+                  <button
+                    type="submit"
+                    className="flex h-9 w-full items-center justify-center rounded-lg text-[10px] font-bold text-[var(--text)] hover:bg-[var(--elevated)]"
+                  >
+                    התנתק
+                  </button>
+                </form>
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex h-[46px] items-center justify-between">
