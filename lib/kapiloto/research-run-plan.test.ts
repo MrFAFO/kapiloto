@@ -7,6 +7,7 @@ import { sha256Hex } from "./snapshot";
 
 function fixture(gameNumber: number): FixtureCardInput {
   return {
+    fixtureId: `fixture-${gameNumber}`,
     roundId: "round-a",
     roundGameId: `game-${gameNumber}`,
     gameNumber,
