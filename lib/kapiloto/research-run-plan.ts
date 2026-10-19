@@ -120,6 +120,7 @@ export function buildKapilotoResearchRunPlan(
 
     return {
       gameNumber: input.gameNumber,
+      fixtureId: input.fixtureId,
       roundGameId: input.roundGameId,
       mode: "research_unavailable",
       reason: eligibility.reason,
