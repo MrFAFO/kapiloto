@@ -104,7 +104,7 @@ export async function POST(
 
     const { data: roundGame, error: roundGameError } = await admin
       .from("round_games")
-      .select("id,round_id")
+      .select("id,round_id,fixture_id")
       .eq("id", body.roundGameId)
       .eq("round_id", roundId)
       .maybeSingle();
@@ -166,7 +166,7 @@ export async function POST(
 
     if (analysis) {
       const fresh = await computeFixtureFreshness(admin, {
-        roundGameId: body.roundGameId,
+        fixtureId: String(roundGame.fixture_id),
         analysisOutcome: analysis.outcome,
         generatedAt: analysis.generatedAt,
         validUntil: analysis.validUntil,
