@@ -14,7 +14,8 @@ import {
 
 const card: KapilotoFixtureCard = {
   fixture_card_version: "kapiloto-fixture-card-v2",
-  fixture_key: "round:1",
+  fixture_key: "fixture-1",
+  fixture_id: "fixture-1",
   round_game_id: "game-1",
   toto_number: 1,
   settlement: "result_after_90_minutes_including_stoppage_time",
@@ -52,7 +53,7 @@ const card: KapilotoFixtureCard = {
 function baseOutput(): SolFixtureResearchOutput {
   return {
     protocol_version: "kapiloto-research-v1",
-    fixture_key: "round:1",
+    fixture_key: "fixture-1",
     home_team_id: "home",
     away_team_id: "away",
     outcome: "analyzed",
