@@ -15,6 +15,7 @@ export type ApiFootballRoundTeam = {
 
 export type ApiFootballRoundGame = {
   roundGameId: string;
+  fixtureId: string;
   gameNumber: number;
   kickoffAt: string;
   competitionId: string | null;
