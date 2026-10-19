@@ -1,11 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Kapiloto Fixture Card v1",
+  "title": "Kapiloto Fixture Card v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "fixture_card_version",
     "fixture_key",
+    "fixture_id",
     "round_game_id",
     "toto_number",
     "settlement",
@@ -21,12 +22,16 @@
     "fixture_card_version": {
       "type": "string",
       "enum": [
-        "kapiloto-fixture-card-v1"
+        "kapiloto-fixture-card-v2"
       ]
     },
     "fixture_key": {
       "type": "string",
       "maxLength": 200
+    },
+    "fixture_id": {
+      "type": "string",
+      "maxLength": 100
     },
     "round_game_id": {
       "type": "string",
