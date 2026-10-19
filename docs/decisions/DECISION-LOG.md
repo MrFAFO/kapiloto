@@ -143,3 +143,23 @@ Evidence: live spike on Winner 16 round 264101 resolved 16/16 fixtures, returned
 Caveat: the Israeli fixtures returned zero injury rows in this spike, so structured injury coverage must not be treated as complete for Israel. Kapiloto availability research continues to rely on verified web/official evidence and may use provider injury data only as one structured input.
 
 Reason: API-Football demonstrated full round mapping and market-prior coverage at low MVP cost, which are the two hard dependencies for the frozen fixture card and p_prior pipeline.
+
+## D-034 — Canonical Fixture is the shared football identity
+Decision: introduce a canonical `fixtures` entity that exists independently of Toto/Winner rounds. `round_games` becomes a Toto-specific wrapper that points to `fixture_id` and owns Toto order/orientation, group-ticket linkage and settlement semantics.
+
+Provider fixture mappings and market snapshots are fixture-scoped. Transitional `round_game_id` links remain only for compatibility while callers migrate.
+
+Reason: Match Intelligence and future non-Toto products must be able to represent and analyze football matches that are not part of a Toto round. Using `round_games` as the football identity would permanently couple the intelligence layer to one product surface.
+
+## D-035 — Structured metrics require explicit provenance
+Decision: every structured metric shown or consumed by Kapiloto must be either an immutable raw provider fact or a versioned deterministic derived fact. Raw facts store provider/source metadata; deterministic facts store a calculation version and explicit input-fact edges. AI interpretation remains a separate third layer in Kapiloto analysis/factor/evidence tables.
+
+Reason: prevents generated or inferred values from being presented as observed analytics, makes provider differences auditable, and allows derived metrics to be reproduced and recalculated safely.
+
+## D-036 — Multi-provider football data uses capability-specific fallback
+Decision: do not designate one provider as universally authoritative for all football data. API-Football remains the proven broad fixture/1X2 market-prior fallback, while Sportmonks is the preferred rich performance-analytics source where entitlement and competition coverage are empirically verified. Missing Sportmonks metrics fall back by capability/competition rather than being fabricated.
+
+Evidence: across the two Sportmonks trial rotations for Winner 16 round 264101, all 16 fixtures were resolvable when their competitions were entitled. Premier League, La Liga, Serie A, Bundesliga and Ligue 1 samples returned rich statistics, xG-family data and Pressure Index. Israeli Ligat ha'Al/Liga Leumit samples returned statistics and Pressure Index but no xG rows in the tested fixtures. Sportmonks pre-match 1X2 bookmaker triples were not observed in these runs.
+
+Reason: provider coverage is metric- and competition-specific. Capability routing preserves breadth while exploiting richer analytics where actually available.
+
