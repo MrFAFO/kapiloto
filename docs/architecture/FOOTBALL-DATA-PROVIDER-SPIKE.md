@@ -282,3 +282,26 @@ API-Football is accepted as the **provisional MVP structured provider** for:
 It is **not** accepted as the sole injury/team-news source.
 
 The provider abstraction remains mandatory, and Sportmonks remains the benchmark/fallback candidate.
+
+
+### Rotated-league trial check
+
+After rotating the Starter league slots on 2026-10-20, the same round-264101 harness resolved six fixtures:
+- 4 Ligat ha'Al fixtures;
+- 1 Liga Leumit fixture;
+- 1 Serie A fixture.
+
+Observed Israeli coverage was materially useful:
+- Ligat ha'Al: 40 lineup rows on all four sampled fixtures, 78-82 statistics rows, 188-200 Pressure Index rows, and sidelined data where present;
+- Liga Leumit: 38 statistics rows and 196 Pressure Index rows were observed, plus sidelined data, but no lineup rows in the sampled fixture;
+- no xG-family rows were observed on the five Israeli fixtures in this sample.
+
+Serie A returned the rich profile already seen in Premier League/La Liga: 48 lineup rows, 84 statistics rows, 26 xG-family rows and 190 Pressure Index rows.
+
+Bundesliga and Ligue 1 fixtures in the round did not resolve in this run and require a targeted entitlement/mapping diagnostic before concluding lack of provider coverage.
+
+Current inference:
+- Sportmonks is promising as a structured **performance analytics** source;
+- Pressure Index and conventional match statistics are available on the sampled Israeli competitions;
+- xG entitlement does not imply xG availability for every competition, so xG must be treated as per-competition/per-fixture coverage rather than assumed globally;
+- API-Football remains the proven 1X2 market-prior source for the MVP until Sportmonks odds coverage is independently validated.
