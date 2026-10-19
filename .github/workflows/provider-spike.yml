@@ -26,7 +26,7 @@ on:
 jobs:
   spike:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -39,6 +39,12 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+
+      - name: Typecheck provider spike
+        run: npm run typecheck
+
+      - name: Test provider adapters
+        run: npm run test:providers
 
       - name: Prepare artifact directory
         run: mkdir -p artifacts/provider-spike
@@ -59,7 +65,7 @@ jobs:
             --concurrency "${{ inputs.concurrency || '2' }}"
 
       - name: Probe Sportmonks
-        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.provider == 'both' || inputs.provider == 'sportmonks') }}
+        if: ${{ github.event_name == 'push' || inputs.provider == 'both' || inputs.provider == 'sportmonks' }}
         env:
           SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
         run: |
@@ -70,19 +76,22 @@ jobs:
             --concurrency "${{ inputs.concurrency || '2' }}"
 
       - name: Compare providers
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.provider == 'both' }}
+        if: ${{ github.event_name == 'push' || inputs.provider == 'both' }}
         run: |
           npm run spike:compare -- \
             --left artifacts/provider-spike/api-football.json \
             --right artifacts/provider-spike/sportmonks.json \
             > artifacts/provider-spike/comparison.json
 
-      - name: Print API-Football report
-        if: ${{ always() && (github.event_name == 'push' || inputs.provider == 'both' || inputs.provider == 'api-football') }}
+      - name: Print reports
+        if: always()
         run: |
-          if [ -f artifacts/provider-spike/api-football.json ]; then
-            cat artifacts/provider-spike/api-football.json
-          fi
+          for file in artifacts/provider-spike/*.json; do
+            if [ -f "$file" ]; then
+              echo "===== $file ====="
+              cat "$file"
+            fi
+          done
 
       - name: Upload spike reports
         if: always()
