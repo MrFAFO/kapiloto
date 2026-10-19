@@ -4,9 +4,9 @@ Status: pre-implementation design contract for the Sol research system.
 
 ## Goal
 
-Produce one source-backed, reproducible **pre-match** research snapshot for every fixture in one Toto/Winner 16 round.
+Produce source-backed, reproducible **pre-match** intelligence for canonical football fixtures. A Toto/Winner 16 request still creates one shared round research cycle so cost, refresh budget and double ranking remain coherent, but each fixture analysis is identified and published by canonical `fixture_id`.
 
-A logical research run always targets one frozen round fixture set and publishes one coherent snapshot. Internal execution may fan out by fixture or use a whole-round experiment arm; that execution detail never changes the shared run budget, cache or atomic-publication semantics.
+A logical Toto research run targets one frozen round fixture set. Internal execution may fan out by fixture or use a whole-round experiment arm. Completed fixture analyses are immutable and can be published independently through a fixture-scoped current pointer; the round retains its run manifest for coherent Toto/Diego ranking.
 
 ## Core separation of responsibilities
 
@@ -101,7 +101,8 @@ Each fixture task receives a server-built card. Example shape:
 
 ```json
 {
-  "fixture_key": "round-id:7",
+  "fixture_key": "canonical-fixture-uuid",
+  "fixture_id": "canonical-fixture-uuid",
   "round_game_id": "uuid",
   "toto_number": 7,
   "settlement": "result_after_90_minutes_including_stoppage_time",
@@ -139,7 +140,7 @@ Each fixture task receives a server-built card. Example shape:
 }
 ```
 
-The fixture identity is authoritative. Web research may enrich but may not alter it.
+The canonical `fixture_id` is the football identity. `round_game_id`, Toto number, settlement rule and 1/2 orientation are product context layered on top. Web research may enrich but may not alter either identity or orientation.
 
 ## Baseline prior and market rules
 
