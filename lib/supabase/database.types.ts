@@ -409,10 +409,131 @@ export type Database = {
           },
         ]
       }
+      fixture_fact_inputs: {
+        Row: {
+          derived_fact_id: string
+          input_fact_id: string
+          input_role: string | null
+        }
+        Insert: {
+          derived_fact_id: string
+          input_fact_id: string
+          input_role?: string | null
+        }
+        Update: {
+          derived_fact_id?: string
+          input_fact_id?: string
+          input_role?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fixture_fact_inputs_derived_fact_id_fkey"
+            columns: ["derived_fact_id"]
+            isOneToOne: false
+            referencedRelation: "fixture_fact_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixture_fact_inputs_input_fact_id_fkey"
+            columns: ["input_fact_id"]
+            isOneToOne: false
+            referencedRelation: "fixture_fact_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fixture_fact_snapshots: {
+        Row: {
+          calculation_version: string | null
+          captured_at: string
+          fact_key: string
+          fixture_id: string
+          id: string
+          metadata: Json
+          provenance_type: string
+          provider: string | null
+          provider_endpoint: string | null
+          provider_record_id: string | null
+          source_fingerprint: string | null
+          source_observed_at: string | null
+          source_version: string | null
+          subject_ref: string | null
+          subject_team_id: string | null
+          subject_type: string
+          unit: string | null
+          value_boolean: boolean | null
+          value_json: Json | null
+          value_numeric: number | null
+          value_text: string | null
+        }
+        Insert: {
+          calculation_version?: string | null
+          captured_at?: string
+          fact_key: string
+          fixture_id: string
+          id?: string
+          metadata?: Json
+          provenance_type: string
+          provider?: string | null
+          provider_endpoint?: string | null
+          provider_record_id?: string | null
+          source_fingerprint?: string | null
+          source_observed_at?: string | null
+          source_version?: string | null
+          subject_ref?: string | null
+          subject_team_id?: string | null
+          subject_type: string
+          unit?: string | null
+          value_boolean?: boolean | null
+          value_json?: Json | null
+          value_numeric?: number | null
+          value_text?: string | null
+        }
+        Update: {
+          calculation_version?: string | null
+          captured_at?: string
+          fact_key?: string
+          fixture_id?: string
+          id?: string
+          metadata?: Json
+          provenance_type?: string
+          provider?: string | null
+          provider_endpoint?: string | null
+          provider_record_id?: string | null
+          source_fingerprint?: string | null
+          source_observed_at?: string | null
+          source_version?: string | null
+          subject_ref?: string | null
+          subject_team_id?: string | null
+          subject_type?: string
+          unit?: string | null
+          value_boolean?: boolean | null
+          value_json?: Json | null
+          value_numeric?: number | null
+          value_text?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fixture_fact_snapshots_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixture_fact_snapshots_subject_team_id_fkey"
+            columns: ["subject_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fixture_market_snapshots: {
         Row: {
           captured_at: string
           created_at: string
+          fixture_id: string
           id: string
           market_type: string
           overround: number | null
@@ -423,12 +544,13 @@ export type Database = {
           raw_away_odds: number | null
           raw_draw_odds: number | null
           raw_home_odds: number | null
-          round_game_id: string
+          round_game_id: string | null
           source_version: string | null
         }
         Insert: {
           captured_at: string
           created_at?: string
+          fixture_id: string
           id?: string
           market_type?: string
           overround?: number | null
@@ -439,12 +561,13 @@ export type Database = {
           raw_away_odds?: number | null
           raw_draw_odds?: number | null
           raw_home_odds?: number | null
-          round_game_id: string
+          round_game_id?: string | null
           source_version?: string | null
         }
         Update: {
           captured_at?: string
           created_at?: string
+          fixture_id?: string
           id?: string
           market_type?: string
           overround?: number | null
@@ -455,15 +578,104 @@ export type Database = {
           raw_away_odds?: number | null
           raw_draw_odds?: number | null
           raw_home_odds?: number | null
-          round_game_id?: string
+          round_game_id?: string | null
           source_version?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "fixture_market_snapshots_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "fixture_market_snapshots_round_game_id_fkey"
             columns: ["round_game_id"]
             isOneToOne: false
             referencedRelation: "round_games"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fixtures: {
+        Row: {
+          actual_kickoff_at: string | null
+          away_score: number | null
+          away_team_id: string
+          competition_id: string | null
+          created_at: string
+          home_score: number | null
+          home_team_id: string
+          id: string
+          kickoff_at: string
+          last_synced_at: string | null
+          leg_number: number | null
+          neutral_venue: boolean
+          round_name: string | null
+          season_key: string | null
+          stage_name: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          actual_kickoff_at?: string | null
+          away_score?: number | null
+          away_team_id: string
+          competition_id?: string | null
+          created_at?: string
+          home_score?: number | null
+          home_team_id: string
+          id?: string
+          kickoff_at: string
+          last_synced_at?: string | null
+          leg_number?: number | null
+          neutral_venue?: boolean
+          round_name?: string | null
+          season_key?: string | null
+          stage_name?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          actual_kickoff_at?: string | null
+          away_score?: number | null
+          away_team_id?: string
+          competition_id?: string | null
+          created_at?: string
+          home_score?: number | null
+          home_team_id?: string
+          id?: string
+          kickoff_at?: string
+          last_synced_at?: string | null
+          leg_number?: number | null
+          neutral_venue?: boolean
+          round_name?: string | null
+          season_key?: string | null
+          stage_name?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fixtures_away_team_id_fkey"
+            columns: ["away_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixtures_competition_id_fkey"
+            columns: ["competition_id"]
+            isOneToOne: false
+            referencedRelation: "competitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fixtures_home_team_id_fkey"
+            columns: ["home_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
             referencedColumns: ["id"]
           },
         ]
@@ -630,6 +842,7 @@ export type Database = {
           dimension_coverage: Json
           double_gain_score: number | null
           double_priority_rank: number | null
+          fixture_id: string
           generated_at: string
           id: string
           key_assumptions: Json
@@ -675,6 +888,7 @@ export type Database = {
           dimension_coverage?: Json
           double_gain_score?: number | null
           double_priority_rank?: number | null
+          fixture_id: string
           generated_at?: string
           id?: string
           key_assumptions?: Json
@@ -720,6 +934,7 @@ export type Database = {
           dimension_coverage?: Json
           double_gain_score?: number | null
           double_priority_rank?: number | null
+          fixture_id?: string
           generated_at?: string
           id?: string
           key_assumptions?: Json
@@ -762,6 +977,20 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "kapiloto_analyses"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "kapiloto_analyses_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "kapiloto_analyses_market_snapshot_fixture_fk"
+            columns: ["market_snapshot_id", "fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixture_market_snapshots"
+            referencedColumns: ["id", "fixture_id"]
           },
           {
             foreignKeyName: "kapiloto_analyses_market_snapshot_id_round_game_id_fkey"
@@ -960,13 +1189,119 @@ export type Database = {
           },
         ]
       }
+      kapiloto_fixture_intelligence_state: {
+        Row: {
+          current_analysis_id: string | null
+          current_publication_id: string | null
+          fixture_id: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          current_analysis_id?: string | null
+          current_publication_id?: string | null
+          fixture_id: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          current_analysis_id?: string | null
+          current_publication_id?: string | null
+          fixture_id?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "kapiloto_fixture_intelligence_current_analysis_id_fixture__fkey"
+            columns: ["current_analysis_id", "fixture_id"]
+            isOneToOne: false
+            referencedRelation: "kapiloto_analyses"
+            referencedColumns: ["id", "fixture_id"]
+          },
+          {
+            foreignKeyName: "kapiloto_fixture_intelligence_state_current_publication_id_fkey"
+            columns: ["current_publication_id"]
+            isOneToOne: false
+            referencedRelation: "kapiloto_fixture_publications"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "kapiloto_fixture_intelligence_state_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: true
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      kapiloto_fixture_publications: {
+        Row: {
+          analysis_id: string
+          fixture_id: string
+          id: string
+          previous_analysis_id: string | null
+          published_at: string
+          research_run_id: string
+          version_no: number
+        }
+        Insert: {
+          analysis_id: string
+          fixture_id: string
+          id?: string
+          previous_analysis_id?: string | null
+          published_at?: string
+          research_run_id: string
+          version_no: number
+        }
+        Update: {
+          analysis_id?: string
+          fixture_id?: string
+          id?: string
+          previous_analysis_id?: string | null
+          published_at?: string
+          research_run_id?: string
+          version_no?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "kapiloto_fixture_publications_analysis_id_fixture_id_fkey"
+            columns: ["analysis_id", "fixture_id"]
+            isOneToOne: false
+            referencedRelation: "kapiloto_analyses"
+            referencedColumns: ["id", "fixture_id"]
+          },
+          {
+            foreignKeyName: "kapiloto_fixture_publications_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "kapiloto_fixture_publications_previous_analysis_id_fkey"
+            columns: ["previous_analysis_id"]
+            isOneToOne: false
+            referencedRelation: "kapiloto_analyses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "kapiloto_fixture_publications_research_run_id_fkey"
+            columns: ["research_run_id"]
+            isOneToOne: false
+            referencedRelation: "kapiloto_research_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       kapiloto_freshness_signals: {
         Row: {
           data_version: string | null
+          fixture_id: string
           id: number
           observed_at: string
           payload: Json
-          round_game_id: string
+          round_game_id: string | null
           severity: number
           signal_type: string
           subject_player: string | null
@@ -974,10 +1309,11 @@ export type Database = {
         }
         Insert: {
           data_version?: string | null
+          fixture_id: string
           id?: never
           observed_at: string
           payload?: Json
-          round_game_id: string
+          round_game_id?: string | null
           severity: number
           signal_type: string
           subject_player?: string | null
@@ -985,16 +1321,24 @@ export type Database = {
         }
         Update: {
           data_version?: string | null
+          fixture_id?: string
           id?: never
           observed_at?: string
           payload?: Json
-          round_game_id?: string
+          round_game_id?: string | null
           severity?: number
           signal_type?: string
           subject_player?: string | null
           subject_team_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "kapiloto_freshness_signals_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "kapiloto_freshness_signals_round_game_id_fkey"
             columns: ["round_game_id"]
@@ -1022,6 +1366,7 @@ export type Database = {
           failure_code: string | null
           failure_detail: string | null
           finished_at: string | null
+          fixture_id: string | null
           heartbeat_at: string | null
           id: string
           input_tokens: number | null
@@ -1061,6 +1406,7 @@ export type Database = {
           failure_code?: string | null
           failure_detail?: string | null
           finished_at?: string | null
+          fixture_id?: string | null
           heartbeat_at?: string | null
           id?: string
           input_tokens?: number | null
@@ -1100,6 +1446,7 @@ export type Database = {
           failure_code?: string | null
           failure_detail?: string | null
           finished_at?: string | null
+          fixture_id?: string | null
           heartbeat_at?: string | null
           id?: string
           input_tokens?: number | null
@@ -1131,6 +1478,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "kapiloto_research_attempts_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "kapiloto_research_attempts_round_game_id_round_id_fkey"
             columns: ["round_game_id", "round_id"]
             isOneToOne: false
@@ -1150,6 +1504,7 @@ export type Database = {
         Row: {
           based_on_run_id: string | null
           created_at: string
+          fixture_id: string | null
           id: string
           idempotency_key: string
           intent: string
@@ -1163,6 +1518,7 @@ export type Database = {
         Insert: {
           based_on_run_id?: string | null
           created_at?: string
+          fixture_id?: string | null
           id?: string
           idempotency_key: string
           intent: string
@@ -1176,6 +1532,7 @@ export type Database = {
         Update: {
           based_on_run_id?: string | null
           created_at?: string
+          fixture_id?: string | null
           id?: string
           idempotency_key?: string
           intent?: string
@@ -1199,6 +1556,13 @@ export type Database = {
             columns: ["run_id"]
             isOneToOne: false
             referencedRelation: "kapiloto_research_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "kapiloto_research_requests_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
             referencedColumns: ["id"]
           },
           {
@@ -1517,33 +1881,43 @@ export type Database = {
       }
       provider_fixture_mappings: {
         Row: {
+          fixture_id: string
           mapped_at: string
           mapped_by: string | null
           mapping_confidence: number | null
           mapping_status: string
           provider: string
           provider_fixture_id: string
-          round_game_id: string
+          round_game_id: string | null
         }
         Insert: {
+          fixture_id: string
           mapped_at?: string
           mapped_by?: string | null
           mapping_confidence?: number | null
           mapping_status?: string
           provider: string
           provider_fixture_id: string
-          round_game_id: string
+          round_game_id?: string | null
         }
         Update: {
+          fixture_id?: string
           mapped_at?: string
           mapped_by?: string | null
           mapping_confidence?: number | null
           mapping_status?: string
           provider?: string
           provider_fixture_id?: string
-          round_game_id?: string
+          round_game_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "provider_fixture_mappings_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "provider_fixture_mappings_round_game_id_fkey"
             columns: ["round_game_id"]
@@ -1604,6 +1978,7 @@ export type Database = {
           field_away_score: number | null
           field_home_score: number | null
           field_outcome: string | null
+          fixture_id: string
           game_number: number
           home_team_id: string
           id: string
@@ -1631,6 +2006,7 @@ export type Database = {
           field_away_score?: number | null
           field_home_score?: number | null
           field_outcome?: string | null
+          fixture_id: string
           game_number: number
           home_team_id: string
           id?: string
@@ -1658,6 +2034,7 @@ export type Database = {
           field_away_score?: number | null
           field_home_score?: number | null
           field_outcome?: string | null
+          fixture_id?: string
           game_number?: number
           home_team_id?: string
           id?: string
@@ -1686,6 +2063,13 @@ export type Database = {
             columns: ["competition_id"]
             isOneToOne: false
             referencedRelation: "competitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "round_games_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
             referencedColumns: ["id"]
           },
           {
@@ -2056,6 +2440,10 @@ export type Database = {
           p_worker_id: string
         }
         Returns: boolean
+      }
+      kapiloto_publish_fixture_analysis: {
+        Args: { p_analysis_id: string }
+        Returns: Json
       }
       kapiloto_recover_expired_attempts: {
         Args: { p_limit?: number; p_retry_delay_seconds?: number }
