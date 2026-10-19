@@ -120,6 +120,7 @@ test("missing future prior carries forward when an earlier analysis exists", () 
 
   assert.deepEqual(plan.fixtures[0], {
     gameNumber: 1,
+    fixtureId: "fixture-1",
     roundGameId: "game-1",
     mode: "carried_forward",
     carriedFromAnalysisId: "analysis-old-1",
