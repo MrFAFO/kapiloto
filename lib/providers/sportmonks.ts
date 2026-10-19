@@ -28,6 +28,26 @@ type SportmonksParticipant = {
   meta?: { location?: string };
 };
 
+type SportmonksExpectedRow = {
+  fixture_id?: number;
+  participant_id?: number;
+  type_id?: number;
+  location?: string;
+  data?: { value?: number | string | null };
+  type?: {
+    name?: string;
+    developer_name?: string;
+    code?: string;
+  };
+};
+
+type SportmonksPressureRow = {
+  fixture_id?: number;
+  participant_id?: number;
+  minute?: number;
+  pressure?: number;
+};
+
 type SportmonksFixtureRow = {
   id?: number;
   league_id?: number;
@@ -43,6 +63,9 @@ type SportmonksFixtureRow = {
   participants?: SportmonksParticipant[];
   lineups?: unknown[];
   sidelined?: unknown[];
+  statistics?: unknown[];
+  xgfixture?: SportmonksExpectedRow[];
+  pressure?: SportmonksPressureRow[];
   league?: { id?: number; name?: string; country_id?: number };
   round?: { id?: number; name?: string };
   state?: { id?: number; short_name?: string; state?: string };
@@ -367,6 +390,56 @@ export class SportmonksClient {
     return parseSportmonksThreeWayQuotes(rows, fixture);
   }
 
+  async getStatisticsEntryCount(fixtureId: string): Promise<number> {
+    const envelope = await this.request<SportmonksFixtureRow>(
+      `/fixtures/${fixtureId}`,
+      { include: "statistics" },
+    );
+    return requireData(envelope, "fixture statistics").statistics?.length ?? 0;
+  }
+
+  async getXgCoverage(fixtureId: string): Promise<{
+    entries: number;
+    metricDeveloperNames: string[];
+  }> {
+    const envelope = await this.request<SportmonksFixtureRow>(
+      `/fixtures/${fixtureId}`,
+      { include: "xGFixture.type" },
+    );
+    const rows = requireData(envelope, "fixture xG").xgfixture ?? [];
+    const metricDeveloperNames = [
+      ...new Set(
+        rows
+          .map((row) => row.type?.developer_name)
+          .filter((name): name is string => Boolean(name)),
+      ),
+    ].sort();
+
+    return {
+      entries: rows.length,
+      metricDeveloperNames,
+    };
+  }
+
+  async getPressureCoverage(fixtureId: string): Promise<{
+    entries: number;
+    participants: number;
+  }> {
+    const envelope = await this.request<SportmonksFixtureRow>(
+      `/fixtures/${fixtureId}`,
+      { include: "pressure" },
+    );
+    const rows = requireData(envelope, "fixture pressure").pressure ?? [];
+    return {
+      entries: rows.length,
+      participants: new Set(
+        rows
+          .map((row) => row.participant_id)
+          .filter((id): id is number => id != null),
+      ).size,
+    };
+  }
+
   async probeFixture(
     input: ProviderSpikeFixtureInput,
   ): Promise<ProviderFixtureCoverage> {
@@ -412,12 +485,54 @@ export class SportmonksClient {
       providerErrors.push(error instanceof Error ? error.message : String(error));
     }
 
+    let statisticsEntries = 0;
+    let xgEntries = 0;
+    let xgMetricDeveloperNames: string[] = [];
+    let pressureEntries = 0;
+    let pressureParticipants = 0;
+
     const capabilities: ProviderCapabilities = {
-      lineups: null,
-      injuries: null,
+      lineups: raw.lineups ? true : null,
+      injuries: raw.sidelined ? true : null,
       odds: raw.has_odds ?? (quotes.length > 0 ? true : null),
       predictions: null,
+      statistics: null,
+      xg: null,
+      pressure: null,
     };
+
+    try {
+      statisticsEntries = await this.getStatisticsEntryCount(
+        fixture.providerFixtureId,
+      );
+      capabilities.statistics = true;
+    } catch (error) {
+      providerErrors.push(
+        `statistics: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    try {
+      const xg = await this.getXgCoverage(fixture.providerFixtureId);
+      xgEntries = xg.entries;
+      xgMetricDeveloperNames = xg.metricDeveloperNames;
+      capabilities.xg = true;
+    } catch (error) {
+      providerErrors.push(
+        `xg: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    try {
+      const pressure = await this.getPressureCoverage(fixture.providerFixtureId);
+      pressureEntries = pressure.entries;
+      pressureParticipants = pressure.participants;
+      capabilities.pressure = true;
+    } catch (error) {
+      providerErrors.push(
+        `pressure: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
 
     return {
       gameNumber: input.gameNumber,
@@ -429,6 +544,13 @@ export class SportmonksClient {
       injuryEntries: raw.sidelined?.length ?? 0,
       completeBookmakers: quotes.length,
       marketPrior: aggregateMarketPrior(quotes),
+      analytics: {
+        statisticsEntries,
+        xgEntries,
+        xgMetricDeveloperNames,
+        pressureEntries,
+        pressureParticipants,
+      },
       providerErrors,
     };
   }
