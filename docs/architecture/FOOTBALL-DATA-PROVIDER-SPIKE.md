@@ -305,3 +305,30 @@ Current inference:
 - Pressure Index and conventional match statistics are available on the sampled Israeli competitions;
 - xG entitlement does not imply xG availability for every competition, so xG must be treated as per-competition/per-fixture coverage rather than assumed globally;
 - API-Football remains the proven 1X2 market-prior source for the MVP until Sportmonks odds coverage is independently validated.
+
+
+### Corrected five-league coverage check
+
+After correcting the selected Starter leagues to the intended Germany and France competitions, the 2026-10-20 diagnostic confirmed active entitlement for:
+- Bundesliga (Germany, Sportmonks league 82);
+- Ligue 1 (France, league 301);
+- Ligat ha'Al (Israel, league 372);
+- Liga Leumit (Israel, league 375);
+- Serie A (Italy, league 384).
+
+The Euro Club Tournaments All-in entitlement also exposed Champions League, Europa League, UEFA Super Cup and Europa Conference League independently of the five Starter league slots.
+
+Against Winner 16 round 264101, the corrected selection resolved **11/16** fixtures in the current run. The five unresolved fixtures were exactly the three Premier League and two La Liga fixtures intentionally removed from the five Starter slots; those five had already resolved successfully in the earlier rotation. Combining both rotations therefore produced empirical fixture coverage for **16/16** matches in this sample.
+
+Current-run analytics by competition:
+- Ligat ha'Al: 4/4 fixtures resolved; 40 lineup rows each; 78-82 statistics rows; 188-200 Pressure Index rows; xG rows not observed.
+- Liga Leumit: 1/1 resolved; 38 statistics rows; 196 Pressure Index rows; one sidelined row; no lineup or xG rows observed in this sample.
+- Serie A: 1/1 resolved; 48 lineup rows; 84 statistics rows; 26 xG-family rows; 190 Pressure Index rows.
+- Bundesliga: 3/3 resolved; 40 lineup rows each; 84-88 statistics rows; 26 xG-family rows each; 194-220 Pressure Index rows.
+- Ligue 1 France: 2/2 resolved; 40 lineup rows each; 84-86 statistics rows; 26 xG-family rows each; 192-208 Pressure Index rows.
+
+Combined conclusion from both rotations:
+- all sampled top-five European league fixtures returned rich statistics, xG-family data and Pressure Index when their league was entitled;
+- Israeli competitions returned useful structured statistics and Pressure Index, but no xG rows were observed in this sample;
+- Sportmonks is suitable as the richer performance-analytics provider for entitled competitions, with per-competition fallback required;
+- API-Football remains the preferred broad fixture/market fallback and the currently proven 1X2 market-prior source.
