@@ -58,6 +58,7 @@ export type SportmonksFixtureSyncResult = {
   xg: number;
   pressure: number;
   factsWritten: number;
+  analyticsErrors: string[];
   error: string | null;
 };
 
@@ -187,6 +188,7 @@ export async function syncSportmonksRoundAnalytics(
           xg: 0,
           pressure: 0,
           factsWritten: 0,
+          analyticsErrors: [],
           error: null,
         });
         continue;
@@ -219,6 +221,7 @@ export async function syncSportmonksRoundAnalytics(
         xg: analytics.xg,
         pressure: analytics.pressure,
         factsWritten: analytics.factsWritten,
+        analyticsErrors: analytics.errors,
         error: null,
       });
     } catch (error) {
@@ -232,6 +235,7 @@ export async function syncSportmonksRoundAnalytics(
         xg: 0,
         pressure: 0,
         factsWritten: 0,
+        analyticsErrors: [],
         error: error instanceof Error ? error.message : String(error),
       });
     }
