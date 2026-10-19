@@ -381,6 +381,39 @@ This table makes every consensus version reproducible. If a member later submits
 
 Live/provisional evaluation may use current sporting state. Final scoring uses the pool settlement outcome.
 
+## Fixture-scoped Kapiloto intelligence
+
+The Toto round still owns demand, the shared maximum-three-run budget and coherent round synthesis. The researched football identity and publication pointer are fixture-scoped so the same intelligence can be reused by Match Intelligence outside Toto.
+
+### kapiloto_fixture_publications
+Immutable publication history for one canonical fixture.
+
+- id
+- fixture_id
+- analysis_id
+- research_run_id
+- version_no
+- previous_analysis_id
+- published_at
+
+Unique: (fixture_id, version_no).
+Unique: analysis_id.
+
+Only analyses belonging to a completed research run may be published.
+
+### kapiloto_fixture_intelligence_state
+One current pointer per canonical fixture.
+
+- fixture_id
+- current_analysis_id
+- current_publication_id
+- version
+- updated_at
+
+Publication is atomic and idempotent through the server-only `kapiloto_publish_fixture_analysis` RPC.
+
+During migration, `kapiloto_analyses`, research requests, attempts and freshness signals carry both canonical `fixture_id` and their Toto `round_game_id` context. The canonical fixture is the reusable intelligence identity; the round-game id remains the Toto orientation/ranking context.
+
 ## Kapiloto round research state
 ### kapiloto_round_research_state
 One row per Toto round. This is the serialization target and atomic publication pointer.
