@@ -10,6 +10,7 @@ import {
 
 function fixture(gameNumber = 1): FixtureCardInput {
   return {
+    fixtureId: `fixture-${gameNumber}`,
     roundId: "round-1",
     roundGameId: `game-${gameNumber}`,
     gameNumber,
@@ -53,7 +54,8 @@ test("builds a deterministic fixture card with locked 1/2 orientation", () => {
     "2026-10-18T12:00:00Z",
   );
 
-  assert.equal(card.fixture_key, "round-1:1");
+  assert.equal(card.fixture_key, "fixture-1");
+  assert.equal(card.fixture_id, "fixture-1");
   assert.equal(card.orientation["1"], "home-1");
   assert.equal(card.orientation["2"], "away-1");
   assert.equal(card.settlement, "result_after_90_minutes_including_stoppage_time");
