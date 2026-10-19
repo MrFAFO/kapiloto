@@ -161,6 +161,48 @@ test("ingestion fetches all analytics groups and writes one fact batch", async (
     xg: 1,
     pressure: 1,
     factsWritten: 3,
+    errors: [],
   });
   assert.equal(store.facts.length, 3);
+});
+
+
+test("one unavailable Sportmonks capability does not discard available facts", async () => {
+  const source = {
+    async getStatisticsRows(): Promise<SportmonksMetricRow[]> {
+      return [
+        {
+          participant_id: 10,
+          type_id: 1,
+          data: { value: 7 },
+          type: { developer_name: "SHOTS_TOTAL" },
+        },
+      ];
+    },
+    async getXgRows(): Promise<SportmonksMetricRow[]> {
+      throw new Error("xG unavailable for competition");
+    },
+    async getPressureRows(): Promise<SportmonksPressureRow[]> {
+      return [{ participant_id: 20, minute: 2, pressure: 44 }];
+    },
+  };
+
+  class MemoryStore implements SportmonksFactStore {
+    facts: FixtureFactInsert[] = [];
+
+    async saveFacts(facts: FixtureFactInsert[]): Promise<number> {
+      this.facts = facts;
+      return facts.length;
+    }
+  }
+
+  const store = new MemoryStore();
+  const result = await ingestSportmonksFixtureAnalytics(source, store, context);
+
+  assert.equal(result.statistics, 1);
+  assert.equal(result.xg, 0);
+  assert.equal(result.pressure, 1);
+  assert.equal(result.factsWritten, 2);
+  assert.deepEqual(result.errors, ["xg: xG unavailable for competition"]);
+  assert.equal(store.facts.length, 2);
 });
