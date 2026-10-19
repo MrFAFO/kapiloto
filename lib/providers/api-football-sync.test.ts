@@ -13,6 +13,7 @@ import type { BookmakerThreeWayQuote, ProviderFixture } from "./types";
 function games(): ApiFootballRoundGame[] {
   return Array.from({ length: 16 }, (_, index) => ({
     roundGameId: `game-${index + 1}`,
+    fixtureId: `fixture-${index + 1}`,
     gameNumber: index + 1,
     kickoffAt: "2026-10-20T18:00:00Z",
     competitionId: "competition-1",
