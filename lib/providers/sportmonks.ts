@@ -28,7 +28,7 @@ type SportmonksParticipant = {
   meta?: { location?: string };
 };
 
-type SportmonksExpectedRow = {
+export type SportmonksMetricRow = {
   fixture_id?: number;
   participant_id?: number;
   type_id?: number;
@@ -41,7 +41,7 @@ type SportmonksExpectedRow = {
   };
 };
 
-type SportmonksPressureRow = {
+export type SportmonksPressureRow = {
   fixture_id?: number;
   participant_id?: number;
   minute?: number;
@@ -63,8 +63,8 @@ type SportmonksFixtureRow = {
   participants?: SportmonksParticipant[];
   lineups?: unknown[];
   sidelined?: unknown[];
-  statistics?: unknown[];
-  xgfixture?: SportmonksExpectedRow[];
+  statistics?: SportmonksMetricRow[];
+  xgfixture?: SportmonksMetricRow[];
   pressure?: SportmonksPressureRow[];
   league?: { id?: number; name?: string; country_id?: number };
   round?: { id?: number; name?: string };
@@ -390,23 +390,41 @@ export class SportmonksClient {
     return parseSportmonksThreeWayQuotes(rows, fixture);
   }
 
-  async getStatisticsEntryCount(fixtureId: string): Promise<number> {
+  async getStatisticsRows(
+    fixtureId: string,
+  ): Promise<SportmonksMetricRow[]> {
     const envelope = await this.request<SportmonksFixtureRow>(
       `/fixtures/${fixtureId}`,
-      { include: "statistics" },
+      { include: "statistics.type" },
     );
-    return requireData(envelope, "fixture statistics").statistics?.length ?? 0;
+    return requireData(envelope, "fixture statistics").statistics ?? [];
+  }
+
+  async getXgRows(fixtureId: string): Promise<SportmonksMetricRow[]> {
+    const envelope = await this.request<SportmonksFixtureRow>(
+      `/fixtures/${fixtureId}`,
+      { include: "xGFixture.type" },
+    );
+    return requireData(envelope, "fixture xG").xgfixture ?? [];
+  }
+
+  async getPressureRows(fixtureId: string): Promise<SportmonksPressureRow[]> {
+    const envelope = await this.request<SportmonksFixtureRow>(
+      `/fixtures/${fixtureId}`,
+      { include: "pressure" },
+    );
+    return requireData(envelope, "fixture pressure").pressure ?? [];
+  }
+
+  async getStatisticsEntryCount(fixtureId: string): Promise<number> {
+    return (await this.getStatisticsRows(fixtureId)).length;
   }
 
   async getXgCoverage(fixtureId: string): Promise<{
     entries: number;
     metricDeveloperNames: string[];
   }> {
-    const envelope = await this.request<SportmonksFixtureRow>(
-      `/fixtures/${fixtureId}`,
-      { include: "xGFixture.type" },
-    );
-    const rows = requireData(envelope, "fixture xG").xgfixture ?? [];
+    const rows = await this.getXgRows(fixtureId);
     const metricDeveloperNames = [
       ...new Set(
         rows
@@ -425,11 +443,7 @@ export class SportmonksClient {
     entries: number;
     participants: number;
   }> {
-    const envelope = await this.request<SportmonksFixtureRow>(
-      `/fixtures/${fixtureId}`,
-      { include: "pressure" },
-    );
-    const rows = requireData(envelope, "fixture pressure").pressure ?? [];
+    const rows = await this.getPressureRows(fixtureId);
     return {
       entries: rows.length,
       participants: new Set(
