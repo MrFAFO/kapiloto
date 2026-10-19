@@ -147,6 +147,24 @@ function buildReport(
         (item) => item.capabilities.odds === true,
       ).length,
       fixturesWithObservedOdds: observedOdds.length,
+      fixturesWithStatisticsCoverage: fixtures.filter(
+        (item) => item.capabilities.statistics === true,
+      ).length,
+      fixturesWithObservedStatistics: fixtures.filter(
+        (item) => (item.analytics?.statisticsEntries ?? 0) > 0,
+      ).length,
+      fixturesWithXgCoverage: fixtures.filter(
+        (item) => item.capabilities.xg === true,
+      ).length,
+      fixturesWithObservedXg: fixtures.filter(
+        (item) => (item.analytics?.xgEntries ?? 0) > 0,
+      ).length,
+      fixturesWithPressureCoverage: fixtures.filter(
+        (item) => item.capabilities.pressure === true,
+      ).length,
+      fixturesWithObservedPressure: fixtures.filter(
+        (item) => (item.analytics?.pressureEntries ?? 0) > 0,
+      ).length,
       averageCompleteBookmakersWhenAvailable:
         Math.round(bookmakerAverage * 100) / 100,
     },
