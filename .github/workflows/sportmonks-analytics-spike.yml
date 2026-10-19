@@ -1,0 +1,60 @@
+name: Sportmonks Analytics Spike
+
+on:
+  push:
+    branches:
+      - design/mobile-first-dark-stadium
+    paths:
+      - .github/sportmonks-analytics-trigger
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test provider adapters
+        run: npm run test:providers
+
+      - name: Prepare artifacts
+        run: mkdir -p artifacts/provider-spike
+
+      - name: Probe Sportmonks
+        env:
+          SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
+        run: |
+          npm run spike:provider -- \
+            --provider sportmonks \
+            --input scripts/provider-spike.round-264101.json \
+            --out artifacts/provider-spike/sportmonks.json \
+            --concurrency 2
+
+      - name: Print report
+        if: always()
+        run: |
+          if [ -f artifacts/provider-spike/sportmonks.json ]; then
+            cat artifacts/provider-spike/sportmonks.json
+          fi
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sportmonks-analytics-spike-264101
+          path: artifacts/provider-spike/sportmonks.json
+          if-no-files-found: error
+          retention-days: 14
