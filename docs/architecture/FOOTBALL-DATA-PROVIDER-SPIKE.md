@@ -189,6 +189,42 @@ Use Sportmonks as the quality benchmark on a trial/free account for the same sam
 
 Only after comparing real Winner 16 rounds should D-006's provider implementation be bound to a concrete vendor.
 
+
+## Sportmonks advanced-analytics trial spike
+
+Executed on 2026-10-20 against the active Sportmonks trial after enabling Pressure Index & xG.
+
+The current Starter league selection exposed Premier League and La Liga fixtures from Winner 16 round 264101. Five fixtures resolved (games 6-10), and **all 5/5** returned observed lineups, sidelined rows, team statistics, fixture-level xG-family metrics, and Pressure Index data.
+
+Observed per resolved fixture:
+- team statistics: **82-92 rows**;
+- fixture xG-family data: **26 rows**;
+- Pressure Index: **192-216 minute/team rows**, covering both participants;
+- lineups: **40-46 rows**;
+- sidelined: **3-8 rows**.
+
+The xG payload exposed 13 metric developer names in this sample:
+- EXPECTED_GOALS;
+- EXPECTED_GOALS_AGAINST;
+- EXPECTED_GOALS_CORNERS;
+- EXPECTED_GOALS_DIFFERENCE;
+- EXPECTED_GOALS_FREE_KICKS;
+- EXPECTED_GOALS_ON_TARGET;
+- EXPECTED_GOALS_OPEN_PLAY;
+- EXPECTED_GOALS_PENALTIES;
+- EXPECTED_GOALS_PREVENTED;
+- EXPECTED_GOALS_SET_PLAY;
+- EXPECTED_NON_PENALTY_GOALS;
+- EXPECTED_POINTS;
+- SHOOTING_PERFORMANCE.
+
+This is strong evidence that Sportmonks can supply a materially richer **performance-analysis** layer than the provisional API-Football integration for competitions with the required entitlement.
+
+Important limitations of this first run:
+- only 5/16 round fixtures resolved because the current Starter account is entitled to only the currently selected leagues;
+- no complete pre-match 1X2 bookmaker triples were observed from Sportmonks in this run, so API-Football remains the proven market-prior source;
+- the next trial step is to rotate the five Starter league slots to Ligat Ha'al, Liga Leumit, Bundesliga, Serie A and Ligue 1, then rerun the same harness. Premier League and La Liga have already been empirically proven by this run.
+
 ## Round 264101 live spike result
 
 Executed against API-Football Free on 2026-10-18 using the repository spike harness with free-tier throttling.
