@@ -161,8 +161,8 @@ alter table public.fixture_market_snapshots
   references public.round_games(id)
   on delete set null;
 
-alter table public.fixture_market_snapshots
-  drop constraint if exists fixture_market_snapshots_id_round_game_id_key;
+-- Keep the existing (id, round_game_id) unique constraint because the current
+-- round-scoped Kapiloto analysis FK still references it during this transition.
 
 create index fixture_market_snapshots_fixture_time_idx
   on public.fixture_market_snapshots (fixture_id, captured_at desc);
