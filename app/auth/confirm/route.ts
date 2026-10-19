@@ -34,7 +34,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         type,
       }));
     } else {
-      return NextResponse.redirect(new URL("/login?auth_error=1", request.url));
+      return NextResponse.redirect(new URL("/login?confirmed=1", request.url));
     }
 
     if (error) {
