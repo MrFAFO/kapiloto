@@ -231,7 +231,7 @@ export async function handleFixtureAnalysisGet(
 
     const { data: roundGame, error: roundGameError } = await admin
       .from("round_games")
-      .select("id,round_id")
+      .select("id,round_id,fixture_id")
       .eq("id", roundGameId)
       .eq("round_id", roundId)
       .maybeSingle();
@@ -264,7 +264,7 @@ export async function handleFixtureAnalysisGet(
 
     const freshness = analysis
       ? await computeFixtureFreshness(admin, {
-          roundGameId,
+          fixtureId: String(roundGame.fixture_id),
           analysisOutcome: analysis.outcome,
           generatedAt: analysis.generatedAt,
           validUntil: analysis.validUntil,
