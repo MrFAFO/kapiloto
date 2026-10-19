@@ -7,13 +7,14 @@ import {
 import { sha256Hex } from "./snapshot";
 
 export type PreviousFixtureAnalysis = {
-  roundGameId: string;
+  fixtureId: string;
   analysisId: string;
 };
 
 export type ResearchFixtureDisposition =
   | {
       gameNumber: number;
+      fixtureId: string;
       roundGameId: string;
       mode: "research";
       taskKey: string;
@@ -21,6 +22,7 @@ export type ResearchFixtureDisposition =
     }
   | {
       gameNumber: number;
+      fixtureId: string;
       roundGameId: string;
       mode: "carried_forward";
       carriedFromAnalysisId: string;
@@ -32,6 +34,7 @@ export type ResearchFixtureDisposition =
     }
   | {
       gameNumber: number;
+      fixtureId: string;
       roundGameId: string;
       mode: "research_unavailable";
       reason:
@@ -46,6 +49,7 @@ export type KapilotoResearchRunPlan = {
   researchCutoffAt: string;
   fixtures: ResearchFixtureDisposition[];
   taskGameIds: string[];
+  taskFixtureIds: string[];
   fixtureSetSha256: string;
 };
 
@@ -64,15 +68,17 @@ export function buildKapilotoResearchRunPlan(
     sorted.some(
       (input, index) =>
         input.gameNumber !== expected[index] ||
-        (index > 0 && input.roundGameId === sorted[index - 1].roundGameId),
+        (index > 0 &&
+          (input.roundGameId === sorted[index - 1].roundGameId ||
+            input.fixtureId === sorted[index - 1].fixtureId)),
     )
   ) {
     throw new Error("Kapiloto run plan requires unique Toto numbers 1..16.");
   }
 
-  const previousByGame = new Map(
+  const previousByFixture = new Map(
     previousAnalyses.map((analysis) => [
-      analysis.roundGameId,
+      analysis.fixtureId,
       analysis.analysisId,
     ]),
   );
@@ -86,14 +92,15 @@ export function buildKapilotoResearchRunPlan(
     if (eligibility.eligible) {
       return {
         gameNumber: input.gameNumber,
+        fixtureId: input.fixtureId,
         roundGameId: input.roundGameId,
         mode: "research",
-        taskKey: `fixture:${input.roundGameId}`,
+        taskKey: `fixture:${input.fixtureId}`,
         card: buildKapilotoFixtureCard(input, researchCutoffAt),
       };
     }
 
-    const previousAnalysisId = previousByGame.get(input.roundGameId);
+    const previousAnalysisId = previousByFixture.get(input.fixtureId);
     if (
       previousAnalysisId &&
       (eligibility.reason === "kickoff_too_close" ||
@@ -103,6 +110,7 @@ export function buildKapilotoResearchRunPlan(
     ) {
       return {
         gameNumber: input.gameNumber,
+        fixtureId: input.fixtureId,
         roundGameId: input.roundGameId,
         mode: "carried_forward",
         carriedFromAnalysisId: previousAnalysisId,
@@ -127,6 +135,15 @@ export function buildKapilotoResearchRunPlan(
     )
     .map((fixture) => fixture.roundGameId);
 
+  const taskFixtureIds = fixtures
+    .filter(
+      (
+        fixture,
+      ): fixture is Extract<ResearchFixtureDisposition, { mode: "research" }> =>
+        fixture.mode === "research",
+    )
+    .map((fixture) => fixture.fixtureId);
+
   const researchCutoffIso = new Date(researchCutoffAt).toISOString();
   const fixtureSetSha256 = sha256Hex({
     research_cutoff_at: researchCutoffIso,
@@ -137,6 +154,7 @@ export function buildKapilotoResearchRunPlan(
     researchCutoffAt: researchCutoffIso,
     fixtures,
     taskGameIds,
+    taskFixtureIds,
     fixtureSetSha256,
   };
 }
