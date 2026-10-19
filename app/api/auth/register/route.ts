@@ -103,7 +103,15 @@ export async function POST(request: Request): Promise<NextResponse> {
         signUp.error?.code ?? "missing_user",
       );
       return response(
-        { error: { code: "registration_failed", message: "Registration failed." } },
+        {
+          error: {
+            code: "registration_failed",
+            message: "Registration failed.",
+            ...(process.env.VERCEL_ENV === "preview"
+              ? { debugCode: signUp.error?.code ?? "missing_user" }
+              : {}),
+          },
+        },
         400,
       );
     }
