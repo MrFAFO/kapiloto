@@ -43,6 +43,58 @@ jobs:
             --out artifacts/provider-spike/sportmonks.json \
             --concurrency 2
 
+      - name: Diagnose entitled leagues and date fixtures
+        env:
+          SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
+        run: |
+          node <<'NODE'
+          const token = process.env.SPORTMONKS_API_TOKEN;
+          const base = "https://api.sportmonks.com/v3/football";
+          async function get(path, params = {}) {
+            const url = new URL(base + path);
+            url.searchParams.set("api_token", token);
+            for (const [k,v] of Object.entries(params)) url.searchParams.set(k, String(v));
+            const res = await fetch(url);
+            const body = await res.json();
+            if (!res.ok) throw new Error(`${res.status} ${path}: ${JSON.stringify(body)}`);
+            return body;
+          }
+          const leaguesBody = await get("/leagues", { include: "country" });
+          const leagues = (leaguesBody.data ?? []).map(x => ({
+            id: x.id,
+            name: x.name,
+            country: x.country?.name ?? null,
+            active: x.active ?? null
+          }));
+          const dates = ["2026-10-17","2026-10-18","2026-10-19"];
+          const fixtures = [];
+          for (const date of dates) {
+            const body = await get(`/fixtures/date/${date}`, { include: "league;participants" });
+            for (const f of body.data ?? []) {
+              fixtures.push({
+                id: f.id,
+                date,
+                name: f.name,
+                leagueId: f.league_id,
+                league: f.league?.name ?? null,
+                participants: (f.participants ?? []).map(p => p.name)
+              });
+            }
+          }
+          const out = { generatedAt: new Date().toISOString(), leagues, fixtures };
+          await require("node:fs/promises").writeFile(
+            "artifacts/provider-spike/sportmonks-access.json",
+            JSON.stringify(out, null, 2) + "\n",
+            "utf8"
+          );
+          console.log(JSON.stringify({
+            leagues,
+            fixtures: fixtures.filter(f =>
+              /Ligat|Leumit|Bundesliga|Serie A|Ligue 1/i.test(f.league ?? "")
+            )
+          }, null, 2));
+          NODE
+
       - name: Print report
         if: always()
         run: |
@@ -50,11 +102,11 @@ jobs:
             cat artifacts/provider-spike/sportmonks.json
           fi
 
-      - name: Upload report
+      - name: Upload reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sportmonks-analytics-spike-264101
-          path: artifacts/provider-spike/sportmonks.json
+          path: artifacts/provider-spike
           if-no-files-found: error
           retention-days: 14
