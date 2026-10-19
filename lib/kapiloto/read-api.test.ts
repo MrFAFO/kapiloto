@@ -18,6 +18,7 @@ const OTHER_GROUP = "22222222-2222-4222-8222-999999999999";
 const ROUND = "33333333-3333-4333-8333-333333333333";
 const OTHER_ROUND = "33333333-3333-4333-8333-999999999999";
 const GAME = "44444444-4444-4444-8444-444444444444";
+const FIXTURE = "77777777-7777-4777-8777-777777777777";
 const OTHER_GAME = "44444444-4444-4444-8444-999999999999";
 const RUN_1 = "55555555-5555-4555-8555-555555555551";
 const RUN_2 = "55555555-5555-4555-8555-555555555552";
@@ -37,7 +38,7 @@ function baseTables(overrides: Partial<Tables> = {}): Tables {
     group_round_settings: [
       { group_id: GROUP, round_id: ROUND, max_doubles: 7, locked_at: null },
     ],
-    round_games: [{ id: GAME, round_id: ROUND }],
+    round_games: [{ id: GAME, round_id: ROUND, fixture_id: FIXTURE }],
     kapiloto_round_research_state: [],
     kapiloto_analyses: [],
     kapiloto_freshness_signals: [],
@@ -217,8 +218,8 @@ test("stale analysis returns stale with reasons; an active recheck run keeps ana
       ],
       kapiloto_analyses: [analysisRow()],
       kapiloto_freshness_signals: [
-        { round_game_id: GAME, signal_type: "lineup_change", severity: 3, observed_at: "2026-10-17T12:00:00.000Z" },
-        { round_game_id: GAME, signal_type: "minor_news", severity: 1, observed_at: "2026-10-17T12:00:00.000Z" },
+        { round_game_id: GAME, fixture_id: FIXTURE, signal_type: "lineup_change", severity: 3, observed_at: "2026-10-17T12:00:00.000Z" },
+        { round_game_id: GAME, fixture_id: FIXTURE, signal_type: "minor_news", severity: 1, observed_at: "2026-10-17T12:00:00.000Z" },
       ],
     }),
   );
@@ -317,7 +318,7 @@ test("non-member or unconfigured group returns 403", async () => {
 
 test("fixture that does not belong to the round returns 404", async () => {
   const { response } = await getFixture(
-    baseTables({ round_games: [{ id: OTHER_GAME, round_id: OTHER_ROUND }] }),
+    baseTables({ round_games: [{ id: OTHER_GAME, round_id: OTHER_ROUND, fixture_id: FIXTURE }] }),
   );
   assert.equal(response.status, 404);
 
