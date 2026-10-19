@@ -283,12 +283,36 @@ export async function ingestSportmonksFixtureAnalytics(
   xg: number;
   pressure: number;
   factsWritten: number;
+  errors: string[];
 }> {
-  const [statistics, xg, pressure] = await Promise.all([
+  const [statisticsResult, xgResult, pressureResult] = await Promise.allSettled([
     source.getStatisticsRows(context.providerFixtureId),
     source.getXgRows(context.providerFixtureId),
     source.getPressureRows(context.providerFixtureId),
   ]);
+
+  const errors: string[] = [];
+  const statistics =
+    statisticsResult.status === "fulfilled"
+      ? statisticsResult.value
+      : (errors.push(
+          `statistics: ${statisticsResult.reason instanceof Error ? statisticsResult.reason.message : String(statisticsResult.reason)}`,
+        ),
+        []);
+  const xg =
+    xgResult.status === "fulfilled"
+      ? xgResult.value
+      : (errors.push(
+          `xg: ${xgResult.reason instanceof Error ? xgResult.reason.message : String(xgResult.reason)}`,
+        ),
+        []);
+  const pressure =
+    pressureResult.status === "fulfilled"
+      ? pressureResult.value
+      : (errors.push(
+          `pressure: ${pressureResult.reason instanceof Error ? pressureResult.reason.message : String(pressureResult.reason)}`,
+        ),
+        []);
 
   const facts = buildSportmonksFixtureFacts(context, {
     statistics,
@@ -303,6 +327,7 @@ export async function ingestSportmonksFixtureAnalytics(
     xg: xg.length,
     pressure: pressure.length,
     factsWritten,
+    errors,
   };
 }
 
