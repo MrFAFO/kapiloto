@@ -4,6 +4,7 @@ import type { FixtureCardInput } from "./fixture-card";
 
 type RoundGameRow = {
   id: string;
+  fixture_id: string;
   round_id: string;
   game_number: number;
   home_team_id: string;
@@ -36,7 +37,7 @@ type TeamMappingRow = {
 
 type MarketSnapshotRow = {
   id: string;
-  round_game_id: string;
+  fixture_id: string;
   captured_at: string;
   p_1_bp: number;
   p_x_bp: number;
@@ -51,7 +52,7 @@ export type FixtureInputRows = {
   marketSnapshots: MarketSnapshotRow[];
 };
 
-function latestSnapshotByGame(
+function latestSnapshotByFixture(
   snapshots: MarketSnapshotRow[],
   cutoffAt: string,
 ): Map<string, MarketSnapshotRow> {
@@ -66,12 +67,12 @@ function latestSnapshotByGame(
     const capturedMs = Date.parse(snapshot.captured_at);
     if (!Number.isFinite(capturedMs) || capturedMs > cutoffMs) continue;
 
-    const current = latest.get(snapshot.round_game_id);
+    const current = latest.get(snapshot.fixture_id);
     if (
       !current ||
       Date.parse(current.captured_at) < capturedMs
     ) {
-      latest.set(snapshot.round_game_id, snapshot);
+      latest.set(snapshot.fixture_id, snapshot);
     }
   }
 
@@ -124,17 +125,18 @@ export function assembleFixtureCardInputs(
 
   const teams = new Map(rows.teams.map((team) => [team.id, team]));
   const aliases = aliasesByTeam(rows.teamAliases, rows.teamMappings);
-  const priors = latestSnapshotByGame(rows.marketSnapshots, researchCutoffAt);
+  const priors = latestSnapshotByFixture(rows.marketSnapshots, researchCutoffAt);
 
   return sortedGames.map((game) => {
     const home = teams.get(game.home_team_id);
     const away = teams.get(game.away_team_id);
-    const prior = priors.get(game.id);
+    const prior = priors.get(game.fixture_id);
 
     if (!home || !away) {
       throw new Error(`Missing canonical team row for Toto game ${game.game_number}.`);
     }
     return {
+      fixtureId: game.fixture_id,
       roundId: game.round_id,
       roundGameId: game.id,
       gameNumber: game.game_number,
@@ -185,7 +187,7 @@ export async function loadRoundFixtureCardInputs(
   const { data: gamesData, error: gamesError } = await client
     .from("round_games")
     .select(
-      "id,round_id,game_number,home_team_id,away_team_id,competition_id,competition_name_snapshot,competition_stage_snapshot,leg_number,aggregate_home_score,aggregate_away_score,neutral_venue,kickoff_at,settlement_rule",
+      "id,fixture_id,round_id,game_number,home_team_id,away_team_id,competition_id,competition_name_snapshot,competition_stage_snapshot,leg_number,aggregate_home_score,aggregate_away_score,neutral_venue,kickoff_at,settlement_rule",
     )
     .eq("round_id", roundId)
     .order("game_number", { ascending: true });
@@ -198,7 +200,7 @@ export async function loadRoundFixtureCardInputs(
   const teamIds = [
     ...new Set(games.flatMap((game) => [game.home_team_id, game.away_team_id])),
   ];
-  const gameIds = games.map((game) => game.id);
+  const fixtureIds = games.map((game) => game.fixture_id);
 
   const [
     { data: teamsData, error: teamsError },
@@ -218,9 +220,9 @@ export async function loadRoundFixtureCardInputs(
       .in("team_id", teamIds),
     client
       .from("fixture_market_snapshots")
-      .select("id,round_game_id,captured_at,p_1_bp,p_x_bp,p_2_bp")
+      .select("id,fixture_id,captured_at,p_1_bp,p_x_bp,p_2_bp")
       .eq("provider", provider)
-      .in("round_game_id", gameIds)
+      .in("fixture_id", fixtureIds)
       .lte("captured_at", researchCutoffAt)
       .order("captured_at", { ascending: false }),
   ]);
