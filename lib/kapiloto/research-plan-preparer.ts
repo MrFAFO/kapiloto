@@ -15,7 +15,7 @@ import type {
 
 type PreviousAnalysisRow = {
   id: string;
-  round_game_id: string;
+  fixture_id: string;
 };
 
 export class SupabaseKapilotoResearchPreparer
@@ -29,12 +29,12 @@ export class SupabaseKapilotoResearchPreparer
 
   private async loadPreviousAnalyses(
     currentRunId: string | null,
-  ): Promise<Array<{ roundGameId: string; analysisId: string }>> {
+  ): Promise<Array<{ fixtureId: string; analysisId: string }>> {
     if (currentRunId == null) return [];
 
     const { data, error } = await this.client
       .from("kapiloto_analyses")
-      .select("id,round_game_id")
+      .select("id,fixture_id")
       .eq("research_run_id", currentRunId);
 
     if (error) {
@@ -44,7 +44,7 @@ export class SupabaseKapilotoResearchPreparer
     }
 
     return ((data ?? []) as PreviousAnalysisRow[]).map((row) => ({
-      roundGameId: row.round_game_id,
+      fixtureId: row.fixture_id,
       analysisId: row.id,
     }));
   }
@@ -89,6 +89,7 @@ export class SupabaseKapilotoResearchPreparer
       fixtureSetSha256: plan.fixtureSetSha256,
       taskGameIds: plan.taskGameIds,
       inputSnapshot: {
+        task_fixture_ids: plan.taskFixtureIds,
         structured_provider: "api-football",
         provider_sync_started_at: providerSync.startedAt,
         provider_sync_completed_at: providerSync.completedAt,
