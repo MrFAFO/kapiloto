@@ -2,8 +2,8 @@ import type { KapilotoFixtureCard } from "./fixture-card";
 import type { SolFixtureResearchOutput } from "./research-output";
 
 export const KAPILOTO_RELIABILITY_FORMULA_VERSION =
-  "reliability-shadow-v0" as const;
-export const KAPILOTO_BLEND_POLICY_VERSION = "blend-shadow-v0" as const;
+  "kapiloto-reliability-shadow-v1" as const;
+export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v1" as const;
 
 export type Outcome = "1" | "X" | "2";
 
@@ -191,7 +191,7 @@ export function deriveReliability(
     reasons.push("moderate_prior_divergence");
   }
 
-  // Shadow-v0 deliberately avoids extreme trust before forward calibration.
+  // Shadow-v1 deliberately avoids extreme trust before forward calibration.
   const reliability = round4(clamp(score, 0.2, 0.85));
   const band =
     reliability < 0.45 ? "low" : reliability < 0.7 ? "medium" : "high";
