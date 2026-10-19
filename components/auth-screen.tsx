@@ -231,7 +231,9 @@ export function AuthScreen({
       } else if (result.status === 409) {
         setError("שם המשתמש אינו זמין.");
       } else {
-        setError("לא ניתן ליצור את החשבון כרגע. בדוק את הפרטים ונסה שוב.");
+        setError(
+          `לא ניתן ליצור את החשבון כרגע. קוד בדיקה: HTTP ${result.status}`,
+        );
       }
       return;
     }
