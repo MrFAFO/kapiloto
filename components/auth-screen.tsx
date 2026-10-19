@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 import { KapilotoWordmark } from "@/components/kapiloto-wordmark";
+import { parseRecoveryIdentifier, passwordValidationError, usernameValidationError } from "@/lib/auth/identity";
 
 export type AuthMode = "login" | "signup" | "recovery" | "reset";
 
@@ -210,9 +211,23 @@ export function AuthScreen({
 
   async function submitSignup(event: FormEvent) {
     event.preventDefault();
-    setBusy(true);
     setError(null);
     setNotice(null);
+
+    if (usernameValidationError(username)) {
+      setError("שם המשתמש חייב להכיל 3–40 תווים ולכלול רק אותיות, מספרים, נקודה, מקף או קו תחתון.");
+      return;
+    }
+    if (passwordValidationError(password)) {
+      setError("הסיסמה חייבת להכיל לפחות 8 תווים.");
+      return;
+    }
+    if (!parseRecoveryIdentifier(recovery)) {
+      setError("יש להזין כתובת מייל או מספר טלפון תקינים.");
+      return;
+    }
+
+    setBusy(true);
     const result = await postJson<{
       ok: true;
       channel: "email" | "phone";
@@ -231,9 +246,7 @@ export function AuthScreen({
       } else if (result.status === 409) {
         setError("שם המשתמש אינו זמין.");
       } else {
-        setError(
-          `לא ניתן ליצור את החשבון כרגע. קוד בדיקה: HTTP ${result.status}`,
-        );
+        setError("לא ניתן ליצור את החשבון כרגע. בדוק את הפרטים ונסה שוב.");
       }
       return;
     }
