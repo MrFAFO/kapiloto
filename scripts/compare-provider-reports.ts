@@ -71,6 +71,7 @@ async function main(): Promise<void> {
         oddsSupported: nullableBoolean(leftFixture.capabilities.odds),
         completeBookmakers: leftFixture.completeBookmakers,
         marketPrior: leftFixture.marketPrior?.probabilitiesBp ?? null,
+        analytics: leftFixture.analytics ?? null,
         errors: leftFixture.providerErrors,
       },
       [right.provider]: {
@@ -83,6 +84,7 @@ async function main(): Promise<void> {
         oddsSupported: nullableBoolean(rightFixture.capabilities.odds),
         completeBookmakers: rightFixture.completeBookmakers,
         marketPrior: rightFixture.marketPrior?.probabilitiesBp ?? null,
+        analytics: rightFixture.analytics ?? null,
         errors: rightFixture.providerErrors,
       },
     };
@@ -106,6 +108,15 @@ async function main(): Promise<void> {
         fixturesWithObservedOdds:
           right.summary.fixturesWithObservedOdds -
           left.summary.fixturesWithObservedOdds,
+        fixturesWithObservedStatistics:
+          right.summary.fixturesWithObservedStatistics -
+          left.summary.fixturesWithObservedStatistics,
+        fixturesWithObservedXg:
+          right.summary.fixturesWithObservedXg -
+          left.summary.fixturesWithObservedXg,
+        fixturesWithObservedPressure:
+          right.summary.fixturesWithObservedPressure -
+          left.summary.fixturesWithObservedPressure,
         averageCompleteBookmakersWhenAvailable:
           Math.round(
             (right.summary.averageCompleteBookmakersWhenAvailable -
