@@ -57,11 +57,12 @@ test("late fixtures carry forward instead of being re-researched", () => {
   const plan = buildKapilotoResearchRunPlan(
     inputs,
     "2026-10-18T12:00:00Z",
-    [{ roundGameId: "game-1", analysisId: "analysis-old-1" }],
+    [{ fixtureId: "fixture-1", analysisId: "analysis-old-1" }],
   );
 
   assert.deepEqual(plan.fixtures[0], {
     gameNumber: 1,
+    fixtureId: "fixture-1",
     roundGameId: "game-1",
     mode: "carried_forward",
     carriedFromAnalysisId: "analysis-old-1",
@@ -114,7 +115,7 @@ test("missing future prior carries forward when an earlier analysis exists", () 
   const plan = buildKapilotoResearchRunPlan(
     inputs,
     "2026-10-18T12:00:00Z",
-    [{ roundGameId: "game-1", analysisId: "analysis-old-1" }],
+    [{ fixtureId: "fixture-1", analysisId: "analysis-old-1" }],
   );
 
   assert.deepEqual(plan.fixtures[0], {
@@ -138,6 +139,7 @@ test("missing future prior is explicit research_unavailable on the first run", (
 
   assert.deepEqual(plan.fixtures[0], {
     gameNumber: 1,
+    fixtureId: "fixture-1",
     roundGameId: "game-1",
     mode: "research_unavailable",
     reason: "missing_prior",
