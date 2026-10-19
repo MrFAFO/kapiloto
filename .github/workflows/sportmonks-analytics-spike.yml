@@ -82,7 +82,8 @@ jobs:
             }
           }
           const out = { generatedAt: new Date().toISOString(), leagues, fixtures };
-          await require("node:fs/promises").writeFile(
+          const { writeFile } = await import("node:fs/promises");
+          await writeFile(
             "artifacts/provider-spike/sportmonks-access.json",
             JSON.stringify(out, null, 2) + "\n",
             "utf8"
