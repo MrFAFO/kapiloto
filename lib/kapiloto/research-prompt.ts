@@ -67,6 +67,9 @@ Non-negotiable rules:
 
 13. Keep summary and main_risk concise, professional and plain text. Do not
     place raw URLs in free-text fields.
+
+14. Keep every key_assumptions entry to 140 characters or fewer. Prefer a
+    short factual condition over a long explanatory sentence.
 `.trim();
 
 export function buildKapilotoFixtureResearchInput(
