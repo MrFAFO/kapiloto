@@ -29,7 +29,7 @@ export type MaterializedEvidence = {
   retrieved_at: string;
   trust_tier: number;
   quote_verified: true;
-  entailment: "not_checked";
+  entailment: "supported" | "unsupported" | "not_checked";
   syndication_cluster_id: string | null;
   content_sha256: string;
   status: "accepted";
