@@ -86,3 +86,18 @@ export async function loadSingleActiveGroup(
   const groups = await loadActiveGroups(client, userId);
   return groups.length === 1 ? groups[0] : null;
 }
+
+
+export function selectActiveGroup(
+  groups: ActiveGroupContext[],
+  requestedGroupId?: string | null,
+): ActiveGroupContext | null {
+  if (groups.length === 0) return null;
+
+  if (requestedGroupId) {
+    const requested = groups.find((group) => group.groupId === requestedGroupId);
+    if (requested) return requested;
+  }
+
+  return groups[0];
+}
