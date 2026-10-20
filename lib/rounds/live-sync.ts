@@ -5,6 +5,12 @@ import {
   TelesportWinner16Provider,
   type TelesportGameState,
 } from "./telesport";
+import {
+  israelDateKey,
+  matchScores365FinalResult,
+  Scores365ResultsProvider,
+  type Scores365FinalResult,
+} from "./scores365";
 
 type RoundRow = {
   id: string;
@@ -15,12 +21,30 @@ type RoundRow = {
 type RoundGameRow = {
   id: string;
   game_number: number;
+  home_team_id: string;
+  away_team_id: string;
+  kickoff_at: string;
   status: string;
   field_home_score: number | null;
   field_away_score: number | null;
   settlement_status: string;
   pool_settlement_outcome: string | null;
   last_synced_at: string | null;
+};
+
+type TeamRow = {
+  id: string;
+  canonical_name: string;
+};
+
+type TeamAliasRow = {
+  team_id: string;
+  alias: string;
+};
+
+type Scores365CrossCheck = {
+  result: Scores365FinalResult;
+  sourceVersion: string;
 };
 
 export type AutomaticLiveSyncResult =
@@ -95,6 +119,7 @@ export function buildTelesportGameUpdate(
   source: TelesportGameState,
   sourceVersion: string,
   fetchedAt: string,
+  scores365: Scores365CrossCheck | null = null,
 ): Json {
   const status = preserveMonotonicStatus(game.status, source.status);
   const update: Record<string, Json> = {
@@ -111,9 +136,29 @@ export function buildTelesportGameUpdate(
   const settlementSource = `telesport-winner16:${sourceVersion}`;
 
   if (source.status === "finished" && source.outcome) {
-    update.pool_settlement_status = "settled";
-    update.pool_outcome = source.outcome;
-    update.settlement_source = settlementSource;
+    if (scores365) {
+      const outcomeConflict = scores365.result.outcome !== source.outcome;
+      const scoreConflict =
+        source.homeScore != null &&
+        source.awayScore != null &&
+        (scores365.result.homeScore !== source.homeScore ||
+          scores365.result.awayScore !== source.awayScore);
+      const corroboratedSource =
+        `${settlementSource};365scores:${scores365.sourceVersion}`;
+
+      if (outcomeConflict || scoreConflict) {
+        update.pool_settlement_status = "under_review";
+        update.settlement_source = corroboratedSource;
+      } else {
+        update.pool_settlement_status = "settled";
+        update.pool_outcome = source.outcome;
+        update.settlement_source = corroboratedSource;
+      }
+    } else {
+      update.pool_settlement_status = "settled";
+      update.pool_outcome = source.outcome;
+      update.settlement_source = settlementSource;
+    }
   } else if (
     source.status === "postponed" ||
     source.status === "cancelled" ||
@@ -159,7 +204,7 @@ async function syncOnce(
   const { data: gamesData, error: gamesError } = await client
     .from("round_games")
     .select(
-      "id,game_number,status,field_home_score,field_away_score,settlement_status,pool_settlement_outcome,last_synced_at",
+      "id,game_number,home_team_id,away_team_id,kickoff_at,status,field_home_score,field_away_score,settlement_status,pool_settlement_outcome,last_synced_at",
     )
     .eq("round_id", round.id)
     .order("game_number", { ascending: true });
@@ -201,6 +246,69 @@ async function syncOnce(
     };
   }
 
+  const teamIds = [
+    ...new Set(
+      games.flatMap((game) => [game.home_team_id, game.away_team_id]),
+    ),
+  ];
+  const [
+    { data: teamData, error: teamError },
+    { data: aliasData, error: aliasError },
+  ] = await Promise.all([
+    client.from("teams").select("id,canonical_name").in("id", teamIds),
+    client.from("team_aliases").select("team_id,alias").in("team_id", teamIds),
+  ]);
+
+  if (teamError) {
+    throw new Error(
+      `Failed to load team names for live cross-check: ${teamError.message}`,
+    );
+  }
+  if (aliasError) {
+    throw new Error(
+      `Failed to load team aliases for live cross-check: ${aliasError.message}`,
+    );
+  }
+
+  const namesByTeam = new Map<string, string[]>();
+  for (const team of (teamData ?? []) as TeamRow[]) {
+    namesByTeam.set(team.id, [team.canonical_name]);
+  }
+  for (const alias of (aliasData ?? []) as TeamAliasRow[]) {
+    const names = namesByTeam.get(alias.team_id) ?? [];
+    names.push(alias.alias);
+    namesByTeam.set(alias.team_id, names);
+  }
+
+  const finishedDates = [
+    ...new Set(
+      games
+        .filter((game) => {
+          const sourceGame = source.games[game.game_number - 1];
+          return sourceGame?.status === "finished" && Boolean(sourceGame.outcome);
+        })
+        .map((game) => israelDateKey(game.kickoff_at)),
+    ),
+  ];
+  const scores365ByDate = new Map<
+    string,
+    Awaited<ReturnType<Scores365ResultsProvider["getFinalResultsForDate"]>>
+  >();
+  const scores365 = new Scores365ResultsProvider({ now: () => now });
+
+  await Promise.all(
+    finishedDates.map(async (date) => {
+      try {
+        const snapshot = await scores365.getFinalResultsForDate(date);
+        scores365ByDate.set(date, snapshot);
+      } catch {
+        // Cross-check availability must never block the operational Telesport
+        // live feed. No exact 365Scores result means the existing settlement
+        // path remains unchanged.
+      }
+    }),
+  );
+
   let touchedGames = 0;
   let settledGames = 0;
   let underReviewGames = 0;
@@ -221,11 +329,31 @@ async function syncOnce(
       continue;
     }
 
+    const date = israelDateKey(game.kickoff_at);
+    const scoresSnapshot = scores365ByDate.get(date) ?? null;
+    const scoresResult =
+      scoresSnapshot == null
+        ? null
+        : matchScores365FinalResult(
+            {
+              kickoffAt: game.kickoff_at,
+              homeNames: namesByTeam.get(game.home_team_id) ?? [],
+              awayNames: namesByTeam.get(game.away_team_id) ?? [],
+            },
+            scoresSnapshot.results,
+          );
+
     const payload = buildTelesportGameUpdate(
       game,
       sourceGame,
       source.sourceVersion,
       source.fetchedAt,
+      scoresResult && scoresSnapshot
+        ? {
+            result: scoresResult,
+            sourceVersion: scoresSnapshot.sourceVersion,
+          }
+        : null,
     );
 
     const { error } = await client.rpc("toto_apply_game_state_v1", {
@@ -238,14 +366,10 @@ async function syncOnce(
     }
 
     touchedGames += 1;
-    if (sourceGame.status === "finished" && sourceGame.outcome) {
+    const appliedPayload = payload as Record<string, unknown>;
+    if (appliedPayload.pool_settlement_status === "settled") {
       settledGames += 1;
-    } else if (
-      sourceGame.status === "postponed" ||
-      sourceGame.status === "cancelled" ||
-      sourceGame.status === "suspended" ||
-      sourceGame.status === "under_review"
-    ) {
+    } else if (appliedPayload.pool_settlement_status === "under_review") {
       underReviewGames += 1;
     }
   }

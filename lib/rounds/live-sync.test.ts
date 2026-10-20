@@ -6,6 +6,9 @@ import { buildTelesportGameUpdate } from "./live-sync";
 const game = {
   id: "00000000-0000-4000-8000-000000000001",
   game_number: 1,
+  home_team_id: "home",
+  away_team_id: "away",
+  kickoff_at: "2026-10-24T16:00:00.000Z",
   status: "live",
   field_home_score: 1,
   field_away_score: 0,
@@ -100,4 +103,79 @@ test("stale source state cannot regress an already live game to upcoming", () =>
   ) as Record<string, unknown>;
 
   assert.equal(payload.status, "live");
+});
+
+
+test("matching 365Scores final corroborates Telesport settlement", () => {
+  const payload = buildTelesportGameUpdate(
+    game,
+    {
+      gameNumber: 1,
+      status: "finished",
+      homeScore: 2,
+      awayScore: 1,
+      outcome: "1",
+      rawStatus: "הסתיים",
+      rawScore: "2 - 1",
+    },
+    "sha256:telesport",
+    "2026-10-24T16:00:00.000Z",
+    {
+      sourceVersion: "sha256:365",
+      result: {
+        eventId: "365-1",
+        date: "2026-10-24",
+        startTime: null,
+        homeTeam: "Home",
+        awayTeam: "Away",
+        homeScore: 2,
+        awayScore: 1,
+        outcome: "1",
+      },
+    },
+  ) as Record<string, unknown>;
+
+  assert.equal(payload.pool_settlement_status, "settled");
+  assert.equal(payload.pool_outcome, "1");
+  assert.equal(
+    payload.settlement_source,
+    "telesport-winner16:sha256:telesport;365scores:sha256:365",
+  );
+});
+
+test("365Scores disagreement forces under-review and never publishes a pool outcome", () => {
+  const payload = buildTelesportGameUpdate(
+    game,
+    {
+      gameNumber: 1,
+      status: "finished",
+      homeScore: 2,
+      awayScore: 1,
+      outcome: "1",
+      rawStatus: "הסתיים",
+      rawScore: "2 - 1",
+    },
+    "sha256:telesport",
+    "2026-10-24T16:00:00.000Z",
+    {
+      sourceVersion: "sha256:365",
+      result: {
+        eventId: "365-1",
+        date: "2026-10-24",
+        startTime: null,
+        homeTeam: "Home",
+        awayTeam: "Away",
+        homeScore: 1,
+        awayScore: 1,
+        outcome: "X",
+      },
+    },
+  ) as Record<string, unknown>;
+
+  assert.equal(payload.pool_settlement_status, "under_review");
+  assert.equal(payload.pool_outcome, undefined);
+  assert.match(
+    String(payload.settlement_source),
+    /telesport-winner16:.*365scores:/,
+  );
 });
