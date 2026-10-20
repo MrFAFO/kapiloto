@@ -12,7 +12,7 @@ export async function POST(request: Request): Promise<Response> {
   if (
     !verifyKapilotoWorkerAuthorization(
       request.headers.get("authorization"),
-      process.env.KAPILOTO_WORKER_SECRET,
+      process.env.KAPILOTO_WORKER_SECRET_SHA256,
     )
   ) {
     return Response.json(
