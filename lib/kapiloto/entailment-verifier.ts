@@ -64,6 +64,7 @@ function pendingItems(
   domain: string;
 }> {
   const pending: Array<{
+    verificationId: string;
     fixtureId: string;
     evidenceId: string;
     claim: string;
