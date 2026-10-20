@@ -2412,6 +2412,14 @@ export type Database = {
         Args: { p_name: string; p_user_id: string }
         Returns: Json
       }
+      kapiloto_decide_group_join: {
+        Args: {
+          p_actor_user_id: string
+          p_decision: string
+          p_request_id: string
+        }
+        Returns: Json
+      }
       kapiloto_ensure_group_round_settings: {
         Args: { p_group_id: string; p_round_id: string; p_user_id: string }
         Returns: Json
@@ -2473,6 +2481,10 @@ export type Database = {
           p_username: string
         }
         Returns: undefined
+      }
+      kapiloto_request_group_join: {
+        Args: { p_join_code: string; p_user_id: string }
+        Returns: Json
       }
       kapiloto_request_research: {
         Args: {
