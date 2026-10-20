@@ -1,5 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runAutomaticRoundSync } from "@/lib/rounds/automatic-sync";
+import { SupabaseCurrentRoundLoader } from "@/lib/rounds/current-round";
+import { runAutomaticLiveSync } from "@/lib/rounds/live-sync";
 
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
@@ -16,11 +18,18 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
-    const result = await runAutomaticRoundSync(createAdminClient());
+    const admin = createAdminClient();
+    const roundSync = await runAutomaticRoundSync(admin);
+    const currentRound = await new SupabaseCurrentRoundLoader(admin).load();
+    const liveSync = currentRound
+      ? await runAutomaticLiveSync(admin, currentRound.roundId)
+      : null;
+
     return Response.json({
       ok: true,
       checkedAt: new Date().toISOString(),
-      result,
+      roundSync,
+      liveSync,
     });
   } catch (error) {
     return Response.json(
