@@ -326,9 +326,18 @@ test("fixture that does not belong to the round returns 404", async () => {
   assert.equal(unknown.response.status, 404);
 });
 
-test("missing or malformed group_id is rejected with 400", async () => {
+test("missing group_id uses neutral context while malformed group_id is rejected", async () => {
   const missing = await getFixture(baseTables(), { groupId: null });
-  assert.equal(missing.response.status, 400);
+  assert.equal(missing.response.status, 200);
+  const body = await json<KapilotoFixtureEnvelope>(missing.response);
+  assert.deepEqual(body.group, { max_doubles: 0, locked: false });
+  assert.ok(
+    !missing.fake.queries.some(
+      (query) =>
+        query.table === "group_members" ||
+        query.table === "group_round_settings",
+    ),
+  );
 
   const malformed = await getFixture(baseTables(), { groupId: "not-a-uuid" });
   assert.equal(malformed.response.status, 400);
@@ -436,10 +445,18 @@ test("GET state reports closed rounds and enforces auth and membership", async (
   );
   assert.equal(forbidden.status, 403);
 
+  const missingGroupContext = setup(tables);
   const missingGroup = await handleRoundResearchStateGet(
     new Request(url(null)),
     { roundId: ROUND },
-    setup(tables).deps,
+    missingGroupContext.deps,
   );
-  assert.equal(missingGroup.status, 400);
+  assert.equal(missingGroup.status, 200);
+  assert.ok(
+    !missingGroupContext.fake.queries.some(
+      (query) =>
+        query.table === "group_members" ||
+        query.table === "group_round_settings",
+    ),
+  );
 });
