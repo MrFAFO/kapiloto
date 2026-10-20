@@ -16,6 +16,7 @@ import type {
 type PreviousAnalysisRow = {
   id: string;
   fixture_id: string;
+  carried_from_analysis_id: string | null;
 };
 
 export class SupabaseKapilotoResearchPreparer
@@ -34,7 +35,7 @@ export class SupabaseKapilotoResearchPreparer
 
     const { data, error } = await this.client
       .from("kapiloto_analyses")
-      .select("id,fixture_id")
+      .select("id,fixture_id,carried_from_analysis_id")
       .eq("research_run_id", currentRunId);
 
     if (error) {
@@ -45,7 +46,7 @@ export class SupabaseKapilotoResearchPreparer
 
     return ((data ?? []) as PreviousAnalysisRow[]).map((row) => ({
       fixtureId: row.fixture_id,
-      analysisId: row.id,
+      analysisId: row.carried_from_analysis_id ?? row.id,
     }));
   }
 

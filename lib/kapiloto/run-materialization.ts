@@ -1,9 +1,12 @@
 import type { KapilotoFixtureCard } from "./fixture-card";
 import {
   deriveFixtureAnalysis,
-  rankDoubleCandidates,
   type DerivedAnalyzedFixture,
 } from "./derivation";
+import type {
+  FrozenFixtureContext,
+  ResearchIneligibilityReason,
+} from "./research-run-plan";
 import type { SolFixtureResearchOutput } from "./research-output";
 import type { GroundingResult } from "./source-grounding";
 
@@ -47,14 +50,19 @@ export type MaterializedFactor = {
 export type MaterializedAnalysis = {
   round_game_id: string;
   fixture_id: string;
-  outcome: "analyzed" | "insufficient_data";
-  carried_from_analysis_id: null;
+  outcome:
+    | "analyzed"
+    | "insufficient_data"
+    | "void"
+    | "carried_forward"
+    | "research_unavailable";
+  carried_from_analysis_id: string | null;
   research_cutoff_at: string;
   kickoff_at_snapshot: string;
   settlement_rule_snapshot: string;
   neutral_venue_snapshot: boolean;
   orientation_verified: boolean;
-  prior_type: "market" | "rating" | "league_base";
+  prior_type: "market" | "rating" | "league_base" | null;
   market_snapshot_id: string | null;
   p_prior_1_bp: number | null;
   p_prior_x_bp: number | null;
@@ -65,18 +73,18 @@ export type MaterializedAnalysis = {
   p_final_1_bp: number | null;
   p_final_x_bp: number | null;
   p_final_2_bp: number | null;
-  reliability: number;
-  reliability_band: "low" | "medium" | "high";
+  reliability: number | null;
+  reliability_band: "low" | "medium" | "high" | null;
   reliability_reasons: string[];
-  model_self_confidence: "low" | "medium" | "high";
+  model_self_confidence: "low" | "medium" | "high" | null;
   primary_pick: "1" | "X" | "2" | null;
   suggested_double: "1X" | "X2" | "12" | null;
   double_priority_rank: number | null;
   double_gain_score: number | null;
   blend_weight: number | null;
   deviation_cap_applied: boolean;
-  summary: string;
-  main_risk: string;
+  summary: string | null;
+  main_risk: string | null;
   availability: SolFixtureResearchOutput["availability"];
   dimension_coverage: SolFixtureResearchOutput["dimension_coverage"];
   conflicts: SolFixtureResearchOutput["conflicts"];
@@ -84,7 +92,8 @@ export type MaterializedAnalysis = {
   key_assumptions: string[];
   data_quality: SolFixtureResearchOutput["data_quality"];
   suspicious_content: SolFixtureResearchOutput["suspicious_content_observed"];
-  valid_until: null;
+  valid_until: string | null;
+  generated_at: string | null;
   evidence: MaterializedEvidence[];
   factors: MaterializedFactor[];
   inputs: Array<{
@@ -94,11 +103,41 @@ export type MaterializedAnalysis = {
   }>;
 };
 
+export type CarryForwardSource = {
+  analysisId: string;
+  analysis: MaterializedAnalysis;
+};
+
+export type MaterializableFixture =
+  | ({ mode: "research" } & ValidatedFixtureResearch)
+  | {
+      mode: "carried_forward";
+      gameNumber: number;
+      roundGameId: string;
+      fixtureId: string;
+      carriedFromAnalysisId: string;
+      reason: Exclude<ResearchIneligibilityReason, "invalid_fixture">;
+      context: FrozenFixtureContext;
+      researchCutoffAt: string;
+      source: CarryForwardSource;
+    }
+  | {
+      mode: "research_unavailable";
+      gameNumber: number;
+      roundGameId: string;
+      fixtureId: string;
+      reason: ResearchIneligibilityReason;
+      context: FrozenFixtureContext;
+      researchCutoffAt: string;
+    };
+
 export type MaterializedRound = {
   analyses: MaterializedAnalysis[];
   synthesis: {
     analyzed_fixtures: number;
     insufficient_data_fixtures: number;
+    carried_forward_fixtures: number;
+    research_unavailable_fixtures: number;
     double_ranking: Array<{
       fixture_id: string;
       round_game_id: string;
@@ -112,6 +151,8 @@ export type MaterializedRound = {
   };
 };
 
+const OUTCOME_ORDER = ["1", "X", "2"] as const;
+
 function assertFixtureIdentity(input: ValidatedFixtureResearch): void {
   if (
     input.card.fixture_id !== input.fixtureId ||
@@ -119,7 +160,9 @@ function assertFixtureIdentity(input: ValidatedFixtureResearch): void {
     input.card.round_game_id !== input.roundGameId ||
     input.card.toto_number !== input.gameNumber
   ) {
-    throw new Error("Validated research does not match its frozen fixture identity.");
+    throw new Error(
+      "Validated research does not match its frozen fixture identity.",
+    );
   }
 }
 
@@ -195,6 +238,7 @@ function baseMaterialization(
     data_quality: output.data_quality,
     suspicious_content: output.suspicious_content_observed,
     valid_until: null,
+    generated_at: null,
     evidence: acceptedEvidence(grounding),
     factors: output.factors.map((factor) => ({
       dimension: factor.dimension,
@@ -236,7 +280,6 @@ function groundingSummary(grounding: GroundingResult) {
 function analyzedPayload(
   input: ValidatedFixtureResearch,
   derived: DerivedAnalyzedFixture,
-  rank: number,
 ): MaterializedAnalysis {
   return {
     ...baseMaterialization(input),
@@ -255,19 +298,258 @@ function analyzedPayload(
     reliability_reasons: derived.reliabilityReasons,
     primary_pick: derived.primaryPick,
     suggested_double: derived.suggestedDouble,
-    double_priority_rank: rank,
-    double_gain_score: Math.round(derived.doubleGainScore * 100_000_000) / 100_000_000,
+    double_priority_rank: null,
+    double_gain_score:
+      Math.round(derived.doubleGainScore * 100_000_000) / 100_000_000,
     blend_weight: derived.blendWeight,
     deviation_cap_applied: derived.deviationCapApplied,
   };
 }
 
-export function materializeValidatedResearchRound(
-  fixtures: ValidatedFixtureResearch[],
+function materializeResearchFixture(
+  input: ValidatedFixtureResearch,
+): MaterializedAnalysis {
+  assertFixtureIdentity(input);
+
+  if (
+    input.output.outcome === "analyzed" &&
+    input.grounding.accepted.length === 0
+  ) {
+    throw new Error(
+      `Analyzed fixture ${input.fixtureId} has no accepted grounded evidence.`,
+    );
+  }
+
+  if (input.grounding.requiresEntailmentVerification.length > 0) {
+    throw new Error(
+      `Fixture ${input.fixtureId} still requires material-factor entailment verification.`,
+    );
+  }
+
+  const derived = deriveFixtureAnalysis(
+    input.output,
+    input.card,
+    groundingSummary(input.grounding),
+  );
+
+  if (derived.outcome === "analyzed") {
+    return analyzedPayload(input, derived);
+  }
+
+  return {
+    ...baseMaterialization(input),
+    outcome: "insufficient_data",
+    p_prior_1_bp: input.card.structured.prior.p_home_bp,
+    p_prior_x_bp: input.card.structured.prior.p_draw_bp,
+    p_prior_2_bp: input.card.structured.prior.p_away_bp,
+    p_sol_1_bp: null,
+    p_sol_x_bp: null,
+    p_sol_2_bp: null,
+    p_final_1_bp: null,
+    p_final_x_bp: null,
+    p_final_2_bp: null,
+    reliability: derived.reliability,
+    reliability_band: "low",
+    reliability_reasons: derived.reliabilityReasons,
+    primary_pick: null,
+    suggested_double: null,
+    double_priority_rank: null,
+    double_gain_score: null,
+    blend_weight: null,
+    deviation_cap_applied: false,
+  };
+}
+
+function materializeCarriedFixture(
+  input: Extract<MaterializableFixture, { mode: "carried_forward" }>,
+): MaterializedAnalysis {
+  if (
+    input.source.analysisId !== input.carriedFromAnalysisId ||
+    input.source.analysis.fixture_id !== input.fixtureId
+  ) {
+    throw new Error(
+      `Carry-forward source does not match fixture ${input.fixtureId}.`,
+    );
+  }
+
+  return {
+    ...input.source.analysis,
+    round_game_id: input.roundGameId,
+    fixture_id: input.fixtureId,
+    outcome: "carried_forward",
+    carried_from_analysis_id: input.carriedFromAnalysisId,
+    research_cutoff_at: input.researchCutoffAt,
+    kickoff_at_snapshot: input.context.kickoffAt,
+    settlement_rule_snapshot: input.context.settlementRule,
+    neutral_venue_snapshot: input.context.neutralVenue,
+    double_priority_rank: null,
+    evidence: [],
+    factors: [],
+    inputs: [
+      {
+        input_type: "carried_forward",
+        input_version: "kapiloto-run-plan-v1",
+        metadata: {
+          source_analysis_id: input.carriedFromAnalysisId,
+          reason: input.reason,
+        },
+      },
+    ],
+  };
+}
+
+function materializeUnavailableFixture(
+  input: Extract<MaterializableFixture, { mode: "research_unavailable" }>,
+): MaterializedAnalysis {
+  return {
+    round_game_id: input.roundGameId,
+    fixture_id: input.fixtureId,
+    outcome: "research_unavailable",
+    carried_from_analysis_id: null,
+    research_cutoff_at: input.researchCutoffAt,
+    kickoff_at_snapshot: input.context.kickoffAt,
+    settlement_rule_snapshot: input.context.settlementRule,
+    neutral_venue_snapshot: input.context.neutralVenue,
+    orientation_verified: true,
+    prior_type: null,
+    market_snapshot_id: null,
+    p_prior_1_bp: null,
+    p_prior_x_bp: null,
+    p_prior_2_bp: null,
+    p_sol_1_bp: null,
+    p_sol_x_bp: null,
+    p_sol_2_bp: null,
+    p_final_1_bp: null,
+    p_final_x_bp: null,
+    p_final_2_bp: null,
+    reliability: null,
+    reliability_band: null,
+    reliability_reasons: [`research_unavailable:${input.reason}`],
+    model_self_confidence: null,
+    primary_pick: null,
+    suggested_double: null,
+    double_priority_rank: null,
+    double_gain_score: null,
+    blend_weight: null,
+    deviation_cap_applied: false,
+    summary: null,
+    main_risk: null,
+    availability: [],
+    dimension_coverage: [],
+    conflicts: [],
+    watch_items: [],
+    key_assumptions: [],
+    data_quality: {
+      sparse_coverage: true,
+      language_limited: false,
+      notes: `research_unavailable:${input.reason}`,
+    },
+    suspicious_content: [],
+    valid_until: null,
+    generated_at: null,
+    evidence: [],
+    factors: [],
+    inputs: [
+      {
+        input_type: "research_unavailable",
+        input_version: "kapiloto-run-plan-v1",
+        metadata: { reason: input.reason },
+      },
+    ],
+  };
+}
+
+function doubleFrom(
+  first: "1" | "X" | "2",
+  second: "1" | "X" | "2",
+): "1X" | "X2" | "12" {
+  const set = new Set([first, second]);
+  if (set.has("1") && set.has("X")) return "1X";
+  if (set.has("X") && set.has("2")) return "X2";
+  return "12";
+}
+
+function rankMaterializedAnalyses(
+  analyses: MaterializedAnalysis[],
+  gameNumberByFixture: Map<string, number>,
+) {
+  const candidates = analyses.flatMap((analysis) => {
+    if (
+      analysis.p_final_1_bp == null ||
+      analysis.p_final_x_bp == null ||
+      analysis.p_final_2_bp == null ||
+      analysis.reliability == null
+    ) {
+      analysis.double_priority_rank = null;
+      return [];
+    }
+
+    const probabilities = {
+      "1": analysis.p_final_1_bp,
+      X: analysis.p_final_x_bp,
+      "2": analysis.p_final_2_bp,
+    };
+
+    const ordered = [...OUTCOME_ORDER].sort(
+      (a, b) =>
+        probabilities[b] - probabilities[a] ||
+        OUTCOME_ORDER.indexOf(a) - OUTCOME_ORDER.indexOf(b),
+    );
+    const primary = ordered[0];
+    const second = ordered[1];
+    const singleCoverageBp = probabilities[primary];
+    const secondCoverageBp = probabilities[second];
+    const doubleGainScore =
+      singleCoverageBp > 0
+        ? Math.log(
+            (singleCoverageBp + secondCoverageBp) / singleCoverageBp,
+          )
+        : 0;
+
+    analysis.primary_pick = primary;
+    analysis.suggested_double = doubleFrom(primary, second);
+    analysis.double_gain_score =
+      Math.round(doubleGainScore * 100_000_000) / 100_000_000;
+
+    return [
+      {
+        analysis,
+        gameNumber: gameNumberByFixture.get(analysis.fixture_id) ?? 99,
+        singleCoverageBp,
+        secondCoverageBp,
+      },
+    ];
+  });
+
+  candidates.sort((a, b) => {
+    const ratioCrossA =
+      a.secondCoverageBp * b.singleCoverageBp;
+    const ratioCrossB =
+      b.secondCoverageBp * a.singleCoverageBp;
+
+    if (ratioCrossA !== ratioCrossB) return ratioCrossB - ratioCrossA;
+    if (a.analysis.reliability !== b.analysis.reliability) {
+      return (
+        (a.analysis.reliability ?? 0) -
+        (b.analysis.reliability ?? 0)
+      );
+    }
+    return a.gameNumber - b.gameNumber;
+  });
+
+  candidates.forEach((candidate, index) => {
+    candidate.analysis.double_priority_rank = index + 1;
+  });
+
+  return candidates;
+}
+
+export function materializeKapilotoResearchRun(
+  fixtures: MaterializableFixture[],
 ): MaterializedRound {
   if (fixtures.length !== 16) {
     throw new Error(
-      `Validated Kapiloto round requires exactly 16 fixtures; got ${fixtures.length}.`,
+      `Kapiloto run materialization requires exactly 16 fixtures; got ${fixtures.length}.`,
     );
   }
 
@@ -275,111 +557,70 @@ export function materializeValidatedResearchRound(
   const seenGames = new Set<number>();
   const seenFixtures = new Set<string>();
 
-  const derived = sorted.map((fixture) => {
-    assertFixtureIdentity(fixture);
-
+  const analyses = sorted.map((fixture, index) => {
     if (
+      fixture.gameNumber !== index + 1 ||
       seenGames.has(fixture.gameNumber) ||
       seenFixtures.has(fixture.fixtureId)
     ) {
-      throw new Error("Validated Kapiloto round contains duplicate fixture identity.");
+      throw new Error(
+        "Kapiloto run materialization contains duplicate or invalid fixture identity.",
+      );
     }
+
     seenGames.add(fixture.gameNumber);
     seenFixtures.add(fixture.fixtureId);
 
-    if (fixture.output.outcome === "analyzed" && fixture.grounding.accepted.length === 0) {
-      throw new Error(
-        `Analyzed fixture ${fixture.fixtureId} has no accepted grounded evidence.`,
-      );
+    if (fixture.mode === "research") {
+      return materializeResearchFixture(fixture);
     }
-
-    if (fixture.grounding.requiresEntailmentVerification.length > 0) {
-      throw new Error(
-        `Fixture ${fixture.fixtureId} still requires material-factor entailment verification.`,
-      );
+    if (fixture.mode === "carried_forward") {
+      return materializeCarriedFixture(fixture);
     }
-
-    return {
-      fixture,
-      result: deriveFixtureAnalysis(
-        fixture.output,
-        fixture.card,
-        groundingSummary(fixture.grounding),
-      ),
-    };
+    return materializeUnavailableFixture(fixture);
   });
 
-  const ranked = rankDoubleCandidates(
-    derived
-      .filter(
-        (
-          item,
-        ): item is typeof item & { result: DerivedAnalyzedFixture } =>
-          item.result.outcome === "analyzed",
-      )
-      .map((item) => ({
-        gameNumber: item.fixture.gameNumber,
-        roundGameId: item.fixture.roundGameId,
-        fixtureId: item.fixture.fixtureId,
-        derived: item.result,
-      })),
+  const gameNumberByFixture = new Map(
+    sorted.map((fixture) => [fixture.fixtureId, fixture.gameNumber]),
   );
-
-  const rankByFixture = new Map(
-    ranked.map((item) => [item.fixtureId, item.doublePriorityRank]),
-  );
-
-  const analyses: MaterializedAnalysis[] = derived.map(({ fixture, result }) => {
-    if (result.outcome === "analyzed") {
-      const rank = rankByFixture.get(fixture.fixtureId);
-      if (rank == null) {
-        throw new Error("Analyzed fixture is missing deterministic double rank.");
-      }
-      return analyzedPayload(fixture, result, rank);
-    }
-
-    return {
-      ...baseMaterialization(fixture),
-      outcome: "insufficient_data",
-      p_prior_1_bp: fixture.card.structured.prior.p_home_bp,
-      p_prior_x_bp: fixture.card.structured.prior.p_draw_bp,
-      p_prior_2_bp: fixture.card.structured.prior.p_away_bp,
-      p_sol_1_bp: null,
-      p_sol_x_bp: null,
-      p_sol_2_bp: null,
-      p_final_1_bp: null,
-      p_final_x_bp: null,
-      p_final_2_bp: null,
-      reliability: result.reliability,
-      reliability_band: "low",
-      reliability_reasons: result.reliabilityReasons,
-      primary_pick: null,
-      suggested_double: null,
-      double_priority_rank: null,
-      double_gain_score: null,
-      blend_weight: null,
-      deviation_cap_applied: false,
-    };
-  });
+  const ranked = rankMaterializedAnalyses(analyses, gameNumberByFixture);
 
   return {
     analyses,
     synthesis: {
-      analyzed_fixtures: analyses.filter((item) => item.outcome === "analyzed").length,
+      analyzed_fixtures: analyses.filter(
+        (item) => item.outcome === "analyzed",
+      ).length,
       insufficient_data_fixtures: analyses.filter(
         (item) => item.outcome === "insufficient_data",
       ).length,
+      carried_forward_fixtures: analyses.filter(
+        (item) => item.outcome === "carried_forward",
+      ).length,
+      research_unavailable_fixtures: analyses.filter(
+        (item) => item.outcome === "research_unavailable",
+      ).length,
       double_ranking: ranked.map((item) => ({
-        fixture_id: item.fixtureId,
-        round_game_id: item.roundGameId,
+        fixture_id: item.analysis.fixture_id,
+        round_game_id: item.analysis.round_game_id,
         game_number: item.gameNumber,
-        rank: item.doublePriorityRank,
-        primary_pick: item.derived.primaryPick,
-        suggested_double: item.derived.suggestedDouble,
-        double_gain_score:
-          Math.round(item.derived.doubleGainScore * 100_000_000) / 100_000_000,
-        reliability: item.derived.reliability,
+        rank: item.analysis.double_priority_rank!,
+        primary_pick: item.analysis.primary_pick!,
+        suggested_double: item.analysis.suggested_double!,
+        double_gain_score: item.analysis.double_gain_score!,
+        reliability: item.analysis.reliability!,
       })),
     },
   };
+}
+
+export function materializeValidatedResearchRound(
+  fixtures: ValidatedFixtureResearch[],
+): MaterializedRound {
+  return materializeKapilotoResearchRun(
+    fixtures.map((fixture) => ({
+      ...fixture,
+      mode: "research" as const,
+    })),
+  );
 }

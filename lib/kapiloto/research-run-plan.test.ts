@@ -67,6 +67,11 @@ test("late fixtures carry forward instead of being re-researched", () => {
     mode: "carried_forward",
     carriedFromAnalysisId: "analysis-old-1",
     reason: "kickoff_too_close",
+    context: {
+      kickoffAt: "2026-10-18T12:10:00.000Z",
+      settlementRule: "result_after_90_minutes_including_stoppage_time",
+      neutralVenue: false,
+    },
   });
   assert.equal(plan.taskGameIds.length, 15);
 });
@@ -125,6 +130,11 @@ test("missing future prior carries forward when an earlier analysis exists", () 
     mode: "carried_forward",
     carriedFromAnalysisId: "analysis-old-1",
     reason: "missing_prior",
+    context: {
+      kickoffAt: "2026-10-20T18:00:00.000Z",
+      settlementRule: "result_after_90_minutes_including_stoppage_time",
+      neutralVenue: false,
+    },
   });
   assert.equal(plan.taskGameIds.length, 15);
 });
@@ -144,5 +154,10 @@ test("missing future prior is explicit research_unavailable on the first run", (
     roundGameId: "game-1",
     mode: "research_unavailable",
     reason: "missing_prior",
+    context: {
+      kickoffAt: "2026-10-20T18:00:00.000Z",
+      settlementRule: "result_after_90_minutes_including_stoppage_time",
+      neutralVenue: false,
+    },
   });
 });
