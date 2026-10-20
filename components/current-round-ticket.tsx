@@ -410,6 +410,11 @@ export function CurrentRoundTicket({
   const [groupCreateStatus, setGroupCreateStatus] = useState<
     "idle" | "creating" | "error"
   >("idle");
+  const [joinCode, setJoinCode] = useState("");
+  const [joinStatus, setJoinStatus] = useState<
+    "idle" | "sending" | "pending" | "error"
+  >("idle");
+  const [joinGroupName, setJoinGroupName] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "unsaved" | "saving" | "saved" | "error"
   >(round.ticket ? "saved" : "idle");
@@ -527,6 +532,45 @@ export function CurrentRoundTicket({
       window.location.reload();
     } catch {
       setGroupCreateStatus("error");
+    }
+  }
+
+  async function requestJoin() {
+    const code = joinCode.trim();
+    if (code.length < 4 || joinStatus === "sending") return;
+
+    setJoinStatus("sending");
+    setJoinGroupName(null);
+
+    try {
+      const response = await fetch("/api/v1/groups/join", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ joinCode: code }),
+      });
+
+      const body = (await response.json().catch(() => null)) as
+        | {
+            status?: string;
+            groupName?: string;
+            error?: { message?: string };
+          }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(body?.error?.message ?? "Join request failed.");
+      }
+
+      if (body?.status === "already_member") {
+        window.location.reload();
+        return;
+      }
+
+      setJoinGroupName(body?.groupName ?? null);
+      setJoinStatus("pending");
+    } catch {
+      setJoinStatus("error");
     }
   }
 
@@ -731,6 +775,56 @@ export function CurrentRoundTicket({
             {groupCreateStatus === "error" ? (
               <p className="text-[8px] font-medium text-red-400">
                 יצירת הקבוצה נכשלה. אפשר לנסות שוב.
+              </p>
+            ) : null}
+
+            <div className="my-1 h-px bg-[var(--border)]" />
+
+            <div>
+              <p className="text-[10px] font-bold text-[var(--text)]">
+                כבר יש קבוצה?
+              </p>
+              <p className="mt-0.5 text-[8px] text-[var(--muted)]">
+                הזן קוד הזמנה. מנהל הקבוצה יאשר את הבקשה.
+              </p>
+            </div>
+            <div className="flex gap-2" dir="ltr">
+              <input
+                value={joinCode}
+                onChange={(event) => {
+                  setJoinCode(event.target.value.toUpperCase());
+                  if (joinStatus !== "sending") setJoinStatus("idle");
+                }}
+                maxLength={32}
+                aria-label="קוד הזמנה לקבוצה"
+                placeholder="JOIN CODE"
+                className="h-10 min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 text-center text-[10px] font-bold tracking-[0.12em] text-[var(--text)] outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => void requestJoin()}
+                disabled={
+                  joinCode.trim().length < 4 ||
+                  joinStatus === "sending" ||
+                  joinStatus === "pending"
+                }
+                className="h-10 shrink-0 rounded-xl border border-[var(--action)] px-4 text-[10px] font-bold text-[var(--action)] disabled:opacity-45"
+              >
+                {joinStatus === "sending"
+                  ? "שולח…"
+                  : joinStatus === "pending"
+                    ? "נשלח"
+                    : "בקש להצטרף"}
+              </button>
+            </div>
+            {joinStatus === "pending" ? (
+              <p className="text-[8px] font-medium text-[var(--muted)]">
+                הבקשה{joinGroupName ? ` ל־${joinGroupName}` : ""} ממתינה לאישור מנהל.
+              </p>
+            ) : null}
+            {joinStatus === "error" ? (
+              <p className="text-[8px] font-medium text-red-400">
+                לא ניתן לשלוח את הבקשה. בדוק את הקוד ונסה שוב.
               </p>
             ) : null}
           </div>
