@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import type { KapilotoFixtureEnvelope } from "@/lib/kapiloto/api-types";
 import { computeFixtureFreshness } from "@/lib/kapiloto/freshness";
@@ -17,6 +17,7 @@ import {
   type KapilotoRequestOutcome,
 } from "@/lib/kapiloto/response-state";
 import { ensureServerKapilotoResearch } from "@/lib/kapiloto/server-research";
+import { runKapilotoDemandWorkerBurst } from "@/lib/kapiloto/worker-demand";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthenticatedUserId } from "@/lib/supabase/auth";
 
@@ -71,6 +72,8 @@ function analysisRunIdForResponse(
 
   return requestRunId ?? null;
 }
+
+export const maxDuration = 300;
 
 export async function POST(
   request: Request,
@@ -189,6 +192,18 @@ export async function POST(
       research.outcome === "joined_run"
         ? research.run_id ?? null
         : null);
+
+    if (
+      research.outcome === "created_run" ||
+      research.outcome === "joined_run"
+    ) {
+      after(() =>
+        runKapilotoDemandWorkerBurst(
+          `request:${research.run_id ?? roundId}`,
+          2,
+        ),
+      );
+    }
 
     const response: KapilotoFixtureEnvelope = {
       state: derived.state,
