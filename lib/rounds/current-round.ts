@@ -11,6 +11,11 @@ export type CurrentRoundGame = {
   league: string;
   kickoffAt: string;
   status: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  fieldOutcome: string | null;
+  poolOutcome: string | null;
+  settlementStatus: string;
 };
 
 export type CurrentRoundData = {
@@ -39,6 +44,11 @@ type GameRow = {
   competition_name_snapshot: string;
   kickoff_at: string;
   status: string;
+  field_home_score: number | null;
+  field_away_score: number | null;
+  field_outcome: string | null;
+  pool_settlement_outcome: string | null;
+  settlement_status: string;
 };
 
 type TeamRow = {
@@ -113,7 +123,7 @@ export class SupabaseCurrentRoundLoader {
     const { data: gamesData, error: gamesError } = await this.client
       .from("round_games")
       .select(
-        "id,fixture_id,game_number,home_team_id,away_team_id,competition_name_snapshot,kickoff_at,status",
+        "id,fixture_id,game_number,home_team_id,away_team_id,competition_name_snapshot,kickoff_at,status,field_home_score,field_away_score,field_outcome,pool_settlement_outcome,settlement_status",
       )
       .eq("round_id", round.id)
       .order("game_number", { ascending: true });
@@ -171,6 +181,11 @@ export class SupabaseCurrentRoundLoader {
         league: game.competition_name_snapshot,
         kickoffAt: game.kickoff_at,
         status: game.status,
+        homeScore: game.field_home_score,
+        awayScore: game.field_away_score,
+        fieldOutcome: game.field_outcome,
+        poolOutcome: game.pool_settlement_outcome,
+        settlementStatus: game.settlement_status,
       };
     });
 
