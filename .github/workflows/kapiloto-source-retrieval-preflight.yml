@@ -1,0 +1,32 @@
+name: Kapiloto Source Retrieval Preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - design/mobile-first-dark-stadium
+    paths:
+      - ".github/workflows/kapiloto-source-retrieval-preflight.yml"
+      - "scripts/kapiloto-source-retrieval-preflight.ts"
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify source retrieval path
+        run: npx tsx scripts/kapiloto-source-retrieval-preflight.ts

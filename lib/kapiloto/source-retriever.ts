@@ -336,4 +336,5 @@ export const __testOnly = {
   validateSourceUrl,
   htmlToText,
   firstPublishedAt,
+  fetchSource,
 };
