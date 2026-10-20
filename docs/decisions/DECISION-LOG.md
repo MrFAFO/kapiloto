@@ -163,3 +163,17 @@ Evidence: across the two Sportmonks trial rotations for Winner 16 round 264101, 
 
 Reason: provider coverage is metric- and competition-specific. Capability routing preserves breadth while exploiting richer analytics where actually available.
 
+## D-037 — Reliability/blend v1 is a shadow candidate, not a calibrated claim
+Decision: implement a deterministic shadow derivation candidate under the explicit versions `kapiloto-reliability-shadow-v1` and `kapiloto-blend-shadow-v1`. Reliability uses dimension coverage, verified source quality, grounding failures, unresolved conflicts, data-quality flags and prior divergence. The shadow blend uses reliability as the prior-vs-Sol weight and always renormalizes to exactly 10,000 basis points.
+
+The shadow formula clamps reliability away from extreme certainty and is used to generate reproducible evaluation data. It is not treated as empirically calibrated, and precise user-facing win probabilities remain gated on forward calibration evidence.
+
+Reason: publication needs deterministic picks/double ranks now, but product claims must not outrun calibration evidence.
+
+## D-038 — Kapiloto publication is one atomic immutable graph
+Decision: a run is not published by a sequence of client-side inserts. The service first validates/grounds/derives all fixture outputs, then a service-role transaction materializes analyses, evidence, factors and input provenance for the complete 16-fixture set. Only after all rows validate does the same transaction mark the run completed, flip the Toto round `current_run_id`, and advance each canonical fixture's intelligence publication pointer.
+
+Analyzed fixtures require accepted quote-verified evidence, and material factors with pending entailment verification are blocked before materialization.
+
+Reason: immutable analysis tables make partial publication especially dangerous. One transaction prevents half-published rounds, mismatched fixture pointers and irrecoverable partial provenance.
+
