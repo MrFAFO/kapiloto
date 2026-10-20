@@ -11,7 +11,7 @@ import {
 import { computeFixtureFreshness } from "./freshness";
 import {
   KapilotoAuthorizationError,
-  loadGroupRoundKapilotoContext,
+  loadOptionalGroupRoundKapilotoContext,
   type GroupRoundKapilotoContext,
 } from "./group-context";
 import { loadPublicFixtureAnalysis } from "./public-analysis";
@@ -86,11 +86,15 @@ async function authorize(
   groupContext: GroupRoundKapilotoContext;
 }> {
   requireUuidParam(roundId, "invalid_round_id", "roundId");
-  const groupId = requireUuidParam(
-    new URL(request.url).searchParams.get("group_id"),
-    "invalid_group_id",
-    "group_id query parameter",
-  );
+  const rawGroupId = new URL(request.url).searchParams.get("group_id");
+  const groupId =
+    rawGroupId == null
+      ? null
+      : requireUuidParam(
+          rawGroupId,
+          "invalid_group_id",
+          "group_id query parameter",
+        );
 
   const userId = await deps.getUserId();
   if (!userId) {
@@ -98,7 +102,7 @@ async function authorize(
   }
 
   const admin = deps.getAdmin();
-  const groupContext = await loadGroupRoundKapilotoContext(
+  const groupContext = await loadOptionalGroupRoundKapilotoContext(
     admin,
     userId,
     groupId,
