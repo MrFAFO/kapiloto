@@ -11,12 +11,12 @@ import type {
 export type KapilotoFixtureRef = {
   roundId: string;
   roundGameId: string;
-  groupId: string;
+  groupId: string | null;
 };
 
 export type KapilotoRoundRef = {
   roundId: string;
-  groupId: string;
+  groupId: string | null;
 };
 
 export type KapilotoRequestOptions = {
@@ -274,9 +274,13 @@ export function createKapilotoClient(
     },
 
     async getFixtureAnalysis(ref, options = {}) {
+      const groupQuery =
+        ref.groupId == null
+          ? ""
+          : `?group_id=${encodeURIComponent(ref.groupId)}`;
       const url = `${roundPath(ref.roundId)}/fixtures/${encodeURIComponent(
         ref.roundGameId,
-      )}?group_id=${encodeURIComponent(ref.groupId)}`;
+      )}${groupQuery}`;
       const response = await send(
         url,
         {
@@ -302,9 +306,9 @@ export function createKapilotoClient(
 
     async getRoundResearchState(ref, options = {}) {
       const response = await send(
-        `${roundPath(ref.roundId)}/state?group_id=${encodeURIComponent(
-          ref.groupId,
-        )}`,
+        `${roundPath(ref.roundId)}/state${ref.groupId == null
+          ? ""
+          : `?group_id=${encodeURIComponent(ref.groupId)}`}`,
         {
           method: "GET",
           signal: options.signal,
