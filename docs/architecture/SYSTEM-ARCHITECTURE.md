@@ -24,7 +24,14 @@ Operational/manual imports can use:
 
 `npm run round:import -- <snapshot.json>`
 
-The same contract is intended for a future automated TotoRoundProvider adapter.
+Automated discovery is now split from authoritative import. `TelesportWinner16Provider` can discover the current Winner 16 round number, 1..16 ordering, listed teams, competition labels and any published local kickoff times. It is a discovery/fallback source, not Toto settlement or lock-time authority.
+
+A discovery becomes importable only after:
+- all 16 kickoff timestamps are resolved;
+- an explicit authoritative `lock_at` is supplied;
+- the normal atomic `toto_import_round_snapshot` validation passes.
+
+`npm run round:discover` runs the discovery adapter. The GitHub workflow `Winner 16 Discovery` rechecks it every six hours and stores the result as an artifact. This deliberately does not write an incomplete round into production.
 
 ### FootballDataProvider
 Responsible for normalized:
