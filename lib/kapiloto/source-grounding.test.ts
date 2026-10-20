@@ -233,3 +233,61 @@ test("material factors require one strong source or two independent sources", ()
     /lacks strong or independent corroborated evidence/,
   );
 });
+
+
+test("blocked or missing evidence does not sink a claim when remaining evidence still satisfies policy", () => {
+  const output = baseOutput();
+  output.evidence.push({
+    evidence_id: "e2",
+    url: "https://league.example/report",
+    quote: "Player A will miss the match.",
+    claim: "Player A is unavailable.",
+    claim_type: "availability",
+    about_team: "home",
+    event_time: null,
+  });
+  output.availability[0].evidence_ids = ["e1", "e2"];
+  output.factors[0].evidence_ids = ["e1", "e2"];
+
+  const leagueDocument = document({
+    requestedUrl: "https://league.example/report",
+    finalUrl: "https://league.example/report",
+    contentSha256: "b".repeat(64),
+  });
+
+  const result = verifyGroundedResearchEvidence(
+    output,
+    card,
+    [leagueDocument],
+    [
+      ...registry,
+      {
+        domain: "league.example",
+        denied: false,
+        tierByClaimType: { availability: 1, default: 2 },
+      },
+    ],
+  );
+
+  assert.deepEqual(result.rejected, [
+    { evidenceId: "e1", reason: "document_missing" },
+  ]);
+  assert.deepEqual(
+    result.accepted.map((item) => item.modelEvidenceId),
+    ["e2"],
+  );
+  assert.deepEqual(result.requiresEntailmentVerification, ["e2"]);
+});
+
+test("a claim still fails when every referenced evidence item failed grounding", () => {
+  assert.throws(
+    () =>
+      verifyGroundedResearchEvidence(
+        baseOutput(),
+        card,
+        [],
+        registry,
+      ),
+    /no evidence that passed grounding/,
+  );
+});

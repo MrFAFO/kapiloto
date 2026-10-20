@@ -48,6 +48,13 @@ Non-negotiable rules:
     two genuinely independent sources. Do not let one weak/anonymous/tipster
     source drive a medium or large factor.
 
+9b. Evidence must survive independent server-side verification after your
+    response. Avoid relying only on login-only, paywalled, bot-challenge or
+    JavaScript-only pages when a reputable accessible alternative exists. If an
+    official source appears difficult to verify directly, corroborate the same
+    material claim with another reputable independent source rather than making
+    the official page the sole support.
+
 10. p_sol is your pre-match 90-minute probability estimate in integer basis
     points. home_bp + draw_bp + away_bp MUST equal exactly 10000. It is an
     estimate to be evaluated/calibrated later, not a statement of certainty.

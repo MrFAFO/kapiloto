@@ -9,6 +9,8 @@ on:
       - ".github/workflows/kapiloto-source-retrieval-preflight.yml"
       - "scripts/kapiloto-source-retrieval-preflight.ts"
       - "lib/kapiloto/source-retriever.ts"
+      - "lib/kapiloto/source-grounding.ts"
+      - "lib/kapiloto/research-prompt.ts"
 
 permissions:
   contents: read

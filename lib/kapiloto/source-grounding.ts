@@ -143,18 +143,22 @@ function isIndependent(
   return true;
 }
 
-function assertAcceptedReferences(
+function acceptedReferences(
   ids: string[],
   accepted: Map<string, GroundedEvidence>,
   context: string,
-): void {
-  for (const id of ids) {
-    if (!accepted.has(id)) {
-      throw new Error(
-        `${context} depends on evidence that failed grounding: ${id}`,
-      );
-    }
+): GroundedEvidence[] {
+  const supporting = ids
+    .map((id) => accepted.get(id))
+    .filter((item): item is GroundedEvidence => item != null);
+
+  if (supporting.length === 0) {
+    throw new Error(
+      `${context} has no evidence that passed grounding.`,
+    );
   }
+
+  return supporting;
 }
 
 export function verifyGroundedResearchEvidence(
@@ -264,7 +268,7 @@ export function verifyGroundedResearchEvidence(
   );
 
   for (const availability of output.availability) {
-    assertAcceptedReferences(
+    acceptedReferences(
       availability.evidence_ids,
       acceptedById,
       `availability:${availability.player_name}`,
@@ -272,12 +276,12 @@ export function verifyGroundedResearchEvidence(
   }
 
   for (const conflict of output.conflicts) {
-    assertAcceptedReferences(
+    acceptedReferences(
       conflict.evidence_ids_a,
       acceptedById,
       `conflict:${conflict.topic}:a`,
     );
-    assertAcceptedReferences(
+    acceptedReferences(
       conflict.evidence_ids_b,
       acceptedById,
       `conflict:${conflict.topic}:b`,
@@ -285,7 +289,7 @@ export function verifyGroundedResearchEvidence(
   }
 
   if (output.market_deviation) {
-    assertAcceptedReferences(
+    acceptedReferences(
       output.market_deviation.evidence_ids,
       acceptedById,
       "market_deviation",
@@ -295,17 +299,13 @@ export function verifyGroundedResearchEvidence(
   const requiresEntailmentVerification = new Set<string>();
 
   for (const factor of output.factors) {
-    assertAcceptedReferences(
+    const supporting = acceptedReferences(
       factor.evidence_ids,
       acceptedById,
       `factor:${factor.dimension}`,
     );
 
     if (factor.magnitude === "small") continue;
-
-    const supporting = factor.evidence_ids
-      .map((id) => acceptedById.get(id))
-      .filter((item): item is GroundedEvidence => item != null);
 
     const hasStrongSource = supporting.some((item) => item.trustTier <= 2);
     const hasTwoIndependent =
