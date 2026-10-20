@@ -4,11 +4,8 @@ import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
 
-import {
-  normalizeEvidenceUrl,
-  type RetrievedSourceDocument,
-  type SolFixtureResearchOutput,
-} from "./source-grounding";
+import { normalizeEvidenceUrl, type SolFixtureResearchOutput } from "./research-output";
+import type { RetrievedSourceDocument } from "./source-grounding";
 
 const MAX_SOURCE_BYTES = 1_000_000;
 const MAX_REDIRECTS = 3;
@@ -246,6 +243,7 @@ function requestPinned(
 async function fetchSource(
   requestedUrl: string,
   redirectsLeft = MAX_REDIRECTS,
+  originalRequestedUrl = requestedUrl,
 ): Promise<RetrievedSourceDocument> {
   const target = await resolvePublicTarget(requestedUrl);
   const response = await requestPinned(target);
@@ -259,7 +257,7 @@ async function fetchSource(
       throw new Error("Evidence source exceeded redirect limit.");
     }
     const redirected = new URL(response.headers.location, target.url).toString();
-    return fetchSource(redirected, redirectsLeft - 1);
+    return fetchSource(redirected, redirectsLeft - 1, originalRequestedUrl);
   }
 
   if (response.status < 200 || response.status >= 300) {
@@ -282,7 +280,7 @@ async function fetchSource(
     : htmlToText(response.body);
 
   return {
-    requestedUrl: normalizeEvidenceUrl(requestedUrl),
+    requestedUrl: normalizeEvidenceUrl(originalRequestedUrl),
     finalUrl,
     retrievedAt: new Date().toISOString(),
     publishedAt: firstPublishedAt(response.body),
