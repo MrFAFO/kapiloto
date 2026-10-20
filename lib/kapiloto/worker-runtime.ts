@@ -33,6 +33,7 @@ export type KapilotoWorkerCycleOptions = {
 
 export type KapilotoWorkerCycleResult = {
   recoveredAttempts: number | null;
+  failedRuns: number | null;
   tasks: ExecuteResearchTaskResult[];
   finalizedRuns: FinalizeKapilotoRunResult[];
   finalizationDeferred: Array<{
@@ -72,8 +73,27 @@ async function recoverExpiredAttempts(
   }
 
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  const recovered = (data as Record<string, unknown>).recovered_count;
+  const record = data as Record<string, unknown>;
+  const recovered = record.recovered ?? record.recovered_count;
   return typeof recovered === "number" ? recovered : null;
+}
+
+async function failExhaustedRuns(
+  admin: ReturnType<typeof createAdminClient>,
+): Promise<number | null> {
+  const { data, error } = await admin.rpc("kapiloto_fail_exhausted_runs", {
+    p_limit: 20,
+  });
+
+  if (error) {
+    throw new Error(
+      `Failed to close exhausted Kapiloto runs: ${error.message}`,
+    );
+  }
+
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const failed = (data as Record<string, unknown>).failed_runs;
+  return typeof failed === "number" ? failed : null;
 }
 
 async function runReadyForFinalization(
@@ -167,6 +187,7 @@ export async function runKapilotoWorkerCycle(
   const reasoningEffort = getKapilotoReasoningEffort();
 
   const recoveredAttempts = await recoverExpiredAttempts(admin);
+  const failedBeforeWork = await failExhaustedRuns(admin);
   const tasks: ExecuteResearchTaskResult[] = [];
   const touchedRuns = new Set<string>();
 
@@ -185,6 +206,12 @@ export async function runKapilotoWorkerCycle(
     if (result.status === "no_work") break;
     touchedRuns.add(result.runId);
   }
+
+  const failedAfterWork = await failExhaustedRuns(admin);
+  const failedRuns =
+    failedBeforeWork == null && failedAfterWork == null
+      ? null
+      : (failedBeforeWork ?? 0) + (failedAfterWork ?? 0);
 
   for (const runId of await loadFinalizationCandidateRunIds(admin)) {
     touchedRuns.add(runId);
@@ -231,6 +258,7 @@ export async function runKapilotoWorkerCycle(
 
   return {
     recoveredAttempts,
+    failedRuns,
     tasks,
     finalizedRuns,
     finalizationDeferred,

@@ -2424,6 +2424,10 @@ export type Database = {
         Args: { p_group_id: string; p_round_id: string; p_user_id: string }
         Returns: Json
       }
+      kapiloto_fail_exhausted_runs: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
       kapiloto_finish_research_attempt: {
         Args: {
           p_attempt_id: string
