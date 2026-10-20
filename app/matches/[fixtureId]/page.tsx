@@ -224,6 +224,8 @@ export default async function MatchPage({
   let analysis:
     | {
         id: string;
+        outcome: string;
+        carried_from_analysis_id: string | null;
         p_final_1_bp: number | null;
         p_final_x_bp: number | null;
         p_final_2_bp: number | null;
@@ -256,48 +258,55 @@ export default async function MatchPage({
   }> = [];
 
   if (analysisId) {
-    const [analysisResult, factorsResult, evidenceResult] = await Promise.all([
-      admin
-        .from("kapiloto_analyses")
-        .select(
-          "id,p_final_1_bp,p_final_x_bp,p_final_2_bp,reliability,reliability_band,reliability_reasons,primary_pick,suggested_double,summary,main_risk,availability,watch_items,generated_at,valid_until",
-        )
-        .eq("id", analysisId)
-        .eq("fixture_id", fixture.id)
-        .maybeSingle(),
-      admin
-        .from("kapiloto_factors")
-        .select("id,dimension,favors,magnitude,rationale")
-        .eq("analysis_id", analysisId)
-        .limit(5),
-      admin
-        .from("kapiloto_evidence")
-        .select("id,claim,domain,url_canonical,published_at")
-        .eq("analysis_id", analysisId)
-        .eq("status", "accepted")
-        .order("trust_tier", { ascending: false, nullsFirst: false })
-        .limit(5),
-    ]);
+    const analysisResult = await admin
+      .from("kapiloto_analyses")
+      .select(
+        "id,outcome,carried_from_analysis_id,p_final_1_bp,p_final_x_bp,p_final_2_bp,reliability,reliability_band,reliability_reasons,primary_pick,suggested_double,summary,main_risk,availability,watch_items,generated_at,valid_until",
+      )
+      .eq("id", analysisId)
+      .eq("fixture_id", fixture.id)
+      .maybeSingle();
 
     if (analysisResult.error) {
       throw new Error(
         `Failed to load current match analysis: ${analysisResult.error.message}`,
       );
     }
-    if (factorsResult.error) {
-      throw new Error(
-        `Failed to load match factors: ${factorsResult.error.message}`,
-      );
-    }
-    if (evidenceResult.error) {
-      throw new Error(
-        `Failed to load match evidence: ${evidenceResult.error.message}`,
-      );
-    }
 
     analysis = analysisResult.data;
-    factors = factorsResult.data ?? [];
-    evidence = evidenceResult.data ?? [];
+
+    if (analysisResult.data) {
+      const contentAnalysisId =
+        analysisResult.data.carried_from_analysis_id ?? analysisId;
+      const [factorsResult, evidenceResult] = await Promise.all([
+        admin
+          .from("kapiloto_factors")
+          .select("id,dimension,favors,magnitude,rationale")
+          .eq("analysis_id", contentAnalysisId)
+          .limit(5),
+        admin
+          .from("kapiloto_evidence")
+          .select("id,claim,domain,url_canonical,published_at")
+          .eq("analysis_id", contentAnalysisId)
+          .eq("status", "accepted")
+          .order("trust_tier", { ascending: false, nullsFirst: false })
+          .limit(5),
+      ]);
+
+      if (factorsResult.error) {
+        throw new Error(
+          `Failed to load match factors: ${factorsResult.error.message}`,
+        );
+      }
+      if (evidenceResult.error) {
+        throw new Error(
+          `Failed to load match evidence: ${evidenceResult.error.message}`,
+        );
+      }
+
+      factors = factorsResult.data ?? [];
+      evidence = evidenceResult.data ?? [];
+    }
   }
 
   const availability = availabilityItems(analysis?.availability);
@@ -409,6 +418,16 @@ export default async function MatchPage({
                   ) : null}
                 </div>
               </div>
+
+              {analysis.outcome === "carried_forward" ? (
+                <p className="mt-3 rounded-lg bg-[var(--elevated)] px-3 py-2 text-[8px] font-bold text-[var(--muted)]">
+                  הניתוח נשמר מהגרסה הקודמת משום שלא היה בטוח לבצע מחקר חדש.
+                </p>
+              ) : analysis.outcome === "research_unavailable" ? (
+                <p className="mt-3 rounded-lg bg-[var(--elevated)] px-3 py-2 text-[8px] font-bold text-[var(--muted)]">
+                  מחקר חדש לא היה זמין למשחק הזה בסבב הנוכחי.
+                </p>
+              ) : null}
 
               {analysis.summary ? (
                 <p className="mt-3 text-[10px] leading-5 text-[var(--text)]">

@@ -11,6 +11,10 @@ import {
   type KapilotoRunFinalizationStore,
   type KapilotoRunPublicationSink,
 } from "./run-finalizer";
+import {
+  materializeValidatedResearchRound,
+  type MaterializedRound,
+} from "./run-materialization";
 import type { GroundingResult } from "./source-grounding";
 
 function card(gameNumber: number): KapilotoFixtureCard {
@@ -123,6 +127,7 @@ function finalizableRun(needsEntailment = false): FinalizableResearchRun {
       roundGameId: `game-${gameNumber}`,
       fixtureId: `fixture-${gameNumber}`,
       mode: "research" as const,
+      taskKey: `fixture:fixture-${gameNumber}`,
       card: card(gameNumber),
     };
   });
@@ -131,6 +136,7 @@ function finalizableRun(needsEntailment = false): FinalizableResearchRun {
     runId: "run-1",
     roundId: "round-1",
     status: "running",
+    researchCutoffAt: "2026-10-20T10:00:00.000Z",
     fixtureSet,
     attempts: fixtureSet.map((fixture) => ({
       roundGameId: fixture.roundGameId,
@@ -138,6 +144,7 @@ function finalizableRun(needsEntailment = false): FinalizableResearchRun {
       validatedOutput: output(fixture.gameNumber),
       grounding: grounding(fixture.gameNumber, needsEntailment),
     })),
+    carriedSources: [],
   };
 }
 
@@ -151,10 +158,12 @@ class MemoryStore implements KapilotoRunFinalizationStore {
 class MemoryPublisher implements KapilotoRunPublicationSink {
   published = 0;
   lastAnalysisCount = 0;
+  lastOutcomes: string[] = [];
 
-  async publish(runId: string, materialized: { analyses: unknown[] }) {
+  async publish(runId: string, materialized: MaterializedRound) {
     this.published += 1;
     this.lastAnalysisCount = materialized.analyses.length;
+    this.lastOutcomes = materialized.analyses.map((analysis) => analysis.outcome);
     return {
       runId,
       roundId: "round-1",
@@ -268,4 +277,75 @@ test("unsupported material evidence blocks publication", async () => {
   );
 
   assert.equal(publisher.published, 0);
+});
+
+
+test("mixed run publishes researched, carried-forward and unavailable fixtures together", async () => {
+  const run = finalizableRun(false);
+  const sourceRound = materializeValidatedResearchRound(
+    Array.from({ length: 16 }, (_, index) => {
+      const gameNumber = index + 1;
+      return {
+        gameNumber,
+        roundGameId: `game-${gameNumber}`,
+        fixtureId: `fixture-${gameNumber}`,
+        card: card(gameNumber),
+        output: output(gameNumber),
+        grounding: grounding(gameNumber),
+      };
+    }),
+  );
+  const source = sourceRound.analyses[14];
+
+  run.fixtureSet[14] = {
+    gameNumber: 15,
+    roundGameId: "game-15",
+    fixtureId: "fixture-15",
+    mode: "carried_forward",
+    carriedFromAnalysisId: "analysis-old-15",
+    reason: "missing_prior",
+    context: {
+      kickoffAt: "2026-10-21T18:00:00.000Z",
+      settlementRule: "result_after_90_minutes_including_stoppage_time",
+      neutralVenue: false,
+    },
+  };
+  run.fixtureSet[15] = {
+    gameNumber: 16,
+    roundGameId: "game-16",
+    fixtureId: "fixture-16",
+    mode: "research_unavailable",
+    reason: "missing_prior",
+    context: {
+      kickoffAt: "2026-10-21T18:00:00.000Z",
+      settlementRule: "result_after_90_minutes_including_stoppage_time",
+      neutralVenue: false,
+    },
+  };
+  run.attempts = run.attempts.slice(0, 14);
+  run.carriedSources = [
+    {
+      analysisId: "analysis-old-15",
+      analysis: source,
+    },
+  ];
+
+  const publisher = new MemoryPublisher();
+  const judge: EntailmentJudge = {
+    async verify() {
+      throw new Error("judge should not run without pending entailments");
+    },
+  };
+
+  const result = await finalizeKapilotoRun(
+    new MemoryStore(run),
+    publisher,
+    judge,
+    "run-1",
+  );
+
+  assert.equal(result.analysisCount, 16);
+  assert.equal(result.publishedFixtureCount, 16);
+  assert.equal(publisher.lastOutcomes[14], "carried_forward");
+  assert.equal(publisher.lastOutcomes[15], "research_unavailable");
 });

@@ -6,7 +6,9 @@ import { KAPILOTO_RESEARCH_DIMENSIONS } from "./research-output";
 import type { SolFixtureResearchOutput } from "./research-output";
 import type { GroundingResult } from "./source-grounding";
 import {
+  materializeKapilotoResearchRun,
   materializeValidatedResearchRound,
+  type MaterializableFixture,
   type ValidatedFixtureResearch,
 } from "./run-materialization";
 
@@ -234,4 +236,60 @@ test("fixture identity mismatch is rejected before derivation", () => {
     () => materializeValidatedResearchRound(fixtures),
     /does not match its frozen fixture identity/,
   );
+});
+
+
+test("mixed run keeps 16-row coherence and ranks carried analysis with fresh research", () => {
+  const fresh = round();
+  const previous = materializeValidatedResearchRound(round()).analyses[14];
+
+  const fixtures: MaterializableFixture[] = [
+    ...fresh.slice(0, 14).map((fixture) => ({
+      ...fixture,
+      mode: "research" as const,
+    })),
+    {
+      mode: "carried_forward",
+      gameNumber: 15,
+      roundGameId: "game-15",
+      fixtureId: "fixture-15",
+      carriedFromAnalysisId: "analysis-old-15",
+      reason: "missing_prior",
+      researchCutoffAt: "2026-10-20T10:00:00.000Z",
+      context: {
+        kickoffAt: "2026-10-21T18:00:00.000Z",
+        settlementRule: "result_after_90_minutes_including_stoppage_time",
+        neutralVenue: false,
+      },
+      source: {
+        analysisId: "analysis-old-15",
+        analysis: previous,
+      },
+    },
+    {
+      mode: "research_unavailable",
+      gameNumber: 16,
+      roundGameId: "game-16",
+      fixtureId: "fixture-16",
+      reason: "missing_prior",
+      researchCutoffAt: "2026-10-20T10:00:00.000Z",
+      context: {
+        kickoffAt: "2026-10-21T18:00:00.000Z",
+        settlementRule: "result_after_90_minutes_including_stoppage_time",
+        neutralVenue: false,
+      },
+    },
+  ];
+
+  const result = materializeKapilotoResearchRun(fixtures);
+
+  assert.equal(result.analyses.length, 16);
+  assert.equal(result.synthesis.analyzed_fixtures, 14);
+  assert.equal(result.synthesis.carried_forward_fixtures, 1);
+  assert.equal(result.synthesis.research_unavailable_fixtures, 1);
+  assert.equal(result.synthesis.double_ranking.length, 15);
+  assert.equal(result.analyses[14].outcome, "carried_forward");
+  assert.equal(result.analyses[14].carried_from_analysis_id, "analysis-old-15");
+  assert.equal(result.analyses[15].outcome, "research_unavailable");
+  assert.equal(result.analyses[15].primary_pick, null);
 });
