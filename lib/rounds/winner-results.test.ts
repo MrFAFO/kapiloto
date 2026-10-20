@@ -11,8 +11,20 @@ test("builds the Winner GetResults date-range payload", () => {
   assert.deepEqual(
     buildWinnerResultsRequestBody("2026-10-19", "2026-10-20"),
     {
-      startDate: "2026-10-19T00:00:00+02:00",
-      endDate: "2026-10-20T23:59:59+02:00",
+      startDate: "2026-10-19T00:00:00+03:00",
+      endDate: "2026-10-20T23:59:59+03:00",
+      sports: [],
+      leagues: [],
+    },
+  );
+});
+
+test("uses the Jerusalem standard-time offset after DST ends", () => {
+  assert.deepEqual(
+    buildWinnerResultsRequestBody("2026-10-26", "2026-10-27"),
+    {
+      startDate: "2026-10-26T00:00:00+02:00",
+      endDate: "2026-10-27T23:59:59+02:00",
       sports: [],
       leagues: [],
     },
@@ -104,6 +116,10 @@ test("client POSTs to the official Winner results endpoint and validates schema"
     new Headers(calls[0].init?.headers).get("origin"),
     "https://www.winner.co.il",
   );
+  const headers = new Headers(calls[0].init?.headers);
+  assert.equal(headers.get("x-requested-with"), "XMLHttpRequest");
+  assert.equal(headers.get("appversion"), "2.6.1");
+  assert.match(headers.get("useragentdata") ?? "", /"originId":15/);
   assert.equal(snapshot.events.length, 1);
   assert.equal(snapshot.fetchedAt, "2026-10-20T12:00:00.000Z");
 });

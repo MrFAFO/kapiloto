@@ -59,6 +59,23 @@ function requiredText(
   return value;
 }
 
+function jerusalemOffset(date: string): string {
+  const probe = new Date(`${date}T12:00:00.000Z`);
+  const offsetPart = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jerusalem",
+    timeZoneName: "longOffset",
+  })
+    .formatToParts(probe)
+    .find((part) => part.type === "timeZoneName")?.value;
+
+  const match = offsetPart?.match(/^GMT([+-])(\d{2}):(\d{2})$/);
+  if (!match) {
+    throw new Error("Could not resolve Asia/Jerusalem UTC offset.");
+  }
+
+  return `${match[1]}${match[2]}:${match[3]}`;
+}
+
 export function buildWinnerResultsRequestBody(
   startDate: string,
   endDate: string,
@@ -77,8 +94,8 @@ export function buildWinnerResultsRequestBody(
   }
 
   return {
-    startDate: `${startDate}T00:00:00+02:00`,
-    endDate: `${endDate}T23:59:59+02:00`,
+    startDate: `${startDate}T00:00:00${jerusalemOffset(startDate)}`,
+    endDate: `${endDate}T23:59:59${jerusalemOffset(endDate)}`,
     sports: [],
     leagues: [],
   };
@@ -162,9 +179,20 @@ export class WinnerOfficialResultsClient {
         "content-type": "application/json",
         origin: "https://www.winner.co.il",
         referer: "https://www.winner.co.il/",
-        "user-agent": "Kapiloto/0.1 Winner official results verification",
-        requestid: randomUUID().replace(/-/g, ""),
-        deviceid: randomUUID().replace(/-/g, ""),
+        "user-agent": "Mozilla/5.0",
+        "x-requested-with": "XMLHttpRequest",
+        requestid: randomUUID(),
+        deviceid: randomUUID(),
+        useragentdata: JSON.stringify({
+          devicemodel: "",
+          deviceos: "windows",
+          deviceosversion: "10",
+          appversion: "2.6.1",
+          apptype: "desktop",
+          originId: 15,
+          isAccessibility: false,
+        }),
+        appversion: "2.6.1",
       },
       body: JSON.stringify(
         buildWinnerResultsRequestBody(startDate, endDate),

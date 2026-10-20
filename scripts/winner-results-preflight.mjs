@@ -8,12 +8,27 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function jerusalemOffset(date) {
+  const probe = new Date(`${date}T12:00:00.000Z`);
+  const value = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jerusalem",
+    timeZoneName: "longOffset",
+  })
+    .formatToParts(probe)
+    .find((part) => part.type === "timeZoneName")?.value;
+  const match = value?.match(/^GMT([+-])(\d{2}):(\d{2})$/);
+  assert(match, "Could not resolve Asia/Jerusalem UTC offset");
+  return `${match[1]}${match[2]}:${match[3]}`;
+}
+
 const now = new Date();
 const start = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
 
+const startDate = isoDate(start);
+const endDate = isoDate(now);
 const body = {
-  startDate: `${isoDate(start)}T00:00:00+02:00`,
-  endDate: `${isoDate(now)}T23:59:59+02:00`,
+  startDate: `${startDate}T00:00:00${jerusalemOffset(startDate)}`,
+  endDate: `${endDate}T23:59:59${jerusalemOffset(endDate)}`,
   sports: [],
   leagues: [],
 };
@@ -25,9 +40,20 @@ const response = await fetch(endpoint, {
     "content-type": "application/json",
     origin: "https://www.winner.co.il",
     referer: "https://www.winner.co.il/",
-    "user-agent": "Kapiloto/0.1 GitHub Winner official results preflight",
-    requestid: crypto.randomUUID().replaceAll("-", ""),
-    deviceid: crypto.randomUUID().replaceAll("-", ""),
+    "user-agent": "Mozilla/5.0",
+    "x-requested-with": "XMLHttpRequest",
+    requestid: crypto.randomUUID(),
+    deviceid: crypto.randomUUID(),
+    useragentdata: JSON.stringify({
+      devicemodel: "",
+      deviceos: "windows",
+      deviceosversion: "10",
+      appversion: "2.6.1",
+      apptype: "desktop",
+      originId: 15,
+      isAccessibility: false,
+    }),
+    appversion: "2.6.1",
   },
   body: JSON.stringify(body),
   signal: AbortSignal.timeout(20_000),
