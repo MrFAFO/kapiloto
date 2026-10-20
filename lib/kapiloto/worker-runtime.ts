@@ -29,6 +29,7 @@ export type KapilotoWorkerCycleOptions = {
   maxTasks?: number;
   leaseSeconds?: number;
   heartbeatIntervalMs?: number;
+  finalizeRuns?: boolean;
 };
 
 export type KapilotoWorkerCycleResult = {
@@ -168,7 +169,7 @@ export async function runKapilotoWorkerCycle(
   );
   const leaseSeconds = positiveBoundedInteger(
     options.leaseSeconds,
-    900,
+    180,
     3600,
     "leaseSeconds",
   );
@@ -213,46 +214,48 @@ export async function runKapilotoWorkerCycle(
       ? null
       : (failedBeforeWork ?? 0) + (failedAfterWork ?? 0);
 
-  for (const runId of await loadFinalizationCandidateRunIds(admin)) {
-    touchedRuns.add(runId);
-  }
-
-  const publisher = new SupabaseKapilotoRunPublisher(admin);
-  const finalizationStore = new SupabaseKapilotoRunFinalizationStore(admin);
-  const entailmentJudge = createOpenAIEntailmentJudge(openai, {
-    model,
-    reasoningEffort: "medium",
-  });
-
   const finalizedRuns: FinalizeKapilotoRunResult[] = [];
   const finalizationDeferred: KapilotoWorkerCycleResult["finalizationDeferred"] =
     [];
 
-  for (const runId of touchedRuns) {
-    const readiness = await runReadyForFinalization(admin, runId);
-
-    if (!readiness.ready) {
-      finalizationDeferred.push({ runId, reason: readiness.reason });
-      continue;
+  if (options.finalizeRuns !== false) {
+    for (const runId of await loadFinalizationCandidateRunIds(admin)) {
+      touchedRuns.add(runId);
     }
 
-    try {
-      finalizedRuns.push(
-        await finalizeKapilotoRun(
-          finalizationStore,
-          publisher,
-          entailmentJudge,
+    const publisher = new SupabaseKapilotoRunPublisher(admin);
+    const finalizationStore = new SupabaseKapilotoRunFinalizationStore(admin);
+    const entailmentJudge = createOpenAIEntailmentJudge(openai, {
+      model,
+      reasoningEffort: "medium",
+    });
+
+    for (const runId of touchedRuns) {
+      const readiness = await runReadyForFinalization(admin, runId);
+
+      if (!readiness.ready) {
+        finalizationDeferred.push({ runId, reason: readiness.reason });
+        continue;
+      }
+
+      try {
+        finalizedRuns.push(
+          await finalizeKapilotoRun(
+            finalizationStore,
+            publisher,
+            entailmentJudge,
+            runId,
+          ),
+        );
+      } catch (error) {
+        finalizationDeferred.push({
           runId,
-        ),
-      );
-    } catch (error) {
-      finalizationDeferred.push({
-        runId,
-        reason:
-          error instanceof Error
-            ? `finalization_error:${error.message}`
-            : `finalization_error:${String(error)}`,
-      });
+          reason:
+            error instanceof Error
+              ? `finalization_error:${error.message}`
+              : `finalization_error:${String(error)}`,
+        });
+      }
     }
   }
 

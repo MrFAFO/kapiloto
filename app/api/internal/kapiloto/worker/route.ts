@@ -32,6 +32,28 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
+  let finalizeRuns = true;
+  try {
+    const body = (await request.json()) as unknown;
+    if (
+      body &&
+      typeof body === "object" &&
+      !Array.isArray(body) &&
+      "finalizeRuns" in body
+    ) {
+      const requested = (body as { finalizeRuns?: unknown }).finalizeRuns;
+      if (typeof requested !== "boolean") {
+        return Response.json(
+          { ok: false, error: "invalid_finalize_flag" },
+          { status: 400 },
+        );
+      }
+      finalizeRuns = requested;
+    }
+  } catch {
+    // Empty/malformed bodies are treated as the default primary worker request.
+  }
+
   const workerId = `scheduler:${randomUUID()}`;
 
   after(async () => {
@@ -39,8 +61,9 @@ export async function POST(request: Request): Promise<Response> {
       const result = await runKapilotoWorkerCycle({
         workerId,
         maxTasks: 1,
-        leaseSeconds: 900,
+        leaseSeconds: 180,
         heartbeatIntervalMs: 30_000,
+        finalizeRuns,
       });
 
       console.info("Kapiloto scheduled worker cycle completed", {
@@ -60,6 +83,7 @@ export async function POST(request: Request): Promise<Response> {
       ok: true,
       accepted: true,
       workerId,
+      finalizeRuns,
       acceptedAt: new Date().toISOString(),
     },
     { status: 202 },

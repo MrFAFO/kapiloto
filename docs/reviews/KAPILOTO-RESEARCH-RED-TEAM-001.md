@@ -25,6 +25,12 @@ Scope: demand-driven run creation, fixture fanout worker, retry/recovery, materi
 7. **Environment presence did not prove OpenAI runtime access before spending a run slot.**
    A secret-authenticated internal preflight endpoint now performs a tiny non-web OpenAI generation without creating a Kapiloto request/run. Production smoke testing must pass this endpoint before the first paid round-wide research request.
 
+8. **A Vercel timeout could leave a fixture attempt leased far longer than the function can run.**
+   Hobby functions are capped at 300 seconds. Worker leases are now 180 seconds with 30-second heartbeats, so a hard-killed worker becomes recoverable shortly after execution stops instead of remaining locked for roughly 15 minutes.
+
+9. **Two scheduler workers could accidentally multiply concurrency and duplicate finalization AI work.**
+   The scheduler now fills only free capacity up to two live attempts. Exactly one worker per scheduler tick is marked as the primary finalizer; secondary workers process fixtures only. This prevents overlapping ticks from faning out beyond the cap and avoids duplicate entailment calls during finalization.
+
 ## Remaining gates before first paid run
 
 - Deploy the current branch after the Vercel Hobby daily deployment quota resets.
