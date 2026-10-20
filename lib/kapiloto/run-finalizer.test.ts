@@ -243,7 +243,7 @@ test("incomplete succeeded-attempt set is never published", async () => {
         judge,
         "run-1",
       ),
-    /15\/16 succeeded fixture tasks/,
+    /15\\/16 succeeded research tasks/,
   );
 
   assert.equal(publisher.published, 0);
