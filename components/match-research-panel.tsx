@@ -21,6 +21,52 @@ function useNow(intervalMs = 30_000): number {
   return now;
 }
 
+function ConnectedMatchResearchPanel({
+  roundId,
+  roundGameId,
+  groupId,
+}: {
+  roundId: string;
+  roundGameId: string;
+  groupId: string;
+}) {
+  const router = useRouter();
+  const now = useNow();
+  const [controller] = useState(
+    () =>
+      new KapilotoPanelController(
+        createKapilotoClient(),
+        {
+          roundId,
+          roundGameId,
+          groupId,
+        },
+        {
+          onRoundRunPublished() {
+            router.refresh();
+          },
+        },
+      ),
+  );
+  const view = useKapilotoPanel(controller);
+
+  useEffect(() => {
+    controller.open();
+    return () => controller.dispose();
+  }, [controller]);
+
+  return (
+    <KapilotoPanel
+      view={view}
+      panelId={`match-kapiloto-${roundGameId}`}
+      now={now}
+      onConsult={() => void controller.consult()}
+      onRecheck={() => void controller.recheck()}
+      onRetry={() => controller.retry()}
+    />
+  );
+}
+
 export function MatchResearchPanel({
   roundId,
   roundGameId,
@@ -30,35 +76,6 @@ export function MatchResearchPanel({
   roundGameId: string | null;
   groupId: string | null;
 }) {
-  const router = useRouter();
-  const now = useNow();
-
-  const [controller] = useState(() => {
-    if (!roundId || !roundGameId || !groupId) return null;
-
-    return new KapilotoPanelController(
-      createKapilotoClient(),
-      {
-        roundId,
-        roundGameId,
-        groupId,
-      },
-      {
-        onRoundRunPublished() {
-          router.refresh();
-        },
-      },
-    );
-  });
-
-  const view = controller ? useKapilotoPanel(controller) : null;
-
-  useEffect(() => {
-    if (!controller) return;
-    controller.open();
-    return () => controller.dispose();
-  }, [controller]);
-
   if (!roundId || !roundGameId) {
     return (
       <section className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4">
@@ -83,16 +100,11 @@ export function MatchResearchPanel({
     );
   }
 
-  if (!controller || !view) return null;
-
   return (
-    <KapilotoPanel
-      view={view}
-      panelId={`match-kapiloto-${roundGameId}`}
-      now={now}
-      onConsult={() => void controller.consult()}
-      onRecheck={() => void controller.recheck()}
-      onRetry={() => controller.retry()}
+    <ConnectedMatchResearchPanel
+      roundId={roundId}
+      roundGameId={roundGameId}
+      groupId={groupId}
     />
   );
 }
