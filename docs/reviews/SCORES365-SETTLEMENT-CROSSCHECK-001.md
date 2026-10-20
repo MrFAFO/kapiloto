@@ -41,3 +41,20 @@ For a Telesport row marked finished with a 1/X/2 outcome:
 
 An under-review game may later transition to settled when corroboration arrives.
 Settled and void states remain immutable in the database RPC.
+
+
+## Production Edge validation
+
+Supabase Edge Function `kapiloto-live-sync` version 2 was deployed after both
+the repository CI suite and a dedicated Deno typecheck passed.
+
+The secret-authenticated `crossCheckPreflight` then ran against the live
+Supabase project and round 264201:
+
+- HTTP 200
+- matched: 16
+- unmatched: []
+- databaseChanged: false
+
+A normal authenticated invocation outside the live window also returned
+`before_live_window` for round 264201. No settlement mutation was performed.

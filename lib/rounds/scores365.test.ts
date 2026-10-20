@@ -141,3 +141,28 @@ test("provider uses the public endpoint contract and validates payload", async (
   assert.equal(snapshot.results.length, 1);
   assert.match(snapshot.sourceVersion, /^sha256:[a-f0-9]{64}$/);
 });
+
+
+test("exact names outside the kickoff tolerance do not cross-match", () => {
+  const matched = matchScores365FinalResult(
+    {
+      kickoffAt: "2026-10-24T13:30:00.000Z",
+      homeNames: ["Napoli"],
+      awayNames: ["Roma"],
+    },
+    [
+      {
+        eventId: "late",
+        date: "2026-10-24",
+        startTime: "2026-10-24T23:00:00.000Z",
+        homeTeam: "Napoli",
+        awayTeam: "Roma",
+        homeScore: 2,
+        awayScore: 1,
+        outcome: "1",
+      },
+    ],
+  );
+
+  assert.equal(matched, null);
+});

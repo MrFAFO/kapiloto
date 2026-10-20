@@ -162,14 +162,27 @@ export function matchScores365FinalResult(
   const date = israelDateKey(fixture.kickoffAt);
   const home = normalizedNames(fixture.homeNames);
   const away = normalizedNames(fixture.awayNames);
+  const kickoffMs = Date.parse(fixture.kickoffAt);
 
   const matches = results.filter((result) => {
     if (result.date !== date) return false;
 
     const resultHome = normalizeTeamName(result.homeTeam);
     const resultAway = normalizeTeamName(result.awayTeam);
+    if (!home.has(resultHome) || !away.has(resultAway)) return false;
 
-    return home.has(resultHome) && away.has(resultAway);
+    if (result.startTime) {
+      const providerKickoffMs = Date.parse(result.startTime);
+      if (
+        Number.isFinite(kickoffMs) &&
+        Number.isFinite(providerKickoffMs) &&
+        Math.abs(providerKickoffMs - kickoffMs) > 6 * 60 * 60_000
+      ) {
+        return false;
+      }
+    }
+
+    return true;
   });
 
   return matches.length === 1 ? matches[0] : null;
