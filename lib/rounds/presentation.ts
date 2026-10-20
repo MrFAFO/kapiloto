@@ -123,6 +123,7 @@ export function buildCurrentRoundView(
     fixtures: round.games.map((game) => ({
       number: game.number,
       roundGameId: game.roundGameId,
+      fixtureId: game.fixtureId,
       home: game.home,
       away: game.away,
       league: game.league,

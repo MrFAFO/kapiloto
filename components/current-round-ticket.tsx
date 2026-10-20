@@ -33,6 +33,7 @@ import {
 export type CurrentRoundFixtureView = {
   number: number;
   roundGameId: string;
+  fixtureId: string | null;
   home: string;
   away: string;
   league: string;
@@ -81,6 +82,7 @@ const prototypeFixtures: CurrentRoundFixtureView[] = [
 ].map((fixture) => ({
   ...fixture,
   roundGameId: prototypeGameId(fixture.number),
+  fixtureId: null,
 }));
 
 const prototypePicks: Record<number, Pick> = {
@@ -154,6 +156,20 @@ function DisabledKapilotoBar() {
   );
 }
 
+function MatchAnalysisLink({ fixtureId }: { fixtureId: string | null }) {
+  if (!fixtureId) return null;
+
+  return (
+    <Link
+      href={`/matches/${fixtureId}`}
+      className="inline-flex w-fit items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--elevated)] px-2.5 py-1.5 text-[9px] font-bold text-[var(--kapiloto)] transition-colors hover:border-[var(--kapiloto)]"
+    >
+      ניתוח מלא
+      <span aria-hidden="true">←</span>
+    </Link>
+  );
+}
+
 function FixtureCard({
   fixture,
   pick,
@@ -200,6 +216,8 @@ function FixtureCard({
             {fixture.settlementLabel ? ` · ${fixture.settlementLabel}` : ""}
           </p>
         </div>
+
+        <MatchAnalysisLink fixtureId={fixture.fixtureId} />
 
         <PickButtons
           selected={selected}
@@ -310,6 +328,8 @@ function FixtureCardWithKapiloto({
             {fixture.settlementLabel ? ` · ${fixture.settlementLabel}` : ""}
           </p>
         </div>
+
+        <MatchAnalysisLink fixtureId={fixture.fixtureId} />
 
         <PickButtons
           selected={selected}
