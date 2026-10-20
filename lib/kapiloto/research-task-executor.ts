@@ -120,8 +120,12 @@ function validateClaim(attempt: ClaimedResearchAttempt): KapilotoFixtureCard {
   if (attempt.fixtureCard.round_game_id !== attempt.roundGameId) {
     throw new Error("Claimed attempt round_game_id does not match Fixture Card.");
   }
+  const cardCutoffMs = Date.parse(attempt.fixtureCard.research_cutoff_at);
+  const runCutoffMs = Date.parse(attempt.run.researchCutoffAt);
   if (
-    attempt.fixtureCard.research_cutoff_at !== attempt.run.researchCutoffAt
+    !Number.isFinite(cardCutoffMs) ||
+    !Number.isFinite(runCutoffMs) ||
+    cardCutoffMs !== runCutoffMs
   ) {
     throw new Error("Claimed attempt cutoff does not match run cutoff.");
   }
