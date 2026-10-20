@@ -332,3 +332,53 @@ Combined conclusion from both rotations:
 - Israeli competitions returned useful structured statistics and Pressure Index, but no xG rows were observed in this sample;
 - Sportmonks is suitable as the richer performance-analytics provider for entitled competitions, with per-competition fallback required;
 - API-Football remains the preferred broad fixture/market fallback and the currently proven 1X2 market-prior source.
+
+## 2026-10-20 canonical-ingestion regression run
+
+A fresh dual-provider run was executed after the canonical fixture/provenance work, using the same Winner 16 round 264101 input and the currently active Sportmonks five-league selection.
+
+### API-Football Free
+
+The run resolved only **3/16** fixtures. The other 13 returned the provider-plan error that Free could access only dates **2026-10-19 through 2026-10-21** at execution time.
+
+For the three fixtures still inside the accessible date window:
+- odds were observed on 3/3;
+- average complete 1X2 bookmakers: **9.33**;
+- lineups were observed on 2/3;
+- injuries were observed on 1/3.
+
+This does **not** contradict the earlier 16/16 resolution result. The earlier spike ran while the whole sampled round was inside the Free plan's rolling date-access window. The regression run proves that API-Football Free is not a durable backfill/historical source and cannot be assumed to resolve an entire Winner 16 round merely because the competition is covered.
+
+Operational implication:
+- persist every fixture mapping/market snapshot while it is accessible;
+- do not depend on Free to reconstruct historical rounds later;
+- production broad fallback requires a plan/source whose date horizon covers the full weekly workflow, or another provider fallback.
+
+### Sportmonks current entitlement
+
+Sportmonks resolved **11/16** fixtures in the current five-league rotation:
+- all five sampled Israeli fixtures;
+- Serie A 1/1;
+- Bundesliga 3/3;
+- Ligue 1 2/2.
+
+The five unresolved fixtures were exactly the Premier League and La Liga fixtures intentionally outside the current five Starter slots; those five were proven in the earlier entitlement rotation.
+
+Among the 11 currently resolved fixtures:
+- statistics observed: **11/11**;
+- Pressure Index observed: **11/11**;
+- lineups observed: **10/11**;
+- sidelined/injury rows observed: **9/11**;
+- xG-family rows observed: **6/11**, exactly the six Serie A/Bundesliga/Ligue 1 fixtures;
+- complete 1X2 bookmaker triples observed: **0/11**.
+
+The Israeli five again returned statistics + Pressure Index but no xG rows. The six resolved top-European fixtures returned xG-family metrics including xG, xGA, xGoT, open-play/set-play/corner xG, non-penalty expected goals and expected points where exposed by the fixture payload.
+
+### Updated provider conclusion
+
+The empirical split is now stronger:
+- **Sportmonks** is the preferred structured performance-analytics feed where the competition is entitled;
+- **API-Football** remains the currently proven 1X2 market-prior source, but the Free plan's rolling date window is an operational limitation rather than a production-grade weekly horizon;
+- canonical fixture mappings and all market/fact snapshots must be persisted when observed;
+- capability-specific fallback remains mandatory.
+
