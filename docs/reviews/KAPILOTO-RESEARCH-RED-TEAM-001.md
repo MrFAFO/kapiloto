@@ -37,6 +37,9 @@ Scope: demand-driven run creation, fixture fanout worker, retry/recovery, materi
 11. **A paid run previously had no production dry-run of the exact 16-fixture planner.**
     A secret-authenticated plan preflight now executes the real Supabase-backed planner with provider sync disabled and stops before the research RPC. It reports fixture dispositions, task count and prior types while explicitly leaving `researchRunCreated=false` and `databaseChanged=false`.
 
+12. **The worker endpoint itself could not be smoke-tested without risking a queue claim.**
+    The internal worker now supports a read-only authenticated `preflight` mode. It validates worker auth, OpenAI environment presence and Supabase connectivity, returns active-run/attempt counts, and guarantees `attemptClaimed=false`, `researchRunCreated=false`, and `databaseChanged=false`.
+
 ## Remaining gates before first paid run
 
 - Deploy the current branch after the Vercel Hobby daily deployment quota resets.

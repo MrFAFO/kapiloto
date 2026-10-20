@@ -4,6 +4,7 @@ import { after } from "next/server";
 
 import { verifyKapilotoWorkerAuthorization } from "@/lib/kapiloto/worker-auth";
 import { runKapilotoWorkerCycle } from "@/lib/kapiloto/worker-runtime";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -33,25 +34,78 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   let finalizeRuns = true;
+  let preflight = false;
   try {
     const body = (await request.json()) as unknown;
-    if (
-      body &&
-      typeof body === "object" &&
-      !Array.isArray(body) &&
-      "finalizeRuns" in body
-    ) {
-      const requested = (body as { finalizeRuns?: unknown }).finalizeRuns;
-      if (typeof requested !== "boolean") {
-        return Response.json(
-          { ok: false, error: "invalid_finalize_flag" },
-          { status: 400 },
-        );
+    if (body && typeof body === "object" && !Array.isArray(body)) {
+      if ("finalizeRuns" in body) {
+        const requested = (body as { finalizeRuns?: unknown }).finalizeRuns;
+        if (typeof requested !== "boolean") {
+          return Response.json(
+            { ok: false, error: "invalid_finalize_flag" },
+            { status: 400 },
+          );
+        }
+        finalizeRuns = requested;
       }
-      finalizeRuns = requested;
+
+      if ("preflight" in body) {
+        const requested = (body as { preflight?: unknown }).preflight;
+        if (typeof requested !== "boolean") {
+          return Response.json(
+            { ok: false, error: "invalid_preflight_flag" },
+            { status: 400 },
+          );
+        }
+        preflight = requested;
+      }
     }
   } catch {
-    // Empty/malformed bodies are treated as the default primary worker request.
+    // Empty/malformed bodies are treated as a normal primary worker request.
+  }
+
+  if (preflight) {
+    const admin = createAdminClient();
+    const [
+      { count: activeRuns, error: runError },
+      { count: nonterminalAttempts, error: attemptError },
+    ] = await Promise.all([
+      admin
+        .from("kapiloto_research_runs")
+        .select("id", { count: "exact", head: true })
+        .in("status", ["queued", "running"]),
+      admin
+        .from("kapiloto_research_attempts")
+        .select("id", { count: "exact", head: true })
+        .in("status", ["queued", "running"]),
+    ]);
+
+    if (runError || attemptError) {
+      return Response.json(
+        {
+          ok: false,
+          error: "database_preflight_failed",
+          detail: runError?.message ?? attemptError?.message ?? "unknown",
+          attemptClaimed: false,
+          researchRunCreated: false,
+          databaseChanged: false,
+        },
+        { status: 503 },
+      );
+    }
+
+    return Response.json({
+      ok: true,
+      preflight: true,
+      workerReady: true,
+      openAIConfigured: true,
+      activeRuns: activeRuns ?? 0,
+      nonterminalAttempts: nonterminalAttempts ?? 0,
+      attemptClaimed: false,
+      researchRunCreated: false,
+      databaseChanged: false,
+      checkedAt: new Date().toISOString(),
+    });
   }
 
   const workerId = `scheduler:${randomUUID()}`;
