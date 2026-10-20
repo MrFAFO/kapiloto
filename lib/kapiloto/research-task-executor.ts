@@ -1,6 +1,8 @@
 import type OpenAI from "openai";
 
 import type { KapilotoFixtureCard } from "./fixture-card";
+import type { SolFixtureResearchOutput } from "./research-output";
+import type { GroundingResult } from "./source-grounding";
 import {
   researchFixtureWithSol,
   SolFixtureResearchError,
@@ -74,11 +76,22 @@ export interface FixtureResearchRunner {
   ): Promise<SolFixtureResearchResult>;
 }
 
+export interface FixtureEvidenceGrounder {
+  ground(
+    card: KapilotoFixtureCard,
+    output: SolFixtureResearchOutput,
+  ): Promise<{
+    grounding: GroundingResult;
+    retrievalFailures: Array<{ url: string; error: string }>;
+  }>;
+}
+
 export type ExecuteResearchTaskOptions = {
   workerId: string;
   leaseSeconds?: number;
   heartbeatIntervalMs?: number;
   reasoningEffort?: SolFixtureResearchOptions["reasoningEffort"];
+  grounder?: FixtureEvidenceGrounder;
   traceId?: string | null;
 };
 
@@ -252,6 +265,74 @@ export async function executeOneResearchTask(
     }
 
     const validationStartedAt = Date.now();
+    let grounding:
+      | {
+          grounding: GroundingResult;
+          retrievalFailures: Array<{ url: string; error: string }>;
+        }
+      | null = null;
+
+    if (options.grounder) {
+      try {
+        grounding = await options.grounder.ground(card, research.output);
+      } catch (error) {
+        const ownedAfterGrounding = heartbeatLost
+          ? false
+          : await queue
+              .heartbeat(attempt.attemptId, options.workerId, leaseSeconds)
+              .catch(() => false);
+
+        if (!ownedAfterGrounding) {
+          return {
+            status: "lease_lost",
+            attemptId: attempt.attemptId,
+            runId: attempt.runId,
+          };
+        }
+
+        const finish = await queue.finish({
+          attemptId: attempt.attemptId,
+          workerId: options.workerId,
+          success: false,
+          retryable: true,
+          retryDelaySeconds: retryDelaySeconds(attempt.attemptNo),
+          modelSnapshot: research.provenance.model,
+          providerResponseId: research.provenance.responseId,
+          inputTokens: research.provenance.usage.inputTokens,
+          cachedInputTokens: research.provenance.usage.cachedInputTokens,
+          outputTokens: research.provenance.usage.outputTokens,
+          reasoningTokens: research.provenance.usage.reasoningTokens,
+          webSearchCalls: research.provenance.webSearchCalls,
+          sourcesCount: research.provenance.sourceUrls.length,
+          costMicros: null,
+          pricingVersion: null,
+          modelMs: validationStartedAt - modelStartedAt,
+          validationMs: Date.now() - validationStartedAt,
+          totalMs: Date.now() - startedAt,
+          failureClass: "model_output_invalid",
+          failureCode: "evidence_grounding_failed",
+          failureDetail: error instanceof Error ? error.message : String(error),
+          validatedOutput: null,
+          validationReport: {
+            semantic_validation: "passed",
+            source_urls_observed: research.provenance.sourceUrls,
+            quote_verification: "failed",
+            entailment_verification: "not_started",
+          },
+          traceId: options.traceId ?? null,
+        });
+
+        return {
+          status: "failed",
+          attemptId: attempt.attemptId,
+          runId: attempt.runId,
+          retryable: true,
+          retryCreated: finish.retryCreated,
+          failureClass: "model_output_invalid",
+        };
+      }
+    }
+
     const owned = heartbeatLost
       ? false
       : await queue
@@ -292,8 +373,14 @@ export async function executeOneResearchTask(
       validationReport: {
         semantic_validation: "passed",
         source_urls_observed: research.provenance.sourceUrls,
-        quote_verification: "pending",
-        entailment_verification: "pending",
+        quote_verification: grounding ? "passed" : "pending",
+        entailment_verification:
+          grounding &&
+          grounding.grounding.requiresEntailmentVerification.length === 0
+            ? "not_required"
+            : "pending",
+        grounding: grounding?.grounding ?? null,
+        source_retrieval_failures: grounding?.retrievalFailures ?? [],
       },
       traceId: options.traceId ?? null,
     });
