@@ -124,3 +124,9 @@ test("JSON-LD datePublished remains an accepted publication timestamp", () => {
     "2026-10-20T08:15:00.000Z",
   );
 });
+
+
+test("source body limit remains bounded for large official sports pages", () => {
+  assert.equal(__testOnly.maxSourceBytes, 2_500_000);
+  assert.ok(__testOnly.maxSourceBytes <= 3_000_000);
+});

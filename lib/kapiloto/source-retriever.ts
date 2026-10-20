@@ -7,7 +7,7 @@ import { isIP } from "node:net";
 import { normalizeEvidenceUrl, type SolFixtureResearchOutput } from "./research-output";
 import type { RetrievedSourceDocument } from "./source-grounding";
 
-const MAX_SOURCE_BYTES = 1_000_000;
+const MAX_SOURCE_BYTES = 2_500_000;
 const MAX_REDIRECTS = 3;
 const REQUEST_TIMEOUT_MS = 8_000;
 
@@ -337,4 +337,5 @@ export const __testOnly = {
   htmlToText,
   firstPublishedAt,
   fetchSource,
+  maxSourceBytes: MAX_SOURCE_BYTES,
 };

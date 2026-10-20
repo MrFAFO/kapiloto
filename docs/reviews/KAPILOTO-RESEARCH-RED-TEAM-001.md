@@ -83,3 +83,11 @@ Scope: demand-driven run creation, fixture fanout worker, retry/recovery, materi
     still default to Tier 4. The Sol prompt now mirrors the validator by asking
     material factors to prefer official/high-quality evidence or two independent
     sources.
+
+
+16. **The original 1 MB evidence-page cap rejected a legitimate official club page.**
+    Live retrieval preflight confirmed Schalke and Sky Sports work end-to-end,
+    while Maccabi Haifa's official article exceeded the 1 MB raw HTML cap.
+    The cap is raised conservatively to 2.5 MB and remains hard-bounded at
+    3 MB by test. This expands compatibility with script-heavy official club
+    pages without turning the verifier into an unbounded fetcher.
