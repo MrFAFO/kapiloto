@@ -18,6 +18,14 @@ Vercel.
 ### TotoRoundProvider
 Responsible for importing the weekly Toto/Winner 16 fixture list into an internal snapshot.
 
+The ingestion boundary is the server-only `toto_import_round_snapshot` RPC and `SupabaseTotoRoundImporter`. A snapshot must contain exactly games 1–16, canonical team/competition identity, kickoff timestamps, source/version metadata and an explicit source-provided `lock_at`. The importer never derives the pool lock from the first football kickoff.
+
+Operational/manual imports can use:
+
+`npm run round:import -- <snapshot.json>`
+
+The same contract is intended for a future automated TotoRoundProvider adapter.
+
 ### FootballDataProvider
 Responsible for normalized:
 - fixture schedule;
