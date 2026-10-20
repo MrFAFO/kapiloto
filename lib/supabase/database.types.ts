@@ -2408,6 +2408,14 @@ export type Database = {
         }
         Returns: boolean
       }
+      kapiloto_create_group: {
+        Args: { p_name: string; p_user_id: string }
+        Returns: Json
+      }
+      kapiloto_ensure_group_round_settings: {
+        Args: { p_group_id: string; p_round_id: string; p_user_id: string }
+        Returns: Json
+      }
       kapiloto_finish_research_attempt: {
         Args: {
           p_attempt_id: string
