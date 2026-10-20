@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { KapilotoWordmark } from "@/components/kapiloto-wordmark";
 import { MobileAppNav } from "@/components/mobile-app-nav";
+import { MatchResearchPanel } from "@/components/match-research-panel";
 import { loadActiveGroups, selectActiveGroup } from "@/lib/groups/current-group";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthenticatedUserId } from "@/lib/supabase/auth";
@@ -162,6 +163,20 @@ export default async function MatchPage({
     throw new Error(`Failed to load match: ${fixtureError.message}`);
   }
   if (!fixture) notFound();
+
+  const { data: roundGame, error: roundGameError } = await admin
+    .from("round_games")
+    .select("id,round_id,kickoff_at")
+    .eq("fixture_id", fixture.id)
+    .order("kickoff_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (roundGameError) {
+    throw new Error(
+      `Failed to resolve fixture round context: ${roundGameError.message}`,
+    );
+  }
 
   const [
     teamsResult,
@@ -379,6 +394,12 @@ export default async function MatchPage({
             </div>
           </div>
         </section>
+
+        <MatchResearchPanel
+          roundId={roundGame?.round_id ?? null}
+          roundGameId={roundGame?.id ?? null}
+          groupId={activeGroup?.groupId ?? null}
+        />
 
         {!analysis ? (
           <section className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4">

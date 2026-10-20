@@ -85,3 +85,14 @@ Prior hierarchy:
 The fallback is deliberately neutral: it does not invent bookmaker odds, team strength or home advantage. The reliability formula records and penalizes `uninformative_league_base_prior`, while grounded Sol research may move the final distribution away from the neutral baseline.
 
 API-Football enrichment is therefore optional at runtime. Missing provider credentials must not block a research run; missing `OPENAI_API_KEY` must fail **before** run creation so it cannot consume one of the three research slots.
+
+
+## Deep-analysis research controls
+
+The Match Intelligence page reuses the same Kapiloto request state machine as the Toto inline panel.
+
+- A match with no publication exposes the same explicit demand-driven research action.
+- If another user already started the round-wide run, the page joins/polls that shared run instead of creating another one.
+- When publication completes, the client refreshes the server-rendered match page so the deep analysis sections populate from canonical fixture intelligence.
+- Existing publications expose recheck only under the same freshness, lock and three-run budget rules used by Toto.
+- Research requests require an active group context; the underlying research remains central and shared for the round.
