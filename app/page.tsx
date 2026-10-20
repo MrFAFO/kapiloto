@@ -1,32 +1,36 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import {
-  CurrentRoundTicket,
-  PROTOTYPE_CURRENT_ROUND,
-} from "@/components/current-round-ticket";
-import { GroupBootstrapService } from "@/lib/groups/bootstrap-service";
+import { KapilotoWordmark } from "@/components/kapiloto-wordmark";
+import { MobileAppNav } from "@/components/mobile-app-nav";
 import {
   loadActiveGroups,
   selectActiveGroup,
 } from "@/lib/groups/current-group";
-import { parseKapilotoDemoScenario } from "@/lib/kapiloto/demo-fetch";
 import { SupabaseCurrentRoundLoader } from "@/lib/rounds/current-round";
-import { buildCurrentRoundView } from "@/lib/rounds/presentation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthenticatedUserId } from "@/lib/supabase/auth";
-import { TotoTicketService } from "@/lib/ticket-service";
-
-// Prototype identifiers remain only for explicit local demo mode.
-const PROTOTYPE_ROUND_ID = "00000000-0000-4000-8000-000000264101";
-const PROTOTYPE_GROUP_ID = "00000000-0000-4000-8000-0000000000a1";
 
 export const dynamic = "force-dynamic";
 
-function kapilotoDemoEnabled(): boolean {
-  return (
-    process.env.NEXT_PUBLIC_KAPILOTO_DEMO === "1" &&
-    process.env.NODE_ENV !== "production"
-  );
+const kickoffClock = new Intl.DateTimeFormat("he-IL", {
+  weekday: "short",
+  day: "2-digit",
+  month: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "Asia/Jerusalem",
+});
+
+function gameStateLabel(status: string): string {
+  if (status === "live") return "חי";
+  if (status === "halftime") return "מחצית";
+  if (status === "finished") return "הסתיים";
+  if (status === "postponed") return "נדחה";
+  if (status === "cancelled") return "בוטל";
+  if (status === "under_review") return "בבדיקה";
+  return "קרוב";
 }
 
 export default async function Home({
@@ -34,122 +38,197 @@ export default async function Home({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  const userId = await getAuthenticatedUserId();
+  if (!userId) redirect("/login");
+
   const params = await searchParams;
-  const requested = Array.isArray(params.kapiloto_demo)
-    ? params.kapiloto_demo[0]
-    : params.kapiloto_demo;
   const requestedGroup = Array.isArray(params.group)
     ? params.group[0]
     : params.group;
-  const demoScenario = kapilotoDemoEnabled()
-    ? parseKapilotoDemoScenario(requested)
-    : null;
-
-  const userId = await getAuthenticatedUserId();
-  if (!demoScenario && !userId) {
-    redirect("/login");
-  }
-
-  if (demoScenario) {
-    return (
-      <CurrentRoundTicket
-        round={PROTOTYPE_CURRENT_ROUND}
-        kapiloto={{
-          roundId: PROTOTYPE_ROUND_ID,
-          groupId: PROTOTYPE_GROUP_ID,
-          demoScenario,
-        }}
-      />
-    );
-  }
 
   const admin = createAdminClient();
-  const [databaseRound, groups] = await Promise.all([
+  const [round, groups, profileResult] = await Promise.all([
     new SupabaseCurrentRoundLoader(admin).load(),
-    loadActiveGroups(admin, userId!),
+    loadActiveGroups(admin, userId),
+    admin
+      .from("profiles")
+      .select("display_name,username")
+      .eq("id", userId)
+      .maybeSingle(),
   ]);
+
   const group = selectActiveGroup(groups, requestedGroup ?? null);
-
-  if (!databaseRound) {
-    return (
-      <CurrentRoundTicket
-        round={PROTOTYPE_CURRENT_ROUND}
-        kapiloto={{
-          roundId: PROTOTYPE_ROUND_ID,
-          groupId: null,
-          demoScenario: null,
-        }}
-      />
-    );
-  }
-
-  let maxDoubles = group?.defaultMaxDoubles ?? 7;
-  let initialPicks:
-    | Array<{ gameNumber: number; pick: "1" | "X" | "2" | "1X" | "X2" | "12" }>
-    | undefined;
-  let ticketRevision: number | undefined;
-  let ticketState: "draft" | "submitted" | "locked" | null | undefined;
-  let submittedAt: string | null | undefined;
-  let enabledGroupId: string | null = null;
-
-  if (group) {
-    try {
-      if (Date.now() < Date.parse(databaseRound.lockAt)) {
-        await new GroupBootstrapService(admin).ensureRoundSettings(
-          userId!,
-          group.groupId,
-          databaseRound.roundId,
-        );
-      }
-
-      const ticket = await new TotoTicketService(admin).load(
-        group.groupId,
-        databaseRound.roundId,
-        userId!,
-      );
-      maxDoubles = ticket.maxDoubles;
-      ticketRevision = ticket.revision;
-      ticketState = ticket.state;
-      submittedAt = ticket.submittedAt;
-      enabledGroupId = group.groupId;
-
-      const gameNumberById = new Map(
-        databaseRound.games.map((game) => [game.roundGameId, game.number]),
-      );
-
-      initialPicks = ticket.picks.flatMap((pick) => {
-        const gameNumber = gameNumberById.get(pick.roundGameId);
-        return gameNumber == null
-          ? []
-          : [{ gameNumber, pick: pick.pick }];
-      });
-    } catch (error) {
-      if (
-        !(error instanceof Error) ||
-        (!error.message.includes("ticket_group_round_settings_missing") &&
-          !error.message.includes("round_already_locked"))
-      ) {
-        throw error;
-      }
-    }
-  }
-
-  const roundView = buildCurrentRoundView(databaseRound, {
-    maxDoubles,
-    picks: initialPicks,
-    ticketRevision,
-    ticketState,
-    submittedAt,
-  });
+  const name =
+    profileResult.data?.display_name ||
+    profileResult.data?.username ||
+    "אוהד";
+  const liveCount =
+    round?.games.filter((game) =>
+      ["live", "halftime"].includes(game.status),
+    ).length ?? 0;
+  const finishedCount =
+    round?.games.filter((game) => game.status === "finished").length ?? 0;
+  const highlighted =
+    round?.games
+      .filter((game) => game.status !== "finished")
+      .slice(0, 4) ?? [];
 
   return (
-    <CurrentRoundTicket
-      round={roundView}
-      kapiloto={{
-        roundId: databaseRound.roundId,
-        groupId: enabledGroupId,
-        demoScenario: null,
-      }}
-    />
+    <div
+      dir="rtl"
+      className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-[var(--canvas)] pb-[84px]"
+    >
+      <header className="bg-gradient-to-r from-[var(--header-from)] to-[var(--header-to)] px-[18px] pb-5 pt-[18px]">
+        <div className="flex items-center justify-between">
+          <KapilotoWordmark />
+          <span className="rounded-full bg-[var(--elevated)] px-3 py-1.5 text-[8px] font-bold text-[var(--muted)]">
+            Kapiloto V2
+          </span>
+        </div>
+        <p className="mt-5 text-[9px] text-[var(--muted)]">שלום {name}</p>
+        <h1 className="mt-1 text-[22px] font-black text-white">
+          מה קורה בכדורגל שלך
+        </h1>
+        <p className="mt-2 max-w-[330px] text-[9px] leading-5 text-[var(--muted)]">
+          טוטו, ניתוחי משחק ו־Winner נשענים על אותו Match Intelligence.
+        </p>
+      </header>
+
+      <main className="flex flex-1 flex-col gap-3 px-[18px] py-4">
+        <section className="grid grid-cols-2 gap-3">
+          <Link
+            href={group ? `/tickets/toto?group=${group.groupId}` : "/tickets/toto"}
+            className="rounded-[18px] border border-[var(--kapiloto-border)] bg-[var(--kapiloto-surface)] p-4"
+          >
+            <p className="text-[9px] font-bold text-[var(--kapiloto)]">TOTO 16</p>
+            <p className="mt-2 text-[14px] font-black text-white">
+              הטופס השבועי
+            </p>
+            <p className="mt-1 text-[8px] leading-4 text-[var(--muted)]">
+              מילוי, קפילוטו, דייגו ותוצאות חיות.
+            </p>
+          </Link>
+
+          <Link
+            href="/matches"
+            className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4"
+          >
+            <p className="text-[9px] font-bold text-[var(--diego)]">MATCHES</p>
+            <p className="mt-2 text-[14px] font-black text-white">
+              ניתוח עמוק
+            </p>
+            <p className="mt-1 text-[8px] leading-4 text-[var(--muted)]">
+              הסתברויות, גורמים, חיסורים ומקורות.
+            </p>
+          </Link>
+        </section>
+
+        <Link
+          href="/tickets"
+          className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[9px] font-bold text-[var(--success)]">WINNER</p>
+              <p className="mt-1 text-[12px] font-bold text-white">
+                שכבת השווקים הבאה
+              </p>
+              <p className="mt-1 text-[8px] leading-4 text-[var(--muted)]">
+                נוסיף רק שווקים שמגובה להם מודל ודאטה מאומתים.
+              </p>
+            </div>
+            <span className="rounded-full bg-[var(--elevated)] px-2.5 py-1.5 text-[8px] font-bold text-[var(--muted)]">
+              בהכנה
+            </span>
+          </div>
+        </Link>
+
+        {round ? (
+          <section className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[9px] font-bold text-[var(--muted)]">
+                  מחזור Winner 16
+                </p>
+                <p className="mt-1 text-[16px] font-black text-white">
+                  {round.externalRoundNumber}
+                </p>
+              </div>
+              <div className="flex gap-1.5">
+                {liveCount > 0 ? (
+                  <span className="rounded-full bg-[var(--live)]/15 px-2.5 py-1.5 text-[8px] font-bold text-[var(--live)]">
+                    {liveCount} חי
+                  </span>
+                ) : null}
+                <span className="rounded-full bg-[var(--elevated)] px-2.5 py-1.5 text-[8px] font-bold text-[var(--muted)]">
+                  {finishedCount}/16 הסתיימו
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-col gap-2">
+              {highlighted.map((game) => (
+                <Link
+                  key={game.roundGameId}
+                  href={`/matches/${game.fixtureId}`}
+                  className="flex items-center justify-between gap-3 rounded-xl bg-[var(--elevated)] px-3 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-[9px] font-bold text-[var(--text)]">
+                      {game.home} — {game.away}
+                    </p>
+                    <p className="mt-0.5 text-[8px] text-[var(--muted)]">
+                      {game.league} · {kickoffClock.format(new Date(game.kickoffAt))}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-[8px] font-bold text-[var(--kapiloto)]">
+                    {gameStateLabel(game.status)}
+                  </span>
+                </Link>
+              ))}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <Link
+                href="/matches"
+                className="flex h-10 items-center justify-center rounded-xl border border-[var(--border)] text-[9px] font-bold text-[var(--muted)]"
+              >
+                כל המשחקים
+              </Link>
+              <Link
+                href={group ? `/tickets/toto?group=${group.groupId}` : "/tickets/toto"}
+                className="flex h-10 items-center justify-center rounded-xl bg-[var(--action)] text-[9px] font-bold text-white"
+              >
+                לטופס
+              </Link>
+            </div>
+          </section>
+        ) : (
+          <section className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4 text-center">
+            <p className="text-[10px] font-bold">אין כרגע מחזור פעיל</p>
+            <p className="mt-1 text-[8px] text-[var(--muted)]">
+              המחזור הבא יופיע כאן לאחר הייבוא האוטומטי.
+            </p>
+          </section>
+        )}
+
+        {group ? (
+          <Link
+            href={`/group?group=${group.groupId}`}
+            className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4"
+          >
+            <p className="text-[9px] font-bold text-[var(--muted)]">הקבוצה שלך</p>
+            <div className="mt-1 flex items-center justify-between">
+              <p className="text-[13px] font-bold text-white">{group.name}</p>
+              <span className="text-[8px] font-bold text-[var(--kapiloto)]">
+                פתח קבוצה ←
+              </span>
+            </div>
+          </Link>
+        ) : null}
+      </main>
+
+      <MobileAppNav active="home" groupId={group?.groupId ?? null} />
+    </div>
   );
 }

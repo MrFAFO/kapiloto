@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { KapilotoWordmark } from "@/components/kapiloto-wordmark";
+import { MobileAppNav } from "@/components/mobile-app-nav";
 import type { ActiveGroupContext } from "@/lib/groups/current-group";
 import type { GroupDashboard } from "@/lib/groups/dashboard";
 
@@ -92,7 +93,7 @@ export function GroupDashboardScreen({
         <div className="flex h-8 items-center justify-between">
           <KapilotoWordmark />
           <Link
-            href={`/?group=${dashboard.groupId}`}
+            href={`/tickets/toto?group=${dashboard.groupId}`}
             className="inline-flex h-8 items-center rounded-full bg-[var(--elevated)] px-3 text-[9px] font-bold text-[var(--text)]"
           >
             חזרה לטופס
@@ -278,31 +279,7 @@ export function GroupDashboardScreen({
         </section>
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex h-[72px] max-w-[430px] items-center justify-between bg-[var(--nav)] px-3 pb-3 pt-[9px]">
-        <Link
-          href={`/?group=${dashboard.groupId}`}
-          className="flex h-11 w-[82px] items-center justify-center rounded-xl text-[9px] font-medium text-[var(--muted)]"
-        >
-          טופס
-        </Link>
-        <Link
-          href={`/group?group=${dashboard.groupId}`}
-          aria-current="page"
-          className="flex h-11 w-[82px] items-center justify-center rounded-xl bg-[var(--elevated)] text-[9px] font-bold text-[var(--kapiloto)]"
-        >
-          קבוצה
-        </Link>
-        {["סטטיסטיקות", "עוד"].map((label) => (
-          <button
-            key={label}
-            type="button"
-            disabled
-            className="flex h-11 w-[82px] items-center justify-center rounded-xl text-[9px] font-medium text-[var(--muted-strong)]"
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
+      <MobileAppNav active="group" groupId={dashboard.groupId} />
     </div>
   );
 }

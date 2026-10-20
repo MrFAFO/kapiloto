@@ -11,6 +11,7 @@ import {
   useKapilotoPanel,
 } from "@/components/kapiloto-panel";
 import { KapilotoWordmark } from "@/components/kapiloto-wordmark";
+import { MobileAppNav } from "@/components/mobile-app-nav";
 import { createKapilotoClient } from "@/lib/kapiloto/client";
 import {
   createKapilotoDemoFetch,
@@ -956,41 +957,7 @@ export function CurrentRoundTicket({
         ))}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex h-[72px] max-w-[430px] items-center justify-between bg-[var(--nav)] px-3 pb-3 pt-[9px]">
-        <button
-          type="button"
-          aria-current="page"
-          className="flex h-11 w-[82px] items-center justify-center rounded-xl bg-[var(--elevated)] text-[9px] font-bold text-[var(--kapiloto)]"
-        >
-          טופס
-        </button>
-        {kapiloto.groupId ? (
-          <Link
-            href={`/group?group=${kapiloto.groupId}`}
-            className="flex h-11 w-[82px] items-center justify-center rounded-xl text-[9px] font-medium text-[var(--muted)]"
-          >
-            קבוצה
-          </Link>
-        ) : (
-          <button
-            type="button"
-            disabled
-            className="flex h-11 w-[82px] items-center justify-center rounded-xl text-[9px] font-medium text-[var(--muted-strong)]"
-          >
-            קבוצה
-          </button>
-        )}
-        {["סטטיסטיקות", "עוד"].map((label) => (
-          <button
-            key={label}
-            type="button"
-            disabled
-            className="flex h-11 w-[82px] items-center justify-center rounded-xl text-[9px] font-medium text-[var(--muted-strong)]"
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
+      <MobileAppNav active="tickets" groupId={kapiloto.groupId} />
     </div>
   );
 }

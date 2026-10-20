@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { KapilotoWordmark } from "@/components/kapiloto-wordmark";
+import { MobileAppNav } from "@/components/mobile-app-nav";
+import { loadActiveGroups, selectActiveGroup } from "@/lib/groups/current-group";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthenticatedUserId } from "@/lib/supabase/auth";
 
@@ -145,6 +147,8 @@ export default async function MatchPage({
 
   const { fixtureId } = await params;
   const admin = createAdminClient();
+  const groups = await loadActiveGroups(admin, userId);
+  const activeGroup = selectActiveGroup(groups, null);
 
   const { data: fixture, error: fixtureError } = await admin
     .from("fixtures")
@@ -312,12 +316,12 @@ export default async function MatchPage({
   return (
     <div
       dir="rtl"
-      className="mx-auto min-h-screen w-full max-w-[430px] bg-[var(--background)] pb-10 text-[var(--text)]"
+      className="mx-auto min-h-screen w-full max-w-[430px] bg-[var(--canvas)] pb-[84px] text-[var(--text)]"
     >
-      <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--background)]/95 px-[18px] py-3 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-[var(--canvas)]/95 px-[18px] py-3 backdrop-blur">
         <div className="flex items-center justify-between">
           <Link
-            href="/"
+            href="/tickets/toto"
             className="rounded-lg border border-[var(--border)] bg-[var(--elevated)] px-3 py-2 text-[9px] font-bold text-[var(--muted)]"
           >
             חזרה לטוטו
@@ -589,6 +593,7 @@ export default async function MatchPage({
           </div>
         </section>
       </main>
+      <MobileAppNav active="matches" groupId={activeGroup?.groupId ?? null} />
     </div>
   );
 }
