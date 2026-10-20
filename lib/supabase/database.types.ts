@@ -2502,6 +2502,7 @@ export type Database = {
           preferred_auth_identifier: string
         }[]
       }
+      toto_import_round_snapshot: { Args: { p_snapshot: Json }; Returns: Json }
       toto_save_ticket_draft: {
         Args: {
           p_expected_revision: number
