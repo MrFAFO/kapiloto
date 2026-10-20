@@ -178,7 +178,7 @@ begin
     select t.id into v_home_id
     from public.teams t
     where lower(trim(t.canonical_name)) = lower(trim(v_home ->> 'canonical_name'))
-      and coalesce(t.country_code, '') = coalesce(nullif(trim(v_home ->> 'country_code'), ''), '')
+      and coalesce(t.country_code, '') = coalesce(nullif(upper(trim(v_home ->> 'country_code')), ''), '')
     order by t.created_at asc
     limit 1;
 
@@ -195,7 +195,7 @@ begin
     select t.id into v_away_id
     from public.teams t
     where lower(trim(t.canonical_name)) = lower(trim(v_away ->> 'canonical_name'))
-      and coalesce(t.country_code, '') = coalesce(nullif(trim(v_away ->> 'country_code'), ''), '')
+      and coalesce(t.country_code, '') = coalesce(nullif(upper(trim(v_away ->> 'country_code')), ''), '')
     order by t.created_at asc
     limit 1;
 
