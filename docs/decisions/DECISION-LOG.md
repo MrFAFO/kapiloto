@@ -181,3 +181,10 @@ Analyzed fixtures require accepted quote-verified evidence, and material factors
 
 Reason: immutable analysis tables make partial publication especially dangerous. One transaction prevents half-published rounds, mismatched fixture pointers and irrecoverable partial provenance.
 
+## D-039 — Winner 16 discovery is staged before authoritative import
+Decision: automate current-round discovery separately from database import. The first automated adapter is Telesport for round number, ordered 1..16 fixtures, listed teams, competition labels and any published kickoff times. It is treated as a non-authoritative discovery/fallback source.
+
+A discovered round may enter the canonical import transaction only when all 16 kickoff timestamps are resolved and an explicit authoritative Toto lock time is supplied. Missing times, ambiguous rows or absent lock time block import rather than being inferred.
+
+Reason: public Winner 16 pages are useful for fast weekly discovery but can expose incomplete kickoff fields and do not establish the official betting lock. Separating discovery from import gives Kapiloto automation without contaminating historical round snapshots with guessed values.
+
