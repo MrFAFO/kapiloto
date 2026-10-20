@@ -1,19 +1,29 @@
 import { randomUUID } from "node:crypto";
 
-import { runKapilotoWorkerCycle } from "./worker-runtime";
+import {
+  runKapilotoWorkerCycle,
+  type KapilotoWorkerCycleOptions,
+} from "./worker-runtime";
+
+export function buildKapilotoDemandWorkerOptions(
+  source: string,
+): KapilotoWorkerCycleOptions {
+  return {
+    workerId: `demand:${source}:${randomUUID()}`,
+    maxTasks: 1,
+    leaseSeconds: 180,
+    heartbeatIntervalMs: 30_000,
+    finalizeRuns: false,
+  };
+}
 
 export async function runKapilotoDemandWorkerBurst(
   source: string,
-  maxTasks = 1,
 ): Promise<void> {
   try {
-    await runKapilotoWorkerCycle({
-      workerId: `demand:${source}:${randomUUID()}`,
-      maxTasks,
-      leaseSeconds: 180,
-      heartbeatIntervalMs: 30_000,
-      finalizeRuns: false,
-    });
+    await runKapilotoWorkerCycle(
+      buildKapilotoDemandWorkerOptions(source),
+    );
   } catch (error) {
     console.error("Kapiloto demand worker burst failed", {
       source,

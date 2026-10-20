@@ -197,7 +197,6 @@ export async function POST(
       after(() =>
         runKapilotoDemandWorkerBurst(
           `request:${research.run_id ?? roundId}`,
-          1,
         ),
       );
     }
