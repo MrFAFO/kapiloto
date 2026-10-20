@@ -15,6 +15,31 @@ type FetchLike = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+export type TelesportGameState = {
+  gameNumber: number;
+  status:
+    | "upcoming"
+    | "live"
+    | "halftime"
+    | "finished"
+    | "postponed"
+    | "cancelled"
+    | "suspended"
+    | "under_review";
+  homeScore: number | null;
+  awayScore: number | null;
+  outcome: "1" | "X" | "2" | null;
+  rawStatus: string;
+  rawScore: string;
+};
+
+export type TelesportWinner16State = {
+  externalRoundNumber: string;
+  sourceVersion: string;
+  fetchedAt: string;
+  games: TelesportGameState[];
+};
+
 function decodeHtml(value: string): string {
   return value
     .replace(/&nbsp;|&#160;/gi, " ")
@@ -205,6 +230,109 @@ function parseKickoff(
   });
 }
 
+function parseTelesportScore(
+  rawScore: string,
+): { home: number; away: number } | null {
+  const match = rawScore.match(/^(\d+)\s*[-:]\s*(\d+)$/);
+  if (!match) return null;
+
+  const home = Number(match[1]);
+  const away = Number(match[2]);
+  if (!Number.isInteger(home) || !Number.isInteger(away)) return null;
+
+  return { home, away };
+}
+
+function canonicalTelesportGameStatus(
+  rawStatus: string,
+  hasScore: boolean,
+): TelesportGameState["status"] {
+  const value = rawStatus.replace(/\s+/g, " ").trim();
+
+  if (/הסתיים/.test(value)) return "finished";
+  if (/מחצית/.test(value) || /^45['’]?\+?$/.test(value)) return "halftime";
+  if (/^\d{1,3}['’]\+?$/.test(value)) return "live";
+  if (/נדחה/.test(value)) return "postponed";
+  if (/בוטל/.test(value)) return "cancelled";
+  if (/הופסק|נפסק/.test(value)) return "suspended";
+  if (/^\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{2}$/.test(value)) return "upcoming";
+  if (/ת\.\s*סיום/.test(value)) return "upcoming";
+
+  return hasScore ? "under_review" : "upcoming";
+}
+
+export function parseTelesportWinner16StateHtml(
+  html: string,
+): Omit<TelesportWinner16State, "sourceVersion" | "fetchedAt"> {
+  const sectionMatch = html.match(
+    /<h2\b[^>]*>\s*ווינר\s*16\s*-\s*מספר\s*מחזור\s*:\s*(\d+)\s*<\/h2>([\s\S]*?)(?=<h2\b|$)/i,
+  );
+
+  if (!sectionMatch) {
+    throw new Error("Telesport Winner 16 state section was not found.");
+  }
+
+  const externalRoundNumber = sectionMatch[1];
+  const section = sectionMatch[2];
+  const games: TelesportGameState[] = [];
+  const tablePattern = /<table\b[^>]*>([\s\S]*?)<\/table>/gi;
+
+  let tableMatch: RegExpExecArray | null;
+  while ((tableMatch = tablePattern.exec(section)) !== null) {
+    const rowPattern = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+    let rowMatch: RegExpExecArray | null;
+
+    while ((rowMatch = rowPattern.exec(tableMatch[1])) !== null) {
+      const cells = [...rowMatch[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)]
+        .map((match) => textFromHtml(match[1]));
+
+      if (cells.length < 5) continue;
+
+      const numberMatch = cells[0].match(/^(\d{1,2})\.?$/);
+      if (!numberMatch) continue;
+
+      const gameNumber = Number(numberMatch[1]);
+      if (gameNumber < 1 || gameNumber > 16) continue;
+
+      const rawStatus = cells[1] ?? "";
+      const rawScore = cells[3] ?? "";
+      const score = parseTelesportScore(rawScore);
+      const outcomeText = [...cells]
+        .reverse()
+        .find((value) => /^(1|X|2)$/.test(value.trim()));
+      const outcome =
+        outcomeText === "1" || outcomeText === "X" || outcomeText === "2"
+          ? outcomeText
+          : null;
+
+      games.push({
+        gameNumber,
+        status: canonicalTelesportGameStatus(rawStatus, score != null),
+        homeScore: score?.home ?? null,
+        awayScore: score?.away ?? null,
+        outcome,
+        rawStatus,
+        rawScore,
+      });
+    }
+  }
+
+  games.sort((a, b) => a.gameNumber - b.gameNumber);
+  if (games.length !== 16) {
+    throw new Error(
+      `Telesport Winner 16 state parser expected 16 games; got ${games.length}.`,
+    );
+  }
+
+  for (let index = 0; index < 16; index += 1) {
+    if (games[index].gameNumber !== index + 1) {
+      throw new Error("Telesport Winner 16 state game numbers must be exactly 1..16.");
+    }
+  }
+
+  return { externalRoundNumber, games };
+}
+
 export function parseTelesportWinner16Html(
   html: string,
   now = new Date(),
@@ -298,6 +426,38 @@ export class TelesportWinner16Provider implements TotoRoundProvider {
       now?: () => Date;
     } = {},
   ) {}
+
+  async getCurrentState(): Promise<TelesportWinner16State> {
+    const url = this.options.url ?? DEFAULT_URL;
+    const fetchImpl = this.options.fetch ?? fetch;
+    const fetchedAt = (this.options.now?.() ?? new Date()).toISOString();
+
+    const response = await fetchImpl(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        accept: "text/html,application/xhtml+xml",
+        "user-agent": "Kapiloto/0.1 Winner16 state sync",
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Telesport Winner 16 state fetch failed with HTTP ${response.status}.`,
+      );
+    }
+
+    const html = await response.text();
+    const parsed = parseTelesportWinner16StateHtml(html);
+    const fingerprint = createHash("sha256").update(html).digest("hex");
+
+    return {
+      ...parsed,
+      sourceVersion: `sha256:${fingerprint}`,
+      fetchedAt,
+    };
+  }
 
   async discoverCurrent(): Promise<TotoRoundDiscovery> {
     const url = this.options.url ?? DEFAULT_URL;
