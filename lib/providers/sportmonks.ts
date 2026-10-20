@@ -28,6 +28,36 @@ type SportmonksParticipant = {
   meta?: { location?: string };
 };
 
+export type SportmonksScoreRow = {
+  fixture_id?: number;
+  participant_id?: number;
+  description?: string;
+  score?: {
+    goals?: number | null;
+    participant?: string;
+  };
+};
+
+export type SportmonksLiveStatus =
+  | "upcoming"
+  | "live"
+  | "halftime"
+  | "finished"
+  | "postponed"
+  | "cancelled"
+  | "suspended"
+  | "under_review";
+
+export type SportmonksLiveResult = {
+  providerFixtureId: string;
+  providerState: string;
+  status: SportmonksLiveStatus;
+  homeScore: number | null;
+  awayScore: number | null;
+  scoreBasis: "current" | "regular_time" | null;
+  observedAt: string;
+};
+
 export type SportmonksMetricRow = {
   fixture_id?: number;
   participant_id?: number;
@@ -66,9 +96,15 @@ type SportmonksFixtureRow = {
   statistics?: SportmonksMetricRow[];
   xgfixture?: SportmonksMetricRow[];
   pressure?: SportmonksPressureRow[];
+  scores?: SportmonksScoreRow[];
   league?: { id?: number; name?: string; country_id?: number };
   round?: { id?: number; name?: string };
-  state?: { id?: number; short_name?: string; state?: string };
+  state?: {
+    id?: number;
+    short_name?: string;
+    state?: string;
+    developer_name?: string;
+  };
 };
 
 type SportmonksOddRow = {
@@ -137,6 +173,125 @@ function toProviderFixture(row: SportmonksFixtureRow): ProviderFixture | null {
     },
     home: { id: String(home.id), name: home.name },
     away: { id: String(away.id), name: away.name },
+  };
+}
+
+function normalizedSportmonksState(row: SportmonksFixtureRow): string {
+  return (
+    row.state?.developer_name ??
+    row.state?.state ??
+    row.state?.short_name ??
+    String(row.state_id ?? "UNKNOWN")
+  )
+    .trim()
+    .toUpperCase();
+}
+
+export function canonicalSportmonksLiveStatus(
+  providerState: string,
+): SportmonksLiveStatus {
+  const state = providerState.trim().toUpperCase();
+
+  if (state === "NS" || state === "TBA" || state === "DELAYED") return "upcoming";
+  if (
+    state === "INPLAY_1ST_HALF" ||
+    state === "INPLAY_2ND_HALF" ||
+    state === "LIVE"
+  ) {
+    return "live";
+  }
+  if (state === "HT") return "halftime";
+  if (
+    state === "FT" ||
+    state === "BREAK" ||
+    state === "INPLAY_ET" ||
+    state === "EXTRA_TIME_BREAK" ||
+    state === "AET" ||
+    state === "INPLAY_PENALTIES" ||
+    state === "PEN_BREAK" ||
+    state === "FT_PEN"
+  ) {
+    return "finished";
+  }
+  if (state === "POSTPONED") return "postponed";
+  if (state === "CANCELLED" || state === "DELETED") return "cancelled";
+  if (
+    state === "SUSPENDED" ||
+    state === "ABANDONED" ||
+    state === "INTERRUPTED"
+  ) {
+    return "suspended";
+  }
+
+  return "under_review";
+}
+
+function sportmonksScorePair(
+  rows: SportmonksScoreRow[] | undefined,
+  description: string,
+): { home: number; away: number } | null {
+  const matching = (rows ?? []).filter(
+    (row) => (row.description ?? "").trim().toUpperCase() === description,
+  );
+  const home = matching.find(
+    (row) => normalizeTeamName(row.score?.participant ?? "") === "home",
+  )?.score?.goals;
+  const away = matching.find(
+    (row) => normalizeTeamName(row.score?.participant ?? "") === "away",
+  )?.score?.goals;
+
+  if (
+    typeof home !== "number" ||
+    typeof away !== "number" ||
+    !Number.isInteger(home) ||
+    !Number.isInteger(away) ||
+    home < 0 ||
+    away < 0
+  ) {
+    return null;
+  }
+
+  return { home, away };
+}
+
+export function parseSportmonksLiveResult(
+  row: SportmonksFixtureRow,
+  observedAt = new Date().toISOString(),
+): SportmonksLiveResult | null {
+  if (row.id == null) return null;
+
+  const providerState = normalizedSportmonksState(row);
+  const status = canonicalSportmonksLiveStatus(providerState);
+  const regularTimeFinishedStates = new Set([
+    "FT",
+    "BREAK",
+    "INPLAY_ET",
+    "EXTRA_TIME_BREAK",
+    "AET",
+    "INPLAY_PENALTIES",
+    "PEN_BREAK",
+    "FT_PEN",
+  ]);
+
+  const regularTime = sportmonksScorePair(row.scores, "2ND_HALF");
+  const current = sportmonksScorePair(row.scores, "CURRENT");
+
+  const score = regularTimeFinishedStates.has(providerState)
+    ? regularTime ?? (providerState === "FT" ? current : null)
+    : current;
+
+  return {
+    providerFixtureId: String(row.id),
+    providerState,
+    status,
+    homeScore: score?.home ?? null,
+    awayScore: score?.away ?? null,
+    scoreBasis: score
+      ? regularTimeFinishedStates.has(providerState)
+        ? "regular_time"
+        : "current"
+      : null,
+    observedAt,
   };
 }
 
@@ -296,7 +451,7 @@ export class SportmonksClient {
   }
 
   private fixtureIncludes(): string {
-    return "participants;league;round;state;lineups;sidelined";
+    return "participants;league;round;state;lineups;sidelined;scores";
   }
 
   async getFixturesBetween(
@@ -342,6 +497,20 @@ export class SportmonksClient {
     );
     const raw = requireData(envelope, "fixture");
     return { fixture: toProviderFixture(raw), raw };
+  }
+
+  async getLiveResultById(
+    fixtureId: number,
+    observedAt = new Date().toISOString(),
+  ): Promise<SportmonksLiveResult | null> {
+    const envelope = await this.request<SportmonksFixtureRow>(
+      `/fixtures/${fixtureId}`,
+      { include: "state;scores" },
+    );
+    return parseSportmonksLiveResult(
+      requireData(envelope, "live fixture"),
+      observedAt,
+    );
   }
 
   async resolveFixture(
