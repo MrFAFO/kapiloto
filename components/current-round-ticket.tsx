@@ -39,6 +39,8 @@ export type CurrentRoundFixtureView = {
   day: string;
   time: string;
   statusLabel: string;
+  scoreLabel?: string | null;
+  settlementLabel?: string | null;
 };
 
 export type CurrentRoundView = {
@@ -189,10 +191,13 @@ function FixtureCard({
 
         <div className="flex flex-col gap-0.5">
           <p className="text-[13px] font-bold text-[var(--text)]">
-            {fixture.home} — {fixture.away}
+            {fixture.home}
+            {fixture.scoreLabel ? ` ${fixture.scoreLabel} ` : " — "}
+            {fixture.away}
           </p>
           <p className="text-[8px] text-[var(--muted)]">
             {fixture.league} · {fixture.statusLabel}
+            {fixture.settlementLabel ? ` · ${fixture.settlementLabel}` : ""}
           </p>
         </div>
 
@@ -296,10 +301,13 @@ function FixtureCardWithKapiloto({
 
         <div className="flex flex-col gap-0.5">
           <p className="text-[13px] font-bold text-[var(--text)]">
-            {fixture.home} — {fixture.away}
+            {fixture.home}
+            {fixture.scoreLabel ? ` ${fixture.scoreLabel} ` : " — "}
+            {fixture.away}
           </p>
           <p className="text-[8px] text-[var(--muted)]">
             {fixture.league} · {fixture.statusLabel}
+            {fixture.settlementLabel ? ` · ${fixture.settlementLabel}` : ""}
           </p>
         </div>
 
