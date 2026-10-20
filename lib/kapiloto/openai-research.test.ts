@@ -72,3 +72,21 @@ test("extracts token provenance defensively", () => {
     },
   );
 });
+
+
+test("extracts incomplete response reason for diagnostics", () => {
+  assert.equal(
+    __testOnly.incompleteReason({
+      status: "incomplete",
+      incomplete_details: { reason: "max_tokens" },
+    }),
+    "max_tokens",
+  );
+  assert.equal(
+    __testOnly.incompleteReason({
+      status: "completed",
+      incomplete_details: null,
+    }),
+    null,
+  );
+});
