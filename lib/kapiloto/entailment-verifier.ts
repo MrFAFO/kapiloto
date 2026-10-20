@@ -3,13 +3,14 @@ import OpenAI from "openai";
 import type { GroundingResult } from "./source-grounding";
 
 export type EntailmentVerdict = {
-  evidenceId: string;
+  verificationId: string;
   verdict: "supported" | "unsupported";
 };
 
 export interface EntailmentJudge {
   verify(
     items: Array<{
+      verificationId: string;
       fixtureId: string;
       evidenceId: string;
       claim: string;
@@ -55,6 +56,7 @@ export class EntailmentVerificationError extends Error {
 function pendingItems(
   fixtures: FixtureGroundingForEntailment[],
 ): Array<{
+  verificationId: string;
   fixtureId: string;
   evidenceId: string;
   claim: string;
@@ -88,6 +90,7 @@ function pendingItems(
       seen.add(key);
 
       pending.push({
+        verificationId: key,
         fixtureId: fixture.fixtureId,
         evidenceId,
         claim: evidence.claim,
@@ -124,26 +127,23 @@ export async function verifyRequiredEntailment(
   const judged = await judge.verify(pending);
   const verdictByKey = new Map<string, EntailmentVerdict["verdict"]>();
 
+  const pendingKeys = new Set(pending.map((item) => item.verificationId));
+
   for (const verdict of judged.verdicts) {
-    const matches = pending.filter(
-      (item) => item.evidenceId === verdict.evidenceId,
-    );
-
-    if (matches.length !== 1) {
+    if (!pendingKeys.has(verdict.verificationId)) {
       throw new EntailmentVerificationError(
-        `Entailment judge returned ambiguous or unknown evidence id ${verdict.evidenceId}.`,
+        `Entailment judge returned unknown verification id ${verdict.verificationId}.`,
         "invalid_judge_output",
       );
     }
 
-    const key = `${matches[0].fixtureId}:${verdict.evidenceId}`;
-    if (verdictByKey.has(key)) {
+    if (verdictByKey.has(verdict.verificationId)) {
       throw new EntailmentVerificationError(
-        `Entailment judge returned duplicate verdict for ${verdict.evidenceId}.`,
+        `Entailment judge returned duplicate verdict for ${verdict.verificationId}.`,
         "invalid_judge_output",
       );
     }
-    verdictByKey.set(key, verdict.verdict);
+    verdictByKey.set(verdict.verificationId, verdict.verdict);
   }
 
   if (verdictByKey.size !== pending.length) {
@@ -154,9 +154,7 @@ export async function verifyRequiredEntailment(
   }
 
   for (const item of pending) {
-    const verdict = verdictByKey.get(
-      `${item.fixtureId}:${item.evidenceId}`,
-    );
+    const verdict = verdictByKey.get(item.verificationId);
 
     if (verdict !== "supported") {
       throw new EntailmentVerificationError(
@@ -228,6 +226,7 @@ export function createOpenAIEntailmentJudge(
         ].join(" "),
         input: JSON.stringify(
           items.map((item) => ({
+            verification_id: item.verificationId,
             evidence_id: item.evidenceId,
             claim: item.claim,
             quote: item.quote,
@@ -250,13 +249,13 @@ export function createOpenAIEntailmentJudge(
                     type: "object",
                     additionalProperties: false,
                     properties: {
-                      evidence_id: { type: "string" },
+                      verification_id: { type: "string" },
                       verdict: {
                         type: "string",
                         enum: ["supported", "unsupported"],
                       },
                     },
-                    required: ["evidence_id", "verdict"],
+                    required: ["verification_id", "verdict"],
                   },
                 },
               },
@@ -308,11 +307,13 @@ export function createOpenAIEntailmentJudge(
           );
         }
 
-        const evidenceId = (row as { evidence_id?: unknown }).evidence_id;
+        const verificationId = (
+          row as { verification_id?: unknown }
+        ).verification_id;
         const verdict = (row as { verdict?: unknown }).verdict;
 
         if (
-          typeof evidenceId !== "string" ||
+          typeof verificationId !== "string" ||
           (verdict !== "supported" && verdict !== "unsupported")
         ) {
           throw new EntailmentVerificationError(
@@ -321,7 +322,7 @@ export function createOpenAIEntailmentJudge(
           );
         }
 
-        return { evidenceId, verdict };
+        return { verificationId, verdict };
       });
 
       return {
