@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -888,11 +889,28 @@ export function CurrentRoundTicket({
         >
           טופס
         </button>
-        {["קבוצה", "סטטיסטיקות", "עוד"].map((label) => (
+        {kapiloto.groupId ? (
+          <Link
+            href={`/group?group=${kapiloto.groupId}`}
+            className="flex h-11 w-[82px] items-center justify-center rounded-xl text-[9px] font-medium text-[var(--muted)]"
+          >
+            קבוצה
+          </Link>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="flex h-11 w-[82px] items-center justify-center rounded-xl text-[9px] font-medium text-[var(--muted-strong)]"
+          >
+            קבוצה
+          </button>
+        )}
+        {["סטטיסטיקות", "עוד"].map((label) => (
           <button
             key={label}
             type="button"
-            className="flex h-11 w-[82px] items-center justify-center rounded-xl text-[9px] font-medium text-[var(--muted)]"
+            disabled
+            className="flex h-11 w-[82px] items-center justify-center rounded-xl text-[9px] font-medium text-[var(--muted-strong)]"
           >
             {label}
           </button>
