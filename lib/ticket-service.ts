@@ -76,9 +76,16 @@ export class TotoTicketService {
     userId: string,
   ): Promise<TicketDraftSnapshot> {
     const [
+      { data: membership, error: membershipError },
       { data: settings, error: settingsError },
       { data: ticket, error: ticketError },
     ] = await Promise.all([
+      this.client
+        .from("group_members")
+        .select("status")
+        .eq("group_id", groupId)
+        .eq("user_id", userId)
+        .maybeSingle(),
       this.client
         .from("group_round_settings")
         .select("max_doubles")
@@ -93,6 +100,15 @@ export class TotoTicketService {
         .eq("user_id", userId)
         .maybeSingle(),
     ]);
+
+    if (membershipError) {
+      throw new Error(
+        `Failed to validate group membership: ${membershipError.message}`,
+      );
+    }
+    if (!membership || membership.status !== "active") {
+      throw new Error("ticket_user_not_active_member");
+    }
 
     if (settingsError) {
       throw new Error(
