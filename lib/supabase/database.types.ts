@@ -2486,6 +2486,10 @@ export type Database = {
         Args: { p_join_code: string; p_user_id: string }
         Returns: Json
       }
+      kapiloto_verify_scheduler_secret: {
+        Args: { p_name: string; p_secret: string }
+        Returns: boolean
+      }
       kapiloto_request_research: {
         Args: {
           p_based_on_run_id: string
@@ -2524,6 +2528,10 @@ export type Database = {
       }
       toto_apply_game_state_v1: {
         Args: { p_update: Json }
+        Returns: Json
+      }
+      toto_apply_round_state_v1: {
+        Args: { p_updates: Json }
         Returns: Json
       }
       toto_import_round_snapshot: { Args: { p_snapshot: Json }; Returns: Json }
