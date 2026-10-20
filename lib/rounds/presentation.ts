@@ -95,6 +95,9 @@ export function buildCurrentRoundView(
   options: {
     maxDoubles: number;
     picks?: Array<{ gameNumber: number; pick: Pick }>;
+    ticketRevision?: number;
+    ticketState?: "draft" | "submitted" | "locked" | null;
+    submittedAt?: string | null;
   },
 ): CurrentRoundView {
   const initialPicks: Partial<Record<number, Pick>> = {};
@@ -108,6 +111,14 @@ export function buildCurrentRoundView(
     lockLabel: `נסגר · ${fullDateTime.format(new Date(round.lockAt))}`,
     maxDoubles: options.maxDoubles,
     initialPicks,
+    ticket:
+      options.ticketRevision == null
+        ? undefined
+        : {
+            revision: options.ticketRevision,
+            state: options.ticketState ?? null,
+            submittedAt: options.submittedAt ?? null,
+          },
     isPrototype: false,
     fixtures: round.games.map((game) => ({
       number: game.number,
