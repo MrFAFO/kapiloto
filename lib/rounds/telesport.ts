@@ -297,7 +297,7 @@ export function parseTelesportWinner16StateHtml(
       const rawStatus = cells[1] ?? "";
       const rawScore = cells[3] ?? "";
       const score = parseTelesportScore(rawScore);
-      const outcomeText = [...cells]
+      const outcomeText = [...cells.slice(5)]
         .reverse()
         .find((value) => /^(1|X|2)$/.test(value.trim()));
       const outcome =
