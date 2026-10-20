@@ -2502,6 +2502,25 @@ export type Database = {
           preferred_auth_identifier: string
         }[]
       }
+      toto_save_ticket_draft: {
+        Args: {
+          p_expected_revision: number
+          p_group_id: string
+          p_picks: Json
+          p_round_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      toto_submit_ticket: {
+        Args: {
+          p_expected_revision: number
+          p_group_id: string
+          p_round_id: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never
