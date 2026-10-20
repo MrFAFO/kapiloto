@@ -33,6 +33,12 @@ function isPick(value: unknown): value is Pick {
   return ["1", "X", "2", "1X", "X2", "12"].includes(String(value));
 }
 
+function isTicketState(
+  value: unknown,
+): value is "draft" | "submitted" | "locked" {
+  return value === "draft" || value === "submitted" || value === "locked";
+}
+
 function parseMutation(value: Json): TicketMutationResult {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Ticket RPC returned an invalid payload.");
@@ -122,15 +128,24 @@ export class TotoTicketService {
       throw new Error(`Failed to load user ticket: ${ticketError.message}`);
     }
 
+    const maxDoubles = settings.max_doubles;
+    if (maxDoubles == null) {
+      throw new Error("ticket_group_round_settings_missing");
+    }
+
     if (!ticket) {
       return {
         ticketId: null,
         state: null,
         revision: 0,
         submittedAt: null,
-        maxDoubles: settings.max_doubles,
+        maxDoubles,
         picks: [],
       };
+    }
+
+    if (!isTicketState(ticket.state)) {
+      throw new Error("Stored ticket contains an invalid state.");
     }
 
     const { data: pickRows, error: picksError } = await this.client
@@ -158,7 +173,7 @@ export class TotoTicketService {
       state: ticket.state,
       revision: Number(ticket.revision),
       submittedAt: ticket.submitted_at,
-      maxDoubles: settings.max_doubles,
+      maxDoubles,
       picks,
     };
   }
@@ -167,7 +182,7 @@ export class TotoTicketService {
     groupId: string;
     roundId: string;
     userId: string;
-    expectedRevision: number | null;
+    expectedRevision: number;
     picks: TicketDraftPick[];
   }): Promise<TicketMutationResult> {
     const { data, error } = await this.client.rpc("toto_save_ticket_draft", {
@@ -192,7 +207,7 @@ export class TotoTicketService {
     groupId: string;
     roundId: string;
     userId: string;
-    expectedRevision: number | null;
+    expectedRevision: number;
   }): Promise<TicketMutationResult> {
     const { data, error } = await this.client.rpc("toto_submit_ticket", {
       p_group_id: input.groupId,
