@@ -2395,6 +2395,10 @@ export type Database = {
         Args: { p_lease_seconds?: number; p_worker_id: string }
         Returns: Json
       }
+      kapiloto_complete_research_run: {
+        Args: { p_round_synthesis?: Json; p_run_id: string }
+        Returns: Json
+      }
       kapiloto_consume_auth_rate_limit: {
         Args: {
           p_bucket: string
