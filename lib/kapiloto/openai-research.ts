@@ -124,6 +124,16 @@ function hasRefusal(response: unknown): boolean {
   return false;
 }
 
+function incompleteReason(response: unknown): string | null {
+  if (!response || typeof response !== "object") return null;
+  const details = (response as {
+    incomplete_details?: { reason?: unknown } | null;
+  }).incomplete_details;
+  return details && typeof details.reason === "string"
+    ? details.reason
+    : null;
+}
+
 function usageFromResponse(response: unknown): SolResearchUsage {
   const usage =
     response && typeof response === "object"
@@ -189,7 +199,7 @@ export async function researchFixtureWithSol(
           schema: researchOutputSchema as Record<string, unknown>,
         },
       },
-      max_output_tokens: options.maxOutputTokens ?? 8_000,
+      max_output_tokens: options.maxOutputTokens ?? 12_000,
       store: false,
     });
 
@@ -201,8 +211,9 @@ export async function researchFixtureWithSol(
     }
 
     if (response.status !== "completed") {
+      const reason = incompleteReason(response);
       throw new SolFixtureResearchError(
-        `Sol response did not complete: ${response.status}`,
+        `Sol response did not complete: ${response.status}${reason ? ` (${reason})` : ""}`,
         "provider_transient",
       );
     }
@@ -256,4 +267,5 @@ export const __testOnly = {
   countWebSearchCalls,
   hasRefusal,
   usageFromResponse,
+  incompleteReason,
 };
