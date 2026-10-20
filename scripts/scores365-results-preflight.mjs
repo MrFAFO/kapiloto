@@ -157,3 +157,58 @@ console.log(JSON.stringify({
   matched: roundCoverage.length,
   matches: roundCoverage.sort((a,b)=>a.toto-b.toto),
 }, null, 2));
+
+
+const unresolved = new Set([3,4,7,8,9]);
+function tokenSet(value) {
+  return new Set(normalizeName(value).split(" ").filter(Boolean));
+}
+function sim(a,b) {
+  const A=tokenSet(a), B=tokenSet(b);
+  if(!A.size||!B.size) return 0;
+  let hit=0; for(const x of A) if(B.has(x)) hit++;
+  return (2*hit)/(A.size+B.size);
+}
+const diagnostics=[];
+for (const [index,[targetHome,targetAway]] of roundPairs.entries()) {
+  const toto=index+1;
+  if(!unresolved.has(toto)) continue;
+  const candidates=[];
+  for (const dateKey of ["2026-10-24","2026-10-25","2026-10-26"]) {
+    const day=ddmmyyyy(dateKey);
+    const p=new URLSearchParams({
+      langId:"2", timezoneName:"Asia/Jerusalem", userCountryId:"6",
+      appTypeId:"5", sports:"1", startDate:day, endDate:day,
+    });
+    const res=await fetch(`https://webws.365scores.com/web/games/?${p}`, {
+      headers:{
+        "user-agent":"Mozilla/5.0",
+        origin:"https://www.365scores.com",
+        referer:"https://www.365scores.com/he/football/match-results",
+        accept:"application/json",
+      },
+      signal:AbortSignal.timeout(20_000),
+    });
+    assert(res.ok,`365Scores diagnostic returned HTTP ${res.status}`);
+    const data=await res.json();
+    for(const game of data.games??[]) {
+      const home=String(game?.homeCompetitor?.name??"").trim();
+      const away=String(game?.awayCompetitor?.name??"").trim();
+      if(!home||!away) continue;
+      const score=(sim(targetHome,home)+sim(targetAway,away))/2;
+      if(score>0) {
+        candidates.push({
+          date:dateKey,
+          home,away,
+          competition:String(game?.competitionDisplayName??""),
+          startTime:game?.startTime??null,
+          score:Number(score.toFixed(3)),
+        });
+      }
+    }
+  }
+  candidates.sort((a,b)=>b.score-a.score);
+  diagnostics.push({toto,targetHome,targetAway,candidates:candidates.slice(0,5)});
+}
+console.log("ROUND_264201_UNRESOLVED");
+console.log(JSON.stringify(diagnostics,null,2));
