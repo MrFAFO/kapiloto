@@ -40,6 +40,14 @@ export type SolFixtureResearchOptions = {
   maxOutputTokens?: number;
 };
 
+export type SolFailureProvenance = {
+  responseId: string;
+  model: string;
+  sourceUrls: string[];
+  webSearchCalls: number;
+  usage: SolResearchUsage;
+};
+
 export class SolFixtureResearchError extends Error {
   constructor(
     message: string,
@@ -47,6 +55,7 @@ export class SolFixtureResearchError extends Error {
       | "model_refusal"
       | "model_output_invalid"
       | "provider_transient",
+    readonly provenance: SolFailureProvenance | null = null,
   ) {
     super(message);
     this.name = "SolFixtureResearchError";
@@ -157,6 +166,20 @@ function usageFromResponse(response: unknown): SolResearchUsage {
   };
 }
 
+function failureProvenance(response: {
+  id: string;
+  model: string;
+} & Record<string, unknown>): SolFailureProvenance {
+  const sourceUrls = extractSourceUrls(response);
+  return {
+    responseId: response.id,
+    model: response.model,
+    sourceUrls,
+    webSearchCalls: countWebSearchCalls(response),
+    usage: usageFromResponse(response),
+  };
+}
+
 export async function researchFixtureWithSol(
   client: OpenAI,
   card: KapilotoFixtureCard,
@@ -207,6 +230,7 @@ export async function researchFixtureWithSol(
       throw new SolFixtureResearchError(
         "Sol refused the fixture research request.",
         "model_refusal",
+        failureProvenance(response as typeof response & Record<string, unknown>),
       );
     }
 
@@ -215,6 +239,7 @@ export async function researchFixtureWithSol(
       throw new SolFixtureResearchError(
         `Sol response did not complete: ${response.status}${reason ? ` (${reason})` : ""}`,
         "provider_transient",
+        failureProvenance(response as typeof response & Record<string, unknown>),
       );
     }
 
@@ -222,6 +247,7 @@ export async function researchFixtureWithSol(
       throw new SolFixtureResearchError(
         "Sol response completed without structured output text.",
         "model_output_invalid",
+        failureProvenance(response as typeof response & Record<string, unknown>),
       );
     }
 
@@ -232,15 +258,27 @@ export async function researchFixtureWithSol(
       throw new SolFixtureResearchError(
         "Sol structured output could not be parsed as JSON.",
         "model_output_invalid",
+        failureProvenance(response as typeof response & Record<string, unknown>),
       );
     }
 
     const sourceUrls = extractSourceUrls(response);
-    const validated = validateSolFixtureResearchOutput(
-      parsed,
-      card,
-      sourceUrls,
-    );
+    let validated;
+    try {
+      validated = validateSolFixtureResearchOutput(
+        parsed,
+        card,
+        sourceUrls,
+      );
+    } catch (error) {
+      throw new SolFixtureResearchError(
+        `Sol structured output failed semantic validation: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        "model_output_invalid",
+        failureProvenance(response as typeof response & Record<string, unknown>),
+      );
+    }
 
     return {
       output: validated.output,
@@ -268,4 +306,5 @@ export const __testOnly = {
   hasRefusal,
   usageFromResponse,
   incompleteReason,
+  failureProvenance,
 };
