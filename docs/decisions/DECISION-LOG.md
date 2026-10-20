@@ -140,9 +140,13 @@ Decision: use API-Football as the first structured fixture/market provider for M
 
 Evidence: live spike on Winner 16 round 264101 resolved 16/16 fixtures, returned pre-match 1X2 odds for 16/16 fixtures with an average of 5.94 complete bookmakers, observed lineups on all six already-finished fixtures, and observed injury rows on 11/16 fixtures.
 
-Caveat: the Israeli fixtures returned zero injury rows in this spike, so structured injury coverage must not be treated as complete for Israel. Kapiloto availability research continues to rely on verified web/official evidence and may use provider injury data only as one structured input.
+Caveats:
+- the Israeli fixtures returned zero injury rows in the original full-round spike, so structured injury coverage must not be treated as complete for Israel;
+- a repeat run on 2026-10-20 resolved only 3/16 because the Free plan exposed a rolling date window of 2026-10-19 through 2026-10-21. The earlier 16/16 result was obtained while the full sample was still inside the Free window. Free is therefore not a durable historical/backfill source and cannot be relied on as the production weekly horizon without timely persistence or a broader paid/fallback source.
 
-Reason: API-Football demonstrated full round mapping and market-prior coverage at low MVP cost, which are the two hard dependencies for the frozen fixture card and p_prior pipeline.
+Kapiloto availability research continues to rely on verified web/official evidence and may use provider injury data only as one structured input.
+
+Reason: API-Football demonstrated full-round mapping and strong market-prior coverage while fixtures were inside its accessible horizon, but the provider abstraction and persistent snapshots are mandatory because plan/date access can materially change observed coverage.
 
 ## D-034 — Canonical Fixture is the shared football identity
 Decision: introduce a canonical `fixtures` entity that exists independently of Toto/Winner rounds. `round_games` becomes a Toto-specific wrapper that points to `fixture_id` and owns Toto order/orientation, group-ticket linkage and settlement semantics.
