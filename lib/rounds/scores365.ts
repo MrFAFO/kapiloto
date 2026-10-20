@@ -56,6 +56,64 @@ function integerScore(value: unknown): number | null {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function isRecordArray(value: unknown): UnknownRecord[] {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function hasPost90Signal(row: UnknownRecord): boolean {
+  const status = [
+    cleanText(row.statusText),
+    cleanText(row.shortStatusText),
+    cleanText(row.winDescription),
+  ].join(" ");
+
+  const gameTime =
+    typeof row.gameTime === "number"
+      ? row.gameTime
+      : typeof row.gameTime === "string"
+        ? Number(row.gameTime)
+        : Number.NaN;
+
+  if (Number.isFinite(gameTime) && gameTime > 90) return true;
+  if (
+    /after\s+penalt|penalt|p[eê]nalt|extra\s*time|final\s*\(ot\)|\bot\b|הארכה|פנדלים/i.test(
+      status,
+    )
+  ) {
+    return true;
+  }
+
+  return isRecordArray(row.stages).some((stage) => {
+    const id = Number(stage.id);
+    return id === 10 || id === 11;
+  });
+}
+
+function regularTimeScore(
+  row: UnknownRecord,
+  home: UnknownRecord,
+  away: UnknownRecord,
+): { home: number; away: number } | null {
+  const stages = isRecordArray(row.stages);
+  const regularTime = stages.find((stage) => Number(stage.id) === 9);
+  if (regularTime) {
+    const home90 = integerScore(regularTime.homeCompetitorScore);
+    const away90 = integerScore(regularTime.awayCompetitorScore);
+    if (home90 != null && away90 != null) {
+      return { home: home90, away: away90 };
+    }
+  }
+
+  if (hasPost90Signal(row)) {
+    return null;
+  }
+
+  const homeScore = integerScore(home.score);
+  const awayScore = integerScore(away.score);
+  if (homeScore == null || awayScore == null) return null;
+  return { home: homeScore, away: awayScore };
+}
+
 export function israelDateKey(isoTimestamp: string): string {
   const date = new Date(isoTimestamp);
   if (Number.isNaN(date.getTime())) {
@@ -114,20 +172,13 @@ export function parseScores365FinalResults(
 
     const homeTeam = cleanText(home.name);
     const awayTeam = cleanText(away.name);
-    const homeScore = integerScore(home.score);
-    const awayScore = integerScore(away.score);
+    const score = regularTimeScore(raw, home, away);
     const eventId =
       typeof raw.id === "number" || typeof raw.id === "string"
         ? String(raw.id)
         : "";
 
-    if (
-      !eventId ||
-      !homeTeam ||
-      !awayTeam ||
-      homeScore == null ||
-      awayScore == null
-    ) {
+    if (!eventId || !homeTeam || !awayTeam || !score) {
       continue;
     }
 
@@ -137,10 +188,10 @@ export function parseScores365FinalResults(
       startTime: cleanText(raw.startTime) || null,
       homeTeam,
       awayTeam,
-      homeScore,
-      awayScore,
+      homeScore: score.home,
+      awayScore: score.away,
       outcome:
-        homeScore === awayScore ? "X" : homeScore > awayScore ? "1" : "2",
+        score.home === score.away ? "X" : score.home > score.away ? "1" : "2",
     });
   }
 
