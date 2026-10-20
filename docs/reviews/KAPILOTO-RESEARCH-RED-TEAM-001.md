@@ -34,6 +34,9 @@ Scope: demand-driven run creation, fixture fanout worker, retry/recovery, materi
 10. **Neutral league-base fallback was incorrectly treated like an informative prior.**
     All 16 fixtures in round 264201 currently lack market snapshots and therefore use the explicit near-uniform league-base fallback. Reliability no longer applies market-divergence penalties against that fallback; the existing league-base quality penalty remains, while well-grounded Sol signals can move away from 33/33/33 without being punished twice.
 
+11. **A paid run previously had no production dry-run of the exact 16-fixture planner.**
+    A secret-authenticated plan preflight now executes the real Supabase-backed planner with provider sync disabled and stops before the research RPC. It reports fixture dispositions, task count and prior types while explicitly leaving `researchRunCreated=false` and `databaseChanged=false`.
+
 ## Remaining gates before first paid run
 
 - Deploy the current branch after the Vercel Hobby daily deployment quota resets.
