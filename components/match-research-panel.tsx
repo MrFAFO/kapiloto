@@ -28,7 +28,7 @@ function ConnectedMatchResearchPanel({
 }: {
   roundId: string;
   roundGameId: string;
-  groupId: string;
+  groupId: string | null;
 }) {
   const router = useRouter();
   const now = useNow();
@@ -83,18 +83,6 @@ export function MatchResearchPanel({
         <p className="mt-2 text-[9px] leading-5 text-[var(--muted)]">
           המשחק אינו משויך כרגע למחזור Winner 16 פעיל, ולכן אין אפשרות לפתוח
           ממנו סבב מחקר משותף.
-        </p>
-      </section>
-    );
-  }
-
-  if (!groupId) {
-    return (
-      <section className="rounded-[18px] border border-[var(--kapiloto-border)] bg-[var(--kapiloto-surface)] p-4">
-        <p className="text-[11px] font-bold text-white">מחקר קפילוטו</p>
-        <p className="mt-2 text-[9px] leading-5 text-[var(--muted)]">
-          כדי לבקש מחקר או בדיקה חוזרת יש לבחור או ליצור קבוצה. הניתוח עצמו
-          נשאר מרכזי ומשותף למחזור ואינו רץ מחדש לכל משתמש.
         </p>
       </section>
     );
