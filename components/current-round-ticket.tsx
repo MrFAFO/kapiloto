@@ -27,40 +27,53 @@ import {
  * 2Pp5ae9bgqhTfwcU2JcIlK, page "01 — Mobile App · Dark Stadium").
  */
 
-type Fixture = {
+export type CurrentRoundFixtureView = {
   number: number;
-  /** Prototype placeholder until rounds are loaded from Supabase. */
   roundGameId: string;
   home: string;
   away: string;
   league: string;
   day: string;
   time: string;
+  statusLabel: string;
+};
+
+export type CurrentRoundView = {
+  roundNumber: string;
+  dateLabel: string;
+  lockLabel: string;
+  maxDoubles: number;
+  fixtures: CurrentRoundFixtureView[];
+  initialPicks?: Partial<Record<number, Pick>>;
+  isPrototype?: boolean;
 };
 
 const prototypeGameId = (number: number) =>
   `00000000-0000-4000-8000-${number.toString(16).padStart(12, "0")}`;
 
-const fixtures: Fixture[] = [
-  { number: 1, home: "בית״ר ירושלים", away: "מכבי ת״א", league: "ליגת העל", day: "שני", time: "20:30" },
-  { number: 2, home: "מכבי נתניה", away: "קריית שמונה", league: "ליגת העל", day: "שבת", time: "19:00" },
-  { number: 3, home: "בני סכנין", away: "הפועל פ״ת", league: "ליגת העל", day: "שבת", time: "18:00" },
-  { number: 4, home: "הפועל חיפה", away: "הפועל ר״ג", league: "ליגת העל", day: "שבת", time: "18:00" },
-  { number: 5, home: "בני ריינה", away: "ראשל״צ", league: "ליגת העל", day: "שני", time: "19:00" },
-  { number: 6, home: "ברנטפורד", away: "ליברפול", league: "פרמייר ליג", day: "שבת", time: "18:30" },
-  { number: 7, home: "בורנמות׳", away: "סנדרלנד", league: "פרמייר ליג", day: "ראשון", time: "16:00" },
-  { number: 8, home: "לידס", away: "מנצ׳סטר יונייטד", league: "פרמייר ליג", day: "ראשון", time: "18:30" },
-  { number: 9, home: "סלטה ויגו", away: "אלאבס", league: "לה ליגה", day: "ראשון", time: "17:15" },
-  { number: 10, home: "מלאגה", away: "ריאל סוסיאדד", league: "לה ליגה", day: "ראשון", time: "19:30" },
-  { number: 11, home: "מונזה", away: "קליארי", league: "סרייה A", day: "שני", time: "21:45" },
-  { number: 12, home: "אלברסברג", away: "אוגסבורג", league: "בונדסליגה", day: "שבת", time: "16:30" },
-  { number: 13, home: "שאלקה 04", away: "מיינץ", league: "בונדסליגה", day: "שבת", time: "16:30" },
-  { number: 14, home: "מנשנגלדבאך", away: "הופנהיים", league: "בונדסליגה", day: "ראשון", time: "18:30" },
-  { number: 15, home: "לה האבר", away: "אוקזר", league: "ליג 1", day: "ראשון", time: "18:00" },
-  { number: 16, home: "פאריס FC", away: "ראן", league: "ליג 1", day: "ראשון", time: "21:45" },
-].map((fixture) => ({ ...fixture, roundGameId: prototypeGameId(fixture.number) }));
+const prototypeFixtures: CurrentRoundFixtureView[] = [
+  { number: 1, home: "בית״ר ירושלים", away: "מכבי ת״א", league: "ליגת העל", day: "שני", time: "20:30", statusLabel: "טרם שוחק" },
+  { number: 2, home: "מכבי נתניה", away: "קריית שמונה", league: "ליגת העל", day: "שבת", time: "19:00", statusLabel: "טרם שוחק" },
+  { number: 3, home: "בני סכנין", away: "הפועל פ״ת", league: "ליגת העל", day: "שבת", time: "18:00", statusLabel: "טרם שוחק" },
+  { number: 4, home: "הפועל חיפה", away: "הפועל ר״ג", league: "ליגת העל", day: "שבת", time: "18:00", statusLabel: "טרם שוחק" },
+  { number: 5, home: "בני ריינה", away: "ראשל״צ", league: "ליגת העל", day: "שני", time: "19:00", statusLabel: "טרם שוחק" },
+  { number: 6, home: "ברנטפורד", away: "ליברפול", league: "פרמייר ליג", day: "שבת", time: "18:30", statusLabel: "טרם שוחק" },
+  { number: 7, home: "בורנמות׳", away: "סנדרלנד", league: "פרמייר ליג", day: "ראשון", time: "16:00", statusLabel: "טרם שוחק" },
+  { number: 8, home: "לידס", away: "מנצ׳סטר יונייטד", league: "פרמייר ליג", day: "ראשון", time: "18:30", statusLabel: "טרם שוחק" },
+  { number: 9, home: "סלטה ויגו", away: "אלאבס", league: "לה ליגה", day: "ראשון", time: "17:15", statusLabel: "טרם שוחק" },
+  { number: 10, home: "מלאגה", away: "ריאל סוסיאדד", league: "לה ליגה", day: "ראשון", time: "19:30", statusLabel: "טרם שוחק" },
+  { number: 11, home: "מונזה", away: "קליארי", league: "סרייה A", day: "שני", time: "21:45", statusLabel: "טרם שוחק" },
+  { number: 12, home: "אלברסברג", away: "אוגסבורג", league: "בונדסליגה", day: "שבת", time: "16:30", statusLabel: "טרם שוחק" },
+  { number: 13, home: "שאלקה 04", away: "מיינץ", league: "בונדסליגה", day: "שבת", time: "16:30", statusLabel: "טרם שוחק" },
+  { number: 14, home: "מנשנגלדבאך", away: "הופנהיים", league: "בונדסליגה", day: "ראשון", time: "18:30", statusLabel: "טרם שוחק" },
+  { number: 15, home: "לה האבר", away: "אוקזר", league: "ליג 1", day: "ראשון", time: "18:00", statusLabel: "טרם שוחק" },
+  { number: 16, home: "פאריס FC", away: "ראן", league: "ליג 1", day: "ראשון", time: "21:45", statusLabel: "טרם שוחק" },
+].map((fixture) => ({
+  ...fixture,
+  roundGameId: prototypeGameId(fixture.number),
+}));
 
-const initialPicks: Record<number, Pick> = {
+const prototypePicks: Record<number, Pick> = {
   1: "2",
   2: "1",
   3: "1X",
@@ -79,12 +92,21 @@ const initialPicks: Record<number, Pick> = {
   16: "X",
 };
 
-const MAX_DOUBLES = 7;
+export const PROTOTYPE_CURRENT_ROUND: CurrentRoundView = {
+  roundNumber: "264101",
+  dateLabel: "17–19 באוקטובר",
+  lockLabel: "נסגר מחר · 16:24",
+  maxDoubles: 7,
+  fixtures: prototypeFixtures,
+  initialPicks: prototypePicks,
+  isPrototype: true,
+};
+
 const PICK_ORDER: Outcome[] = ["2", "X", "1"];
 
 export type CurrentRoundKapilotoConfig = {
   roundId: string;
-  groupId: string;
+  groupId: string | null;
   /** Set only in local development; production always uses the real API. */
   demoScenario: KapilotoDemoScenario | null;
 };
@@ -114,6 +136,14 @@ function Chip({
   );
 }
 
+function DisabledKapilotoBar() {
+  return (
+    <div className="flex min-h-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--elevated)] px-3 text-center text-[9px] font-medium text-[var(--muted)]">
+      יש לבחור או ליצור קבוצה כדי להתייעץ עם קפילוטו
+    </div>
+  );
+}
+
 function FixtureCard({
   fixture,
   pick,
@@ -122,15 +152,119 @@ function FixtureCard({
   now,
   demo,
 }: {
-  fixture: Fixture;
-  pick: Pick;
+  fixture: CurrentRoundFixtureView;
+  pick: Pick | undefined;
+  onOutcomeClick: (outcome: Outcome) => void;
+  controller: KapilotoPanelController | null;
+  now: number;
+  demo: boolean;
+}) {
+  const selected = pick ? pickToOutcomes(pick) : [];
+  const isDouble = selected.length === 2;
+
+  if (!controller) {
+    return (
+      <article className="flex w-full flex-col gap-2 rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-3">
+        <div className="flex h-[26px] items-center justify-between">
+          <span className="text-[10px] font-bold text-[var(--muted)]">
+            משחק {fixture.number}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Chip>
+              {fixture.day} · {fixture.time}
+            </Chip>
+            {isDouble ? (
+              <Chip className="bg-[var(--kapiloto)] text-white">כפולה</Chip>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-0.5">
+          <p className="text-[13px] font-bold text-[var(--text)]">
+            {fixture.home} — {fixture.away}
+          </p>
+          <p className="text-[8px] text-[var(--muted)]">
+            {fixture.league} · {fixture.statusLabel}
+          </p>
+        </div>
+
+        <PickButtons
+          selected={selected}
+          isDouble={isDouble}
+          onOutcomeClick={onOutcomeClick}
+        />
+        <DisabledKapilotoBar />
+      </article>
+    );
+  }
+
+  return (
+    <FixtureCardWithKapiloto
+      fixture={fixture}
+      selected={selected}
+      isDouble={isDouble}
+      onOutcomeClick={onOutcomeClick}
+      controller={controller}
+      now={now}
+      demo={demo}
+    />
+  );
+}
+
+function PickButtons({
+  selected,
+  isDouble,
+  onOutcomeClick,
+}: {
+  selected: Outcome[];
+  isDouble: boolean;
+  onOutcomeClick: (outcome: Outcome) => void;
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-3" dir="ltr">
+      {PICK_ORDER.map((value) => {
+        const active = selected.includes(value);
+        return (
+          <button
+            key={value}
+            type="button"
+            onClick={() => onOutcomeClick(value)}
+            aria-pressed={active}
+            aria-label={`${value}${active ? (isDouble ? " · חלק מכפולה" : " · נבחר") : ""}`}
+            className={[
+              "h-[46px] rounded-[13px] border text-[14px] font-bold transition-colors",
+              active
+                ? isDouble
+                  ? "border-[var(--kapiloto)] bg-[var(--kapiloto)] text-white"
+                  : "border-[var(--action)] bg-[var(--action)] text-white"
+                : "border-[var(--border)] bg-[var(--elevated)] text-[var(--muted)]",
+            ].join(" ")}
+          >
+            {value}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FixtureCardWithKapiloto({
+  fixture,
+  selected,
+  isDouble,
+  onOutcomeClick,
+  controller,
+  now,
+  demo,
+}: {
+  fixture: CurrentRoundFixtureView;
+  selected: Outcome[];
+  isDouble: boolean;
   onOutcomeClick: (outcome: Outcome) => void;
   controller: KapilotoPanelController;
   now: number;
   demo: boolean;
 }) {
-  const selected = pickToOutcomes(pick);
-  const isDouble = selected.length === 2;
   const view = useKapilotoPanel(controller);
   const panelId = `kapiloto-panel-${fixture.number}`;
   const expanded = view.kind !== "closed" && view.kind !== "collapsed";
@@ -146,7 +280,9 @@ function FixtureCard({
             <Chip>
               {fixture.day} · {fixture.time}
             </Chip>
-            {isDouble ? <Chip className="bg-[var(--kapiloto)] text-white">כפולה</Chip> : null}
+            {isDouble ? (
+              <Chip className="bg-[var(--kapiloto)] text-white">כפולה</Chip>
+            ) : null}
           </div>
         </div>
 
@@ -155,34 +291,15 @@ function FixtureCard({
             {fixture.home} — {fixture.away}
           </p>
           <p className="text-[8px] text-[var(--muted)]">
-            {fixture.league} · טרם שוחק
+            {fixture.league} · {fixture.statusLabel}
           </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-3" dir="ltr">
-          {PICK_ORDER.map((value) => {
-            const active = selected.includes(value);
-            return (
-              <button
-                key={value}
-                type="button"
-                onClick={() => onOutcomeClick(value)}
-                aria-pressed={active}
-                aria-label={`${value}${active ? (isDouble ? " · חלק מכפולה" : " · נבחר") : ""}`}
-                className={[
-                  "h-[46px] rounded-[13px] border text-[14px] font-bold transition-colors",
-                  active
-                    ? isDouble
-                      ? "border-[var(--kapiloto)] bg-[var(--kapiloto)] text-white"
-                      : "border-[var(--action)] bg-[var(--action)] text-white"
-                    : "border-[var(--border)] bg-[var(--elevated)] text-[var(--muted)]",
-                ].join(" ")}
-              >
-                {value}
-              </button>
-            );
-          })}
-        </div>
+        <PickButtons
+          selected={selected}
+          isDouble={isDouble}
+          onOutcomeClick={onOutcomeClick}
+        />
 
         <KapilotoToggleBar
           view={view}
@@ -206,14 +323,18 @@ function FixtureCard({
 
 function createControllers(
   config: CurrentRoundKapilotoConfig,
+  fixtures: CurrentRoundFixtureView[],
+  maxDoubles: number,
 ): Map<number, KapilotoPanelController> {
+  if (!config.groupId) return new Map();
+
   const client = config.demoScenario
     ? createKapilotoClient({
         fetch: createKapilotoDemoFetch({
           scenario: config.demoScenario,
           roundId: config.roundId,
           roundGameIds: fixtures.map((fixture) => fixture.roundGameId),
-          maxDoubles: MAX_DOUBLES,
+          maxDoubles,
         }),
       })
     : createKapilotoClient();
@@ -242,13 +363,42 @@ function createControllers(
   return controllers;
 }
 
+function nextPicksAfterTap(
+  current: Partial<Record<number, Pick>>,
+  gameNumber: number,
+  outcome: Outcome,
+  maxDoubles: number,
+): Partial<Record<number, Pick>> {
+  const currentPick = current[gameNumber];
+
+  if (!currentPick) {
+    return {
+      ...current,
+      [gameNumber]: outcome,
+    };
+  }
+
+  return toggleOutcomeInPicks(
+    current as Record<number, Pick>,
+    gameNumber,
+    outcome,
+    maxDoubles,
+  );
+}
+
 export function CurrentRoundTicket({
   kapiloto,
+  round = PROTOTYPE_CURRENT_ROUND,
 }: {
   kapiloto: CurrentRoundKapilotoConfig;
+  round?: CurrentRoundView;
 }) {
-  const [picks, setPicks] = useState<Record<number, Pick>>(initialPicks);
-  const [controllers] = useState(() => createControllers(kapiloto));
+  const [picks, setPicks] = useState<Partial<Record<number, Pick>>>(
+    () => round.initialPicks ?? {},
+  );
+  const [controllers] = useState(() =>
+    createControllers(kapiloto, round.fixtures, round.maxDoubles),
+  );
   const [profileOpen, setProfileOpen] = useState(false);
   const now = useNow(30_000);
 
@@ -261,14 +411,21 @@ export function CurrentRoundTicket({
 
   const doublesUsed = useMemo(
     () =>
-      Object.values(picks).filter((pick) => pickToOutcomes(pick).length === 2)
-        .length,
+      Object.values(picks).filter(
+        (pick): pick is Pick =>
+          Boolean(pick) && pickToOutcomes(pick as Pick).length === 2,
+      ).length,
     [picks],
   );
 
   function toggleOutcome(gameNumber: number, outcome: Outcome) {
     setPicks((current) =>
-      toggleOutcomeInPicks(current, gameNumber, outcome, MAX_DOUBLES),
+      nextPicksAfterTap(
+        current,
+        gameNumber,
+        outcome,
+        round.maxDoubles,
+      ),
     );
   }
 
@@ -310,8 +467,12 @@ export function CurrentRoundTicket({
             ‹ קודם
           </button>
           <div className="flex flex-col items-center gap-px text-center">
-            <h1 className="text-[21px] font-bold leading-tight text-white">מחזור 264101</h1>
-            <p className="text-[9px] font-medium text-[var(--muted)]">17–19 באוקטובר</p>
+            <h1 className="text-[21px] font-bold leading-tight text-white">
+              מחזור {round.roundNumber}
+            </h1>
+            <p className="text-[9px] font-medium text-[var(--muted)]">
+              {round.dateLabel}
+            </p>
           </div>
           <button
             type="button"
@@ -323,20 +484,28 @@ export function CurrentRoundTicket({
         </div>
 
         <div className="flex h-7 items-center justify-between">
-          <p className="text-[9px] font-medium text-[var(--muted)]">נסגר מחר · 16:24</p>
+          <p className="text-[9px] font-medium text-[var(--muted)]">
+            {round.lockLabel}
+          </p>
           <span
             className="inline-flex items-center rounded-full bg-[var(--kapiloto)] px-[9px] py-[5px] text-[9px] font-bold text-white"
             data-doubles-counter
           >
-            כפולות · {doublesUsed} / {MAX_DOUBLES}
+            כפולות · {doublesUsed} / {round.maxDoubles}
           </span>
         </div>
       </header>
 
       <section className="flex h-16 items-center justify-between bg-[var(--panel)] px-[18px]">
         <div className="flex flex-col items-start gap-0.5">
-          <p className="text-[10px] font-medium text-[var(--text)]">ממלאים לבד</p>
-          <p className="text-[8px] text-[var(--muted)]">קפילוטו עוזר בכל משחק</p>
+          <p className="text-[10px] font-medium text-[var(--text)]">
+            ממלאים לבד
+          </p>
+          <p className="text-[8px] text-[var(--muted)]">
+            {kapiloto.groupId
+              ? "קפילוטו עוזר בכל משחק"
+              : "בחר קבוצה כדי להפעיל את קפילוטו"}
+          </p>
         </div>
         <button
           type="button"
@@ -349,13 +518,15 @@ export function CurrentRoundTicket({
       </section>
 
       <main className="flex flex-1 flex-col gap-2.5 px-[18px] pb-[96px] pt-3">
-        {fixtures.map((fixture) => (
+        {round.fixtures.map((fixture) => (
           <FixtureCard
-            key={fixture.number}
+            key={fixture.roundGameId}
             fixture={fixture}
             pick={picks[fixture.number]}
-            onOutcomeClick={(outcome) => toggleOutcome(fixture.number, outcome)}
-            controller={controllers.get(fixture.number)!}
+            onOutcomeClick={(outcome) =>
+              toggleOutcome(fixture.number, outcome)
+            }
+            controller={controllers.get(fixture.number) ?? null}
             now={now}
             demo={kapiloto.demoScenario != null}
           />
