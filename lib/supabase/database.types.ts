@@ -2522,7 +2522,15 @@ export type Database = {
           preferred_auth_identifier: string
         }[]
       }
+      toto_apply_game_state_v1: {
+        Args: { p_update: Json }
+        Returns: Json
+      }
       toto_import_round_snapshot: { Args: { p_snapshot: Json }; Returns: Json }
+      toto_import_round_snapshot_v2: {
+        Args: { p_snapshot: Json }
+        Returns: Json
+      }
       toto_save_ticket_draft: {
         Args: {
           p_expected_revision: number
