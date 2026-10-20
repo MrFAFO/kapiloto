@@ -79,6 +79,9 @@ export default async function Home({
   let initialPicks:
     | Array<{ gameNumber: number; pick: "1" | "X" | "2" | "1X" | "X2" | "12" }>
     | undefined;
+  let ticketRevision: number | undefined;
+  let ticketState: "draft" | "submitted" | "locked" | null | undefined;
+  let submittedAt: string | null | undefined;
   let enabledGroupId: string | null = null;
 
   if (group) {
@@ -89,6 +92,9 @@ export default async function Home({
         userId!,
       );
       maxDoubles = ticket.maxDoubles;
+      ticketRevision = ticket.revision;
+      ticketState = ticket.state;
+      submittedAt = ticket.submittedAt;
       enabledGroupId = group.groupId;
 
       const gameNumberById = new Map(
@@ -114,6 +120,9 @@ export default async function Home({
   const roundView = buildCurrentRoundView(databaseRound, {
     maxDoubles,
     picks: initialPicks,
+    ticketRevision,
+    ticketState,
+    submittedAt,
   });
 
   return (
