@@ -4,7 +4,7 @@ import type { KapilotoFixtureEnvelope } from "@/lib/kapiloto/api-types";
 import { computeFixtureFreshness } from "@/lib/kapiloto/freshness";
 import {
   KapilotoAuthorizationError,
-  loadGroupRoundKapilotoContext,
+  loadOptionalGroupRoundKapilotoContext,
 } from "@/lib/kapiloto/group-context";
 import {
   parseKapilotoConsultBody,
@@ -125,7 +125,7 @@ export async function POST(
       );
     }
 
-    const groupContext = await loadGroupRoundKapilotoContext(
+    const groupContext = await loadOptionalGroupRoundKapilotoContext(
       admin,
       userId,
       body.groupId,
