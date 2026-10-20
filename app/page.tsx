@@ -5,7 +5,10 @@ import {
   PROTOTYPE_CURRENT_ROUND,
 } from "@/components/current-round-ticket";
 import { GroupBootstrapService } from "@/lib/groups/bootstrap-service";
-import { loadSingleActiveGroup } from "@/lib/groups/current-group";
+import {
+  loadActiveGroups,
+  selectActiveGroup,
+} from "@/lib/groups/current-group";
 import { parseKapilotoDemoScenario } from "@/lib/kapiloto/demo-fetch";
 import { SupabaseCurrentRoundLoader } from "@/lib/rounds/current-round";
 import { buildCurrentRoundView } from "@/lib/rounds/presentation";
@@ -35,6 +38,9 @@ export default async function Home({
   const requested = Array.isArray(params.kapiloto_demo)
     ? params.kapiloto_demo[0]
     : params.kapiloto_demo;
+  const requestedGroup = Array.isArray(params.group)
+    ? params.group[0]
+    : params.group;
   const demoScenario = kapilotoDemoEnabled()
     ? parseKapilotoDemoScenario(requested)
     : null;
@@ -58,10 +64,11 @@ export default async function Home({
   }
 
   const admin = createAdminClient();
-  const [databaseRound, group] = await Promise.all([
+  const [databaseRound, groups] = await Promise.all([
     new SupabaseCurrentRoundLoader(admin).load(),
-    loadSingleActiveGroup(admin, userId!),
+    loadActiveGroups(admin, userId!),
   ]);
+  const group = selectActiveGroup(groups, requestedGroup ?? null);
 
   if (!databaseRound) {
     return (
