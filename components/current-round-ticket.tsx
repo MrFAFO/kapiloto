@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   KapilotoDoubleContextNote,
@@ -15,6 +15,7 @@ import {
   type KapilotoDemoScenario,
 } from "@/lib/kapiloto/demo-fetch";
 import { KapilotoPanelController } from "@/lib/kapiloto/panel-controller";
+import { createTicketClient } from "@/lib/ticket-client";
 import {
   pickToOutcomes,
   toggleOutcomeInPicks,
@@ -45,6 +46,11 @@ export type CurrentRoundView = {
   maxDoubles: number;
   fixtures: CurrentRoundFixtureView[];
   initialPicks?: Partial<Record<number, Pick>>;
+  ticket?: {
+    revision: number;
+    state: "draft" | "submitted" | "locked" | null;
+    submittedAt: string | null;
+  };
   isPrototype?: boolean;
 };
 
@@ -400,6 +406,13 @@ export function CurrentRoundTicket({
     createControllers(kapiloto, round.fixtures, round.maxDoubles),
   );
   const [profileOpen, setProfileOpen] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<
+    "idle" | "unsaved" | "saving" | "saved" | "error"
+  >(round.ticket ? "saved" : "idle");
+  const revisionRef = useRef(round.ticket?.revision ?? 0);
+  const editVersionRef = useRef(0);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const ticketClientRef = useRef(createTicketClient());
   const now = useNow(30_000);
 
   useEffect(
@@ -408,6 +421,61 @@ export function CurrentRoundTicket({
     },
     [controllers],
   );
+
+  useEffect(() => {
+    if (
+      round.isPrototype ||
+      !round.ticket ||
+      !kapiloto.groupId ||
+      saveStatus === "idle" ||
+      saveStatus === "saved"
+    ) {
+      return;
+    }
+
+    const generation = editVersionRef.current;
+    const payload = round.fixtures.flatMap((fixture) => {
+      const pick = picks[fixture.number];
+      return pick
+        ? [{ roundGameId: fixture.roundGameId, pick }]
+        : [];
+    });
+
+    const timer = window.setTimeout(() => {
+      setSaveStatus("saving");
+
+      saveQueueRef.current = saveQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const result = await ticketClientRef.current.saveDraft({
+            roundId: kapiloto.roundId,
+            groupId: kapiloto.groupId!,
+            expectedRevision: revisionRef.current,
+            picks: payload,
+          });
+
+          revisionRef.current = result.revision;
+          if (generation === editVersionRef.current) {
+            setSaveStatus("saved");
+          } else {
+            setSaveStatus("unsaved");
+          }
+        })
+        .catch(() => {
+          setSaveStatus("error");
+        });
+    }, 500);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    kapiloto.groupId,
+    kapiloto.roundId,
+    picks,
+    round.fixtures,
+    round.isPrototype,
+    round.ticket,
+    saveStatus,
+  ]);
 
   const doublesUsed = useMemo(
     () =>
@@ -419,14 +487,21 @@ export function CurrentRoundTicket({
   );
 
   function toggleOutcome(gameNumber: number, outcome: Outcome) {
-    setPicks((current) =>
-      nextPicksAfterTap(
+    setPicks((current) => {
+      const next = nextPicksAfterTap(
         current,
         gameNumber,
         outcome,
         round.maxDoubles,
-      ),
-    );
+      );
+
+      if (next !== current && round.ticket && kapiloto.groupId) {
+        editVersionRef.current += 1;
+        setSaveStatus("unsaved");
+      }
+
+      return next;
+    });
   }
 
   return (
@@ -486,6 +561,18 @@ export function CurrentRoundTicket({
         <div className="flex h-7 items-center justify-between">
           <p className="text-[9px] font-medium text-[var(--muted)]">
             {round.lockLabel}
+            {round.ticket && kapiloto.groupId ? (
+              <span className="mr-1.5">
+                ·{" "}
+                {saveStatus === "saving"
+                  ? "שומר…"
+                  : saveStatus === "unsaved"
+                    ? "ממתין לשמירה"
+                    : saveStatus === "error"
+                      ? "שגיאת שמירה"
+                      : "נשמר"}
+              </span>
+            ) : null}
           </p>
           <span
             className="inline-flex items-center rounded-full bg-[var(--kapiloto)] px-[9px] py-[5px] text-[9px] font-bold text-white"
