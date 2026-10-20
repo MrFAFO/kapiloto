@@ -5,6 +5,7 @@ import {
   israelLocalDateTimeToIso,
   normalizeTelesportCompetition,
   parseTelesportWinner16Html,
+  parseTelesportWinner16StateHtml,
 } from "./telesport";
 
 function row(
@@ -103,4 +104,79 @@ test("normalizes known competition headings without inventing unknown leagues", 
     competitionType: "league",
     sourceLabel: "גביע כלשהו",
   });
+});
+
+
+test("parses live and final Winner 16 state without settling unfinished games", () => {
+  function stateRow(
+    number: number,
+    status: string,
+    home: string,
+    score: string,
+    away: string,
+    outcome = "",
+  ): string {
+    return `
+      <tr>
+        <td>${number}.</td>
+        <td>${status}</td>
+        <td><p>${home}</p></td>
+        <td>${score}</td>
+        <td><p>${away}</p></td>
+        <td></td><td>${outcome}</td>
+      </tr>
+    `;
+  }
+
+  const rows = [
+    stateRow(1, "37'", "בית 1", "1 - 0", "חוץ 1", "1"),
+    stateRow(2, "מחצית", "בית 2", "0 - 0", "חוץ 2", "X"),
+    stateRow(3, "הסתיים", "בית 3", "2 - 1", "חוץ 3", "1"),
+    stateRow(4, "נדחה", "בית 4", "-", "חוץ 4"),
+    ...Array.from({ length: 12 }, (_, index) =>
+      stateRow(index + 5, "24/10 19:00", `בית ${index + 5}`, "-", `חוץ ${index + 5}`),
+    ),
+  ].join("");
+
+  const html = `
+    <h2>ווינר 16 - מספר מחזור : 264201</h2>
+    <h3>ישראל - ליגת Winner</h3>
+    <table>${rows}</table>
+    <h2>ווינר מחצית - מספר מחזור : 999999</h2>
+  `;
+
+  const parsed = parseTelesportWinner16StateHtml(html);
+
+  assert.equal(parsed.externalRoundNumber, "264201");
+  assert.equal(parsed.games[0].status, "live");
+  assert.equal(parsed.games[0].homeScore, 1);
+  assert.equal(parsed.games[0].outcome, "1");
+  assert.equal(parsed.games[1].status, "halftime");
+  assert.equal(parsed.games[2].status, "finished");
+  assert.equal(parsed.games[2].outcome, "1");
+  assert.equal(parsed.games[3].status, "postponed");
+  assert.equal(parsed.games[4].status, "upcoming");
+});
+
+test("treats unknown scored Telesport states as under review", () => {
+  const rows = Array.from({ length: 16 }, (_, index) => {
+    const number = index + 1;
+    const status = number === 1 ? "החלטה" : "24/10 19:00";
+    const score = number === 1 ? "3 : 0" : "-";
+    const outcome = number === 1 ? "1" : "";
+    return `
+      <tr>
+        <td>${number}.</td><td>${status}</td><td>בית ${number}</td>
+        <td>${score}</td><td>חוץ ${number}</td><td></td><td>${outcome}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const parsed = parseTelesportWinner16StateHtml(
+    `<h2>ווינר 16 - מספר מחזור : 264201</h2><h3>ליגה</h3><table>${rows}</table>`,
+  );
+
+  assert.equal(parsed.games[0].status, "under_review");
+  assert.equal(parsed.games[0].homeScore, 3);
+  assert.equal(parsed.games[0].awayScore, 0);
 });
