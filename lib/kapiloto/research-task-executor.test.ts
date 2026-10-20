@@ -322,3 +322,63 @@ test("grounding failure marks the attempt retryable and does not persist success
     "failed",
   );
 });
+
+
+test("accepts equivalent research cutoff instants with different timestamp formatting", async () => {
+  const queue = new MemoryQueue();
+  const value = claimed();
+  value.run = {
+    ...value.run,
+    researchCutoffAt: "2026-10-18T14:00:00.000+02:00",
+  };
+  queue.claimValue = value;
+
+  let calls = 0;
+  const runner: FixtureResearchRunner = {
+    async research() {
+      calls += 1;
+      return successResult();
+    },
+  };
+
+  const result = await executeOneResearchTask(queue, runner, {
+    workerId: "worker-cutoff-format",
+    heartbeatIntervalMs: 0,
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(calls, 1);
+  assert.equal(queue.finishes[0].success, true);
+});
+
+test("rejects genuinely different research cutoff instants before model execution", async () => {
+  const queue = new MemoryQueue();
+  const value = claimed();
+  value.run = {
+    ...value.run,
+    researchCutoffAt: "2026-10-18T12:00:01.000Z",
+  };
+  queue.claimValue = value;
+
+  let calls = 0;
+  const runner: FixtureResearchRunner = {
+    async research() {
+      calls += 1;
+      return successResult();
+    },
+  };
+
+  const result = await executeOneResearchTask(queue, runner, {
+    workerId: "worker-cutoff-mismatch",
+    heartbeatIntervalMs: 0,
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(calls, 0);
+  assert.equal(queue.finishes.length, 1);
+  assert.equal(queue.finishes[0].success, false);
+  assert.match(
+    queue.finishes[0].failureDetail ?? "",
+    /cutoff does not match run cutoff/,
+  );
+});
