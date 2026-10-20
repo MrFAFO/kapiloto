@@ -2445,6 +2445,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      kapiloto_materialize_and_complete_run: {
+        Args: { p_analyses: Json; p_round_synthesis?: Json; p_run_id: string }
+        Returns: Json
+      }
       kapiloto_publish_fixture_analysis: {
         Args: { p_analysis_id: string }
         Returns: Json
