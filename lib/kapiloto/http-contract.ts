@@ -1,7 +1,7 @@
 export type KapilotoConsultIntent = "consult" | "recheck";
 
 export type KapilotoConsultRequestBody = {
-  groupId: string;
+  groupId: string | null;
   roundGameId: string;
   intent: KapilotoConsultIntent;
   basedOnRunId: string | null;
@@ -47,7 +47,8 @@ export function parseKapilotoConsultBody(
       : requireUuid(body.basedOnRunId, "basedOnRunId");
 
   return {
-    groupId: requireUuid(body.groupId, "groupId"),
+    groupId:
+      body.groupId == null ? null : requireUuid(body.groupId, "groupId"),
     roundGameId: requireUuid(body.roundGameId, "roundGameId"),
     intent,
     basedOnRunId,
