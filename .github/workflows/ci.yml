@@ -39,6 +39,9 @@ jobs:
       - name: Ticket persistence tests
         run: npm run test:tickets
 
+      - name: Group flow tests
+        run: npm run test:groups
+
       - name: Kapiloto core tests
         run: npm run test:kapiloto
 
