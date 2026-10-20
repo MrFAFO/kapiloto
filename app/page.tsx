@@ -4,6 +4,7 @@ import {
   CurrentRoundTicket,
   PROTOTYPE_CURRENT_ROUND,
 } from "@/components/current-round-ticket";
+import { GroupBootstrapService } from "@/lib/groups/bootstrap-service";
 import { loadSingleActiveGroup } from "@/lib/groups/current-group";
 import { parseKapilotoDemoScenario } from "@/lib/kapiloto/demo-fetch";
 import { SupabaseCurrentRoundLoader } from "@/lib/rounds/current-round";
@@ -86,6 +87,14 @@ export default async function Home({
 
   if (group) {
     try {
+      if (Date.now() < Date.parse(databaseRound.lockAt)) {
+        await new GroupBootstrapService(admin).ensureRoundSettings(
+          userId!,
+          group.groupId,
+          databaseRound.roundId,
+        );
+      }
+
       const ticket = await new TotoTicketService(admin).load(
         group.groupId,
         databaseRound.roundId,
@@ -110,7 +119,8 @@ export default async function Home({
     } catch (error) {
       if (
         !(error instanceof Error) ||
-        !error.message.includes("ticket_group_round_settings_missing")
+        (!error.message.includes("ticket_group_round_settings_missing") &&
+          !error.message.includes("round_already_locked"))
       ) {
         throw error;
       }
