@@ -30,8 +30,8 @@ function parseGroupId(value: string | null): string {
   return value;
 }
 
-function parseExpectedRevision(value: unknown): number | null {
-  if (value == null) return null;
+function parseExpectedRevision(value: unknown): number {
+  if (value == null) return 0;
   if (!Number.isInteger(value) || Number(value) < 0) {
     throw new Error("expectedRevision must be a non-negative integer.");
   }
