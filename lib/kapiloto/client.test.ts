@@ -308,3 +308,53 @@ test("polling stops on abort and backs off on 429 using Retry-After", async () =
   assert.ok(calls.length <= 2);
   assert.ok(calls.every((call) => call.method === "GET"));
 });
+
+
+test("group-neutral Match Intelligence requests omit group query context", async () => {
+  const neutralRef = { ...REF, groupId: null };
+  const { calls, fetchImpl } = recorder((call) =>
+    call.method === "POST"
+      ? json(
+          envelope({
+            group: { max_doubles: 0, locked: false },
+            request: {
+              outcome: "created_run",
+              replayed: false,
+              request_id: null,
+            },
+          }),
+          202,
+        )
+      : call.url.includes("/state")
+        ? json(roundState({}))
+        : json(
+            envelope({
+              state: "unresearched",
+              group: { max_doubles: 0, locked: false },
+            }),
+          ),
+  );
+  const client = createKapilotoClient({ fetch: fetchImpl });
+
+  await client.consultFixture(neutralRef);
+  await client.getFixtureAnalysis(neutralRef);
+  await client.getRoundResearchState({
+    roundId: neutralRef.roundId,
+    groupId: null,
+  });
+
+  assert.deepEqual(JSON.parse(calls[0].body ?? ""), {
+    groupId: null,
+    roundGameId: neutralRef.roundGameId,
+    intent: "consult",
+    basedOnRunId: null,
+  });
+  assert.equal(
+    calls[1].url,
+    `/api/v1/rounds/${neutralRef.roundId}/kapiloto/fixtures/${neutralRef.roundGameId}`,
+  );
+  assert.equal(
+    calls[2].url,
+    `/api/v1/rounds/${neutralRef.roundId}/kapiloto/state`,
+  );
+});
