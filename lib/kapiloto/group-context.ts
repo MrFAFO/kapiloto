@@ -60,3 +60,19 @@ export async function loadGroupRoundKapilotoContext(
     groupLocked: settings.locked_at != null,
   };
 }
+
+
+export const NEUTRAL_KAPILOTO_CONTEXT: GroupRoundKapilotoContext = {
+  maxDoubles: 0,
+  groupLocked: false,
+};
+
+export async function loadOptionalGroupRoundKapilotoContext(
+  admin: SupabaseClient,
+  userId: string,
+  groupId: string | null,
+  roundId: string,
+): Promise<GroupRoundKapilotoContext> {
+  if (groupId == null) return NEUTRAL_KAPILOTO_CONTEXT;
+  return loadGroupRoundKapilotoContext(admin, userId, groupId, roundId);
+}
