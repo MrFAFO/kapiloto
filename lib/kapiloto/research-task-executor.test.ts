@@ -5,6 +5,7 @@ import type { KapilotoFixtureCard } from "./fixture-card";
 import {
   executeOneResearchTask,
   type ClaimedResearchAttempt,
+  type FixtureEvidenceGrounder,
   type FixtureResearchRunner,
   type FinishResearchAttemptInput,
   type ResearchAttemptQueue,
@@ -244,4 +245,80 @@ test("lost lease discards a returned model result without finishing it", async (
 
   assert.equal(result.status, "lease_lost");
   assert.equal(queue.finishes.length, 0);
+});
+
+
+test("grounder runs before a successful attempt is persisted", async () => {
+  const queue = new MemoryQueue();
+  const runner: FixtureResearchRunner = {
+    async research() {
+      return successResult();
+    },
+  };
+  const grounder: FixtureEvidenceGrounder = {
+    async ground() {
+      return {
+        grounding: {
+          accepted: [],
+          rejected: [],
+          requiresEntailmentVerification: [],
+        },
+        retrievalFailures: [],
+      };
+    },
+  };
+
+  const result = await executeOneResearchTask(queue, runner, {
+    workerId: "worker-1",
+    heartbeatIntervalMs: 0,
+    grounder,
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(queue.finishes.length, 1);
+  assert.equal(queue.finishes[0].success, true);
+  assert.equal(
+    queue.finishes[0].validationReport.quote_verification,
+    "passed",
+  );
+  assert.equal(
+    queue.finishes[0].validationReport.entailment_verification,
+    "not_required",
+  );
+  assert.deepEqual(
+    queue.finishes[0].validationReport.source_retrieval_failures,
+    [],
+  );
+});
+
+test("grounding failure marks the attempt retryable and does not persist success", async () => {
+  const queue = new MemoryQueue();
+  const runner: FixtureResearchRunner = {
+    async research() {
+      return successResult();
+    },
+  };
+  const grounder: FixtureEvidenceGrounder = {
+    async ground() {
+      throw new Error("quote verification failed");
+    },
+  };
+
+  const result = await executeOneResearchTask(queue, runner, {
+    workerId: "worker-1",
+    heartbeatIntervalMs: 0,
+    grounder,
+  });
+
+  assert.equal(result.status, "failed");
+  if (result.status !== "failed") throw new Error("expected failure");
+  assert.equal(result.retryable, true);
+  assert.equal(result.retryCreated, true);
+  assert.equal(queue.finishes.length, 1);
+  assert.equal(queue.finishes[0].success, false);
+  assert.equal(queue.finishes[0].failureCode, "evidence_grounding_failed");
+  assert.equal(
+    queue.finishes[0].validationReport.quote_verification,
+    "failed",
+  );
 });
