@@ -406,6 +406,10 @@ export function CurrentRoundTicket({
     createControllers(kapiloto, round.fixtures, round.maxDoubles),
   );
   const [profileOpen, setProfileOpen] = useState(false);
+  const [groupName, setGroupName] = useState("הקבוצה שלי");
+  const [groupCreateStatus, setGroupCreateStatus] = useState<
+    "idle" | "creating" | "error"
+  >("idle");
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "unsaved" | "saving" | "saved" | "error"
   >(round.ticket ? "saved" : "idle");
@@ -501,6 +505,29 @@ export function CurrentRoundTicket({
       const pick = picks[fixture.number];
       return pick ? [{ roundGameId: fixture.roundGameId, pick }] : [];
     });
+  }
+
+  async function createGroup() {
+    const name = groupName.trim();
+    if (name.length < 2 || groupCreateStatus === "creating") return;
+
+    setGroupCreateStatus("creating");
+    try {
+      const response = await fetch("/api/v1/groups", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Group create failed with HTTP ${response.status}.`);
+      }
+
+      window.location.reload();
+    } catch {
+      setGroupCreateStatus("error");
+    }
   }
 
   function submitTicket() {
@@ -669,6 +696,46 @@ export function CurrentRoundTicket({
           דייגו · מלא לי את כל הטופס
         </button>
       </section>
+
+      {!kapiloto.groupId && !kapiloto.demoScenario ? (
+        <section className="border-t border-[var(--border)] bg-[var(--panel)] px-[18px] py-3">
+          <div className="flex flex-col gap-2 rounded-[14px] border border-[var(--border)] bg-[var(--elevated)] p-3">
+            <div>
+              <p className="text-[10px] font-bold text-[var(--text)]">
+                כדי לשמור טופס ולהשתמש בקפילוטו צריך קבוצה
+              </p>
+              <p className="mt-0.5 text-[8px] text-[var(--muted)]">
+                אפשר ליצור עכשיו קבוצה פרטית. קוד הזמנה ייווצר אוטומטית.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={groupName}
+                onChange={(event) => setGroupName(event.target.value)}
+                maxLength={80}
+                aria-label="שם הקבוצה"
+                className="h-10 min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 text-[10px] text-[var(--text)] outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => void createGroup()}
+                disabled={
+                  groupName.trim().length < 2 ||
+                  groupCreateStatus === "creating"
+                }
+                className="h-10 shrink-0 rounded-xl bg-[var(--action)] px-4 text-[10px] font-bold text-white disabled:opacity-45"
+              >
+                {groupCreateStatus === "creating" ? "יוצר…" : "צור קבוצה"}
+              </button>
+            </div>
+            {groupCreateStatus === "error" ? (
+              <p className="text-[8px] font-medium text-red-400">
+                יצירת הקבוצה נכשלה. אפשר לנסות שוב.
+              </p>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {round.ticket && kapiloto.groupId ? (
         <section className="border-t border-[var(--border)] bg-[var(--panel)] px-[18px] py-2">
