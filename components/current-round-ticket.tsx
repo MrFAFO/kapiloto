@@ -433,8 +433,7 @@ export function CurrentRoundTicket({
       round.isPrototype ||
       !round.ticket ||
       !kapiloto.groupId ||
-      saveStatus === "idle" ||
-      saveStatus === "saved"
+      saveStatus !== "unsaved"
     ) {
       return;
     }
