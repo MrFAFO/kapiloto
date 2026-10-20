@@ -21,9 +21,10 @@ const CASES = [
   },
 ];
 
-const results = [];
+async function main() {
+  const results = [];
 
-for (const item of CASES) {
+  for (const item of CASES) {
   try {
     const document = await __testOnly.fetchSource(item.url);
     const textFound = document.text
@@ -52,10 +53,22 @@ for (const item of CASES) {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+  }
+
+  console.log(
+    JSON.stringify(
+      { ok: results.every((item) => item.ok), results },
+      null,
+      2,
+    ),
+  );
+
+  if (!results.every((item) => item.ok)) {
+    process.exitCode = 1;
+  }
 }
 
-console.log(JSON.stringify({ ok: results.every((item) => item.ok), results }, null, 2));
-
-if (!results.every((item) => item.ok)) {
+main().catch((error) => {
+  console.error(error);
   process.exitCode = 1;
-}
+});
