@@ -93,3 +93,34 @@ test("published-at parser recognizes common article metadata", () => {
     "2026-10-20T08:15:00.000Z",
   );
 });
+
+
+test("generic time datetime is not treated as article publication time", () => {
+  const html = `
+    <html>
+      <body>
+        <time datetime="2026-10-24T16:00:00Z">Kickoff</time>
+        <article>Match preview without publication metadata.</article>
+      </body>
+    </html>
+  `;
+
+  assert.equal(__testOnly.firstPublishedAt(html), null);
+});
+
+test("JSON-LD datePublished remains an accepted publication timestamp", () => {
+  const html = `
+    <html>
+      <head>
+        <script type="application/ld+json">
+          {"@type":"NewsArticle","datePublished":"2026-10-20T08:15:00Z"}
+        </script>
+      </head>
+    </html>
+  `;
+
+  assert.equal(
+    __testOnly.firstPublishedAt(html),
+    "2026-10-20T08:15:00.000Z",
+  );
+});

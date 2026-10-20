@@ -67,3 +67,7 @@ Scope: demand-driven run creation, fixture fanout worker, retry/recovery, materi
 
 13. **Read polling and join requests could bypass the scheduler concurrency cap.**
     Round-state and fixture-analysis GET routes are now strictly read-only and never launch workers. Joining an existing run no longer launches a worker. Only a newly-created run gets one immediate non-finalizing worker for low latency; the Supabase scheduler observes that live attempt, fills at most one remaining slot, and remains the sole finalization path. Demand-worker leases now match the 180-second scheduler lease.
+
+
+14. **A generic HTML `<time datetime>` could be mistaken for publication time.**
+    Sports pages frequently use `<time>` for kickoff/event timestamps. Source retrieval no longer treats arbitrary time elements as article publication metadata. Only explicit publication metadata (for example `article:published_time`, publish-date meta fields or JSON-LD `datePublished`) can date a source. Time-sensitive claims from otherwise undated pages therefore fail closed.

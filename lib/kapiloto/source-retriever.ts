@@ -169,7 +169,6 @@ function firstPublishedAt(html: string): string | null {
     /<meta\s+[^>]*content=["']([^"']+)["'][^>]*(?:property|name)=["']article:published_time["'][^>]*>/i,
     /<meta\s+[^>]*(?:property|name)=["'](?:date|datepublished|publishdate|pubdate)["'][^>]*content=["']([^"']+)["'][^>]*>/i,
     /"datePublished"\s*:\s*"([^"]+)"/i,
-    /<time\s+[^>]*datetime=["']([^"']+)["'][^>]*>/i,
   ];
 
   for (const pattern of patterns) {
