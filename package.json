@@ -16,7 +16,8 @@
     "test:rounds": "tsx --test lib/rounds/*.test.ts",
     "test:tickets": "tsx --test lib/ticket-*.test.ts",
     "round:import": "tsx scripts/import-toto-round.ts",
-    "test:groups": "tsx --test lib/groups/*.test.ts"
+    "test:groups": "tsx --test lib/groups/*.test.ts",
+    "round:discover": "tsx scripts/discover-toto-round.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
