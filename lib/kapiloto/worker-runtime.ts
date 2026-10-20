@@ -22,6 +22,7 @@ import {
 import { createSupabaseFixtureEvidenceGrounder } from "./source-grounding-runtime";
 import { SupabaseResearchAttemptQueue } from "./supabase-attempt-queue";
 import { SupabaseKapilotoRunPublisher } from "./supabase-run-publisher";
+import { assessRunFinalizationReadiness } from "./run-readiness";
 
 export type KapilotoWorkerCycleOptions = {
   workerId: string;
@@ -110,45 +111,30 @@ async function runReadyForFinalization(
     return { ready: false, reason: `terminal_status:${run.status}` };
   }
 
-  const fixtureSet = run.fixture_set;
-  if (!Array.isArray(fixtureSet) || fixtureSet.length !== 16) {
-    return { ready: false, reason: "invalid_fixture_set" };
+  return assessRunFinalizationReadiness(
+    run.fixture_set,
+    (attempts ?? []).map((attempt) => String(attempt.status)),
+  );
+}
+
+async function loadFinalizationCandidateRunIds(
+  admin: ReturnType<typeof createAdminClient>,
+  limit = 16,
+): Promise<string[]> {
+  const { data, error } = await admin
+    .from("kapiloto_research_runs")
+    .select("id")
+    .in("status", ["queued", "running"])
+    .order("created_at", { ascending: true })
+    .limit(limit);
+
+  if (error) {
+    throw new Error(
+      `Failed to discover Kapiloto finalization candidates: ${error.message}`,
+    );
   }
 
-  const researchCount = fixtureSet.filter(
-    (item) =>
-      item &&
-      typeof item === "object" &&
-      !Array.isArray(item) &&
-      (item as Record<string, unknown>).mode === "research",
-  ).length;
-
-  if (researchCount !== 16) {
-    return {
-      ready: false,
-      reason: "mixed_dispositions_not_yet_materializable",
-    };
-  }
-
-  const rows = attempts ?? [];
-  const active = rows.filter(
-    (attempt) => attempt.status === "queued" || attempt.status === "running",
-  ).length;
-  const succeeded = rows.filter(
-    (attempt) => attempt.status === "succeeded",
-  ).length;
-
-  if (active > 0) {
-    return { ready: false, reason: `active_attempts:${active}` };
-  }
-  if (succeeded !== 16) {
-    return {
-      ready: false,
-      reason: `succeeded_attempts:${succeeded}/16`,
-    };
-  }
-
-  return { ready: true, reason: "ready" };
+  return (data ?? []).map((row) => String(row.id));
 }
 
 export async function runKapilotoWorkerCycle(
@@ -198,6 +184,10 @@ export async function runKapilotoWorkerCycle(
 
     if (result.status === "no_work") break;
     touchedRuns.add(result.runId);
+  }
+
+  for (const runId of await loadFinalizationCandidateRunIds(admin)) {
+    touchedRuns.add(runId);
   }
 
   const publisher = new SupabaseKapilotoRunPublisher(admin);
