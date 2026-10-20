@@ -409,6 +409,12 @@ export function CurrentRoundTicket({
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "unsaved" | "saving" | "saved" | "error"
   >(round.ticket ? "saved" : "idle");
+  const [ticketState, setTicketState] = useState<
+    "draft" | "submitted" | "locked" | null
+  >(round.ticket?.state ?? null);
+  const [submitStatus, setSubmitStatus] = useState<
+    "idle" | "submitting" | "submitted" | "error"
+  >(round.ticket?.state === "submitted" ? "submitted" : "idle");
   const revisionRef = useRef(round.ticket?.revision ?? 0);
   const editVersionRef = useRef(0);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -486,6 +492,64 @@ export function CurrentRoundTicket({
     [picks],
   );
 
+  const completedPickCount = useMemo(
+    () => round.fixtures.filter((fixture) => Boolean(picks[fixture.number])).length,
+    [picks, round.fixtures],
+  );
+
+  function serializeCurrentPicks() {
+    return round.fixtures.flatMap((fixture) => {
+      const pick = picks[fixture.number];
+      return pick ? [{ roundGameId: fixture.roundGameId, pick }] : [];
+    });
+  }
+
+  function submitTicket() {
+    if (
+      round.isPrototype ||
+      !round.ticket ||
+      !kapiloto.groupId ||
+      ticketState === "locked" ||
+      completedPickCount !== 16 ||
+      doublesUsed > round.maxDoubles ||
+      submitStatus === "submitting"
+    ) {
+      return;
+    }
+
+    const payload = serializeCurrentPicks();
+    setSubmitStatus("submitting");
+    setSaveStatus("saving");
+
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const saved = await ticketClientRef.current.saveDraft({
+          roundId: kapiloto.roundId,
+          groupId: kapiloto.groupId!,
+          expectedRevision: revisionRef.current,
+          picks: payload,
+        });
+
+        revisionRef.current = saved.revision;
+
+        const submitted = await ticketClientRef.current.submit({
+          roundId: kapiloto.roundId,
+          groupId: kapiloto.groupId!,
+          expectedRevision: saved.revision,
+        });
+
+        revisionRef.current = submitted.revision;
+        setTicketState(submitted.state);
+        setSaveStatus("saved");
+        setSubmitStatus("submitted");
+      })
+      .catch(() => {
+        setSaveStatus("error");
+        setSubmitStatus("error");
+      });
+  }
+
   function toggleOutcome(gameNumber: number, outcome: Outcome) {
     setPicks((current) => {
       const next = nextPicksAfterTap(
@@ -498,6 +562,9 @@ export function CurrentRoundTicket({
       if (next !== current && round.ticket && kapiloto.groupId) {
         editVersionRef.current += 1;
         setSaveStatus("unsaved");
+        if (ticketState === "submitted") {
+          setSubmitStatus("idle");
+        }
       }
 
       return next;
@@ -603,6 +670,39 @@ export function CurrentRoundTicket({
           דייגו · מלא לי את כל הטופס
         </button>
       </section>
+
+      {round.ticket && kapiloto.groupId ? (
+        <section className="border-t border-[var(--border)] bg-[var(--panel)] px-[18px] py-2">
+          <button
+            type="button"
+            onClick={submitTicket}
+            disabled={
+              completedPickCount !== 16 ||
+              doublesUsed > round.maxDoubles ||
+              ticketState === "locked" ||
+              submitStatus === "submitting"
+            }
+            className="flex h-11 w-full items-center justify-center rounded-xl bg-[var(--action)] text-[11px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {ticketState === "locked"
+              ? "הטופס נעול"
+              : completedPickCount !== 16
+                ? `מלא עוד ${16 - completedPickCount} משחקים`
+                : submitStatus === "submitting"
+                  ? "שולח…"
+                  : submitStatus === "submitted"
+                    ? "הטופס נשלח"
+                    : ticketState === "submitted"
+                      ? "שלח עדכון"
+                      : "שלח טופס"}
+          </button>
+          {submitStatus === "error" ? (
+            <p className="mt-1 text-center text-[8px] font-medium text-red-400">
+              השליחה נכשלה. הטופס נשאר אצלך וניתן לנסות שוב.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       <main className="flex flex-1 flex-col gap-2.5 px-[18px] pb-[96px] pt-3">
         {round.fixtures.map((fixture) => (
