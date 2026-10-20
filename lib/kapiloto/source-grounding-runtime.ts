@@ -4,6 +4,7 @@ import type { Database, Json } from "@/lib/supabase/database.types";
 
 import type { KapilotoFixtureCard } from "./fixture-card";
 import type { SolFixtureResearchOutput } from "./research-output";
+import type { FixtureEvidenceGrounder } from "./research-task-executor";
 import {
   verifyGroundedResearchEvidence,
   type GroundingResult,
@@ -81,4 +82,19 @@ export async function groundResearchOutput(
   );
 
   return { grounding, retrieval };
+}
+
+
+export function createSupabaseFixtureEvidenceGrounder(
+  client: SupabaseClient<Database>,
+): FixtureEvidenceGrounder {
+  return {
+    async ground(card, output) {
+      const result = await groundResearchOutput(client, card, output);
+      return {
+        grounding: result.grounding,
+        retrievalFailures: result.retrieval.failures,
+      };
+    },
+  };
 }
