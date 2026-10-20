@@ -33,6 +33,9 @@ jobs:
       - name: Provider tests
         run: npm run test:providers
 
+      - name: Round import tests
+        run: npm run test:rounds
+
       - name: Kapiloto core tests
         run: npm run test:kapiloto
 
