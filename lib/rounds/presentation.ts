@@ -129,6 +129,16 @@ export function buildCurrentRoundView(
       day: cleanWeekday(weekday.format(new Date(game.kickoffAt))),
       time: clock.format(new Date(game.kickoffAt)),
       statusLabel: statusLabel(game.status),
+      scoreLabel:
+        game.homeScore != null && game.awayScore != null
+          ? `${game.homeScore}–${game.awayScore}`
+          : null,
+      settlementLabel:
+        game.settlementStatus === "settled" && game.poolOutcome
+          ? `תוצאת טוטו: ${game.poolOutcome}`
+          : game.settlementStatus === "under_review"
+            ? "תוצאת הטוטו בבדיקה"
+            : null,
     })),
   };
 }
