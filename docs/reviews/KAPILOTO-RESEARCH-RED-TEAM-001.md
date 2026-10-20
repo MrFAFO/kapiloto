@@ -71,3 +71,15 @@ Scope: demand-driven run creation, fixture fanout worker, retry/recovery, materi
 
 14. **A generic HTML `<time datetime>` could be mistaken for publication time.**
     Sports pages frequently use `<time>` for kickoff/event timestamps. Source retrieval no longer treats arbitrary time elements as article publication metadata. Only explicit publication metadata (for example `article:published_time`, publish-date meta fields or JSON-LD `datePublished`) can date a source. Time-sensitive claims from otherwise undated pages therefore fail closed.
+
+
+15. **The source registry was empty, so every domain defaulted to Tier 4.**
+    Source-policy v2 now seeds a conservative reviewed registry with official
+    competition/association sources, verified official club sources relevant to
+    the current round, and selected independent publishers. Trust remains
+    claim-type aware: official club sources are strongest for availability and
+    club news; Israeli sports media remain Tier 3 for time-sensitive claims and
+    therefore need corroboration for medium/large factors. Unknown domains
+    still default to Tier 4. The Sol prompt now mirrors the validator by asking
+    material factors to prefer official/high-quality evidence or two independent
+    sources.

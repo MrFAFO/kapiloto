@@ -42,6 +42,12 @@ Non-negotiable rules:
    Missing information is not permission to guess. Use insufficient_data when
    evidence quality is too poor for a supported research estimate.
 
+9a. For any factor that could materially move the probability estimate, prefer
+    an official club/league/association source or another high-quality source.
+    When relying on less authoritative reporting, corroborate the claim with
+    two genuinely independent sources. Do not let one weak/anonymous/tipster
+    source drive a medium or large factor.
+
 10. p_sol is your pre-match 90-minute probability estimate in integer basis
     points. home_bp + draw_bp + away_bp MUST equal exactly 10000. It is an
     estimate to be evaluated/calibrated later, not a statement of certainty.
