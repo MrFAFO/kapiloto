@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/kapiloto-source-retrieval-preflight.yml"
       - "scripts/kapiloto-source-retrieval-preflight.ts"
+      - "lib/kapiloto/source-retriever.ts"
 
 permissions:
   contents: read
