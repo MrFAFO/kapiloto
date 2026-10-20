@@ -356,7 +356,7 @@ function match365Game(
 }
 
 async function loadTeamNames(
-  supabase: ReturnType<typeof createClient>,
+  supabase: any,
   dbGames: DbGame[],
 ): Promise<Map<string, string[]>> {
   const teamIds = [
@@ -376,10 +376,16 @@ async function loadTeamNames(
   if (aliasError) throw new Error(`alias_query_failed:${aliasError.message}`);
 
   const names = new Map<string, string[]>();
-  for (const team of teams ?? []) {
+  for (const team of (teams ?? []) as Array<{
+    id: string;
+    canonical_name: string;
+  }>) {
     names.set(team.id, [team.canonical_name]);
   }
-  for (const alias of aliases ?? []) {
+  for (const alias of (aliases ?? []) as Array<{
+    team_id: string;
+    alias: string;
+  }>) {
     const values = names.get(alias.team_id) ?? [];
     values.push(alias.alias);
     names.set(alias.team_id, values);
