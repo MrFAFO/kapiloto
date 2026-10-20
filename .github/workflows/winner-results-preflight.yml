@@ -2,12 +2,6 @@ name: Winner Official Results Preflight
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - design/mobile-first-dark-stadium
-    paths:
-      - ".github/workflows/winner-results-preflight.yml"
-      - "scripts/winner-results-preflight.mjs"
 
 permissions:
   contents: read

@@ -43,3 +43,20 @@ Scope: demand-driven run creation, fixture fanout worker, retry/recovery, materi
 - Smoke-test request -> run -> scheduler -> one worker invocation without creating a paid research run where possible.
 - Then trigger exactly one real round-wide research request for round 264201 and observe all 16 fixture outcomes, publication pointers and UI refresh.
 - Do not trigger a second research round merely to debug deployment/configuration issues.
+
+
+## Preflight evidence — round 264201
+
+- Supabase dry-run validated all 16 canonical fixtures, distinct teams, non-empty
+  competition/team names, supported settlement rules, valid leg/aggregate data,
+  and an open research safety window.
+- Current prior mix is 16 `league_base`, 0 market snapshots.
+- A transaction-scoped call to `kapiloto_request_research` produced exactly
+  one `created_run`, budget slot 1, 16 queued attempts and one request row.
+- The outer transaction was rolled back. A follow-up query confirmed
+  `runs_consumed=0`, no active/current run, zero research runs and zero
+  attempts for round 264201.
+- Winner's official `GetResults` endpoint returned HTTP 403 in two isolated
+  GitHub Actions probes, including one with desktop request headers and correct
+  Jerusalem DST offset. It remains observational only and is not a blocker for
+  the research pipeline.
