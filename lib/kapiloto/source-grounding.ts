@@ -33,7 +33,7 @@ export type GroundedEvidence = {
   retrievedAt: string;
   trustTier: number;
   quoteVerified: true;
-  entailment: "not_checked";
+  entailment: "supported" | "unsupported" | "not_checked";
   syndicationClusterId: string | null;
   contentSha256: string;
 };
