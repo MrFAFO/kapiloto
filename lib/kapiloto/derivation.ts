@@ -2,7 +2,7 @@ import type { KapilotoFixtureCard } from "./fixture-card";
 import type { SolFixtureResearchOutput } from "./research-output";
 
 export const KAPILOTO_RELIABILITY_FORMULA_VERSION =
-  "kapiloto-reliability-shadow-v1" as const;
+  "kapiloto-reliability-shadow-v2" as const;
 export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v1" as const;
 
 export type Outcome = "1" | "X" | "2";
@@ -137,6 +137,11 @@ export function deriveReliability(
   const coverageRatio = coveredDimensions / 10;
 
   let score = 0.35 + coverageRatio * 0.3;
+
+  if (card.structured.prior.type === "league_base") {
+    score -= 0.05;
+    reasons.push("uninformative_league_base_prior");
+  }
 
   if (coverageRatio >= 0.8) {
     reasons.push("broad_dimension_coverage");

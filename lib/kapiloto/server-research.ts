@@ -23,16 +23,18 @@ export async function ensureServerKapilotoResearch(
 
   const lazyPreparer: KapilotoResearchPreparer = {
     async prepare(input) {
-      const apiKey = process.env.API_FOOTBALL_API_KEY?.trim();
-      if (!apiKey) {
+      if (!process.env.OPENAI_API_KEY?.trim()) {
         throw new Error(
-          "API_FOOTBALL_API_KEY is required when a new Kapiloto run needs preparation.",
+          "OPENAI_API_KEY is required before a new Kapiloto research run can be created.",
         );
       }
 
-      const apiFootball = new ApiFootballClient(apiKey, {
-        minRequestIntervalMs: getApiFootballMinRequestIntervalMs(),
-      });
+      const apiKey = process.env.API_FOOTBALL_API_KEY?.trim();
+      const apiFootball = apiKey
+        ? new ApiFootballClient(apiKey, {
+            minRequestIntervalMs: getApiFootballMinRequestIntervalMs(),
+          })
+        : null;
 
       return new SupabaseKapilotoResearchPreparer(
         admin,

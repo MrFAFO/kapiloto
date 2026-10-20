@@ -44,6 +44,12 @@ type MarketSnapshotRow = {
   p_2_bp: number;
 };
 
+export const UNINFORMATIVE_LEAGUE_BASE_PRIOR = {
+  home: 3334,
+  draw: 3333,
+  away: 3333,
+} as const;
+
 export type FixtureInputRows = {
   games: RoundGameRow[];
   teams: TeamRow[];
@@ -163,7 +169,14 @@ export function assembleFixtureCardInputs(
       settlementRule: game.settlement_rule,
       prior:
         prior == null
-          ? null
+          ? {
+              type: "league_base",
+              snapshotId: null,
+              capturedAt: null,
+              probabilitiesBp: {
+                ...UNINFORMATIVE_LEAGUE_BASE_PRIOR,
+              },
+            }
           : {
               type: "market",
               snapshotId: prior.id,

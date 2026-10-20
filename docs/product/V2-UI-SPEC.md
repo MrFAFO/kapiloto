@@ -72,3 +72,16 @@ A free-slip flow remains a later phase after legal/product gating and calibratio
 5. Winner display-only market layer backed by deterministic models.
 6. Prediction track record.
 7. Only then consider free slips/recommended slips behind the agreed gates.
+
+
+## Research prior fallback
+
+Kapiloto research must not be blocked solely because bookmaker market data is unavailable.
+
+Prior hierarchy:
+1. use the latest valid pre-cutoff market prior when one exists;
+2. otherwise use an explicit uninformative `league_base` prior of 33.34% / 33.33% / 33.33%.
+
+The fallback is deliberately neutral: it does not invent bookmaker odds, team strength or home advantage. The reliability formula records and penalizes `uninformative_league_base_prior`, while grounded Sol research may move the final distribution away from the neutral baseline.
+
+API-Football enrichment is therefore optional at runtime. Missing provider credentials must not block a research run; missing `OPENAI_API_KEY` must fail **before** run creation so it cannot consume one of the three research slots.

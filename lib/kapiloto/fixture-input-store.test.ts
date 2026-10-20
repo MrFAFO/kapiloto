@@ -90,7 +90,7 @@ test("assembles 16 fixture inputs and uses the latest pre-cutoff prior", () => {
   ]);
 });
 
-test("preserves a fixture with null prior when no pre-cutoff market exists", () => {
+test("falls back to an explicit uninformative league-base prior when market data is unavailable", () => {
   const marketSnapshots = games.slice(1).map((game) => ({
     id: `market-${game.game_number}`,
     fixture_id: game.fixture_id,
@@ -111,6 +111,16 @@ test("preserves a fixture with null prior when no pre-cutoff market exists", () 
     "2026-10-18T12:00:00Z",
   );
 
-  assert.equal(inputs[0].prior, null);
+  assert.deepEqual(inputs[0].prior, {
+    type: "league_base",
+    snapshotId: null,
+    capturedAt: null,
+    probabilitiesBp: {
+      home: 3334,
+      draw: 3333,
+      away: 3333,
+    },
+  });
+  assert.equal(inputs[1].prior?.type, "market");
   assert.equal(inputs[1].prior?.snapshotId, "market-2");
 });

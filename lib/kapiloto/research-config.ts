@@ -5,11 +5,11 @@ import type { KapilotoRunConfig } from "./research-request-service";
 import type { KapilotoSolReasoningEffort } from "./openai-research";
 
 export const KAPILOTO_RESEARCH_PROTOCOL_VERSION = "kapiloto-research-v1";
-export const KAPILOTO_DERIVATION_VERSION = "kapiloto-derivation-v1";
+export const KAPILOTO_DERIVATION_VERSION = "kapiloto-derivation-v2";
 export const KAPILOTO_SOURCE_POLICY_VERSION = "kapiloto-source-v1";
 export const KAPILOTO_RECENCY_POLICY_VERSION = "kapiloto-recency-v1";
 export const KAPILOTO_RELIABILITY_FORMULA_VERSION =
-  "kapiloto-reliability-shadow-v1";
+  "kapiloto-reliability-shadow-v2";
 export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v1";
 
 export type KapilotoEnv = Readonly<Record<string, string | undefined>>;
