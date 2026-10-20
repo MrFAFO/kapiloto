@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -400,6 +401,7 @@ export function CurrentRoundTicket({
   kapiloto: CurrentRoundKapilotoConfig;
   round?: CurrentRoundView;
 }) {
+  const router = useRouter();
   const [picks, setPicks] = useState<Partial<Record<number, Pick>>>(
     () => round.initialPicks ?? {},
   );
@@ -437,6 +439,51 @@ export function CurrentRoundTicket({
     },
     [controllers],
   );
+
+  useEffect(() => {
+    if (round.isPrototype) return;
+
+    let stopped = false;
+    let running = false;
+
+    async function refreshLiveState() {
+      if (running || stopped) return;
+      running = true;
+
+      try {
+        const response = await fetch(
+          `/api/v1/rounds/${kapiloto.roundId}/live-sync`,
+          {
+            method: "POST",
+            credentials: "same-origin",
+            cache: "no-store",
+          },
+        );
+
+        if (!response.ok || stopped) return;
+
+        const body = (await response.json().catch(() => null)) as
+          | { result?: { status?: string } }
+          | null;
+
+        if (body?.result?.status === "synced") {
+          router.refresh();
+        }
+      } finally {
+        running = false;
+      }
+    }
+
+    void refreshLiveState();
+    const timer = window.setInterval(() => {
+      void refreshLiveState();
+    }, 30_000);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [kapiloto.roundId, round.isPrototype, router]);
 
   useEffect(() => {
     if (
