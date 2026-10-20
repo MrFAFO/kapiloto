@@ -19,6 +19,9 @@ Scope: demand-driven run creation, fixture fanout worker, retry/recovery, materi
 5. **Materialization trusted application fixture identity too much.**
    The database now verifies that the frozen fixture_set contains 16 unique canonical round-game/fixture pairs and that all 16 publication payloads match that set exactly.
 
+6. **The UI polling window was shorter than the scheduled 16-fixture fanout.**
+   The scheduler now starts two single-task workers per two-minute tick, while browser polling allows up to 30 minutes. This preserves conservative worker concurrency without falsely timing out a healthy round-wide run.
+
 ## Remaining gates before first paid run
 
 - Deploy the current branch after the Vercel Hobby daily deployment quota resets.

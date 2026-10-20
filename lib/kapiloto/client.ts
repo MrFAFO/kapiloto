@@ -357,7 +357,7 @@ export async function pollFixtureResearch(
 ): Promise<KapilotoPollOutcome> {
   const sleep = options.sleep ?? abortableSleep;
   const now = options.now ?? Date.now;
-  const maxWaitMs = options.maxWaitMs ?? 10 * 60 * 1000;
+  const maxWaitMs = options.maxWaitMs ?? 30 * 60 * 1000;
   const startedAt = now();
   let delaySeconds = clampPollSeconds(options.initialRetryAfterSeconds);
   let backoffSeconds = DEFAULT_POLL_SECONDS;
