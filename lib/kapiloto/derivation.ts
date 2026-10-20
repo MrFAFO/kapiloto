@@ -2,7 +2,7 @@ import type { KapilotoFixtureCard } from "./fixture-card";
 import type { SolFixtureResearchOutput } from "./research-output";
 
 export const KAPILOTO_RELIABILITY_FORMULA_VERSION =
-  "kapiloto-reliability-shadow-v2" as const;
+  "kapiloto-reliability-shadow-v3" as const;
 export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v1" as const;
 
 export type Outcome = "1" | "X" | "2";
@@ -187,13 +187,20 @@ export function deriveReliability(
 
   const prior = probabilitiesFromCard(card);
   const sol = probabilitiesFromSol(output);
-  const divergence = priorDivergenceBp(prior, sol);
-  if (divergence >= 2_000) {
-    score -= 0.12;
-    reasons.push("large_prior_divergence");
-  } else if (divergence >= 1_200) {
-    score -= 0.06;
-    reasons.push("moderate_prior_divergence");
+
+  // Divergence is informative only when the prior itself carries information.
+  // A league_base fallback is deliberately uninformative (near-uniform), so
+  // penalizing Sol for moving away from it would double-penalize missing market
+  // data and suppress well-grounded signals.
+  if (card.structured.prior.type !== "league_base") {
+    const divergence = priorDivergenceBp(prior, sol);
+    if (divergence >= 2_000) {
+      score -= 0.12;
+      reasons.push("large_prior_divergence");
+    } else if (divergence >= 1_200) {
+      score -= 0.06;
+      reasons.push("moderate_prior_divergence");
+    }
   }
 
   // Shadow-v1 deliberately avoids extreme trust before forward calibration.

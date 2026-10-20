@@ -31,6 +31,9 @@ Scope: demand-driven run creation, fixture fanout worker, retry/recovery, materi
 9. **Two scheduler workers could accidentally multiply concurrency and duplicate finalization AI work.**
    The scheduler now fills only free capacity up to two live attempts. Exactly one worker per scheduler tick is marked as the primary finalizer; secondary workers process fixtures only. This prevents overlapping ticks from faning out beyond the cap and avoids duplicate entailment calls during finalization.
 
+10. **Neutral league-base fallback was incorrectly treated like an informative prior.**
+    All 16 fixtures in round 264201 currently lack market snapshots and therefore use the explicit near-uniform league-base fallback. Reliability no longer applies market-divergence penalties against that fallback; the existing league-base quality penalty remains, while well-grounded Sol signals can move away from 33/33/33 without being punished twice.
+
 ## Remaining gates before first paid run
 
 - Deploy the current branch after the Vercel Hobby daily deployment quota resets.

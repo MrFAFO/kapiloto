@@ -224,3 +224,48 @@ test("double ranking tie breaker prefers lower reliability then lower Toto numbe
     ["fixture-3", "fixture-5", "fixture-1"],
   );
 });
+
+
+test("uninformative league-base prior does not penalize Sol divergence", () => {
+  const leagueBase = card([3334, 3333, 3333]);
+  leagueBase.structured.prior = {
+    ...leagueBase.structured.prior,
+    type: "league_base",
+    snapshot_id: null,
+    captured_at: null,
+  };
+
+  const marketNeutral = card([3334, 3333, 3333]);
+  const strongSol = output([6000, 2500, 1500]);
+
+  const fallbackResult = deriveFixtureAnalysis(strongSol, leagueBase, {
+    acceptedTrustTiers: [1],
+    rejectedCount: 0,
+  });
+  const marketResult = deriveFixtureAnalysis(strongSol, marketNeutral, {
+    acceptedTrustTiers: [1],
+    rejectedCount: 0,
+  });
+
+  assert.equal(fallbackResult.outcome, "analyzed");
+  assert.equal(marketResult.outcome, "analyzed");
+  if (
+    fallbackResult.outcome !== "analyzed" ||
+    marketResult.outcome !== "analyzed"
+  ) {
+    return;
+  }
+
+  assert.ok(
+    fallbackResult.reliabilityReasons.includes(
+      "uninformative_league_base_prior",
+    ),
+  );
+  assert.ok(
+    !fallbackResult.reliabilityReasons.includes("large_prior_divergence"),
+  );
+  assert.ok(
+    marketResult.reliabilityReasons.includes("large_prior_divergence"),
+  );
+  assert.ok(fallbackResult.reliability > marketResult.reliability);
+});
