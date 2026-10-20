@@ -63,3 +63,7 @@ Scope: demand-driven run creation, fixture fanout worker, retry/recovery, materi
   GitHub Actions probes, including one with desktop request headers and correct
   Jerusalem DST offset. It remains observational only and is not a blocker for
   the research pipeline.
+
+
+13. **Read polling and join requests could bypass the scheduler concurrency cap.**
+    Round-state and fixture-analysis GET routes are now strictly read-only and never launch workers. Joining an existing run no longer launches a worker. Only a newly-created run gets one immediate non-finalizing worker for low latency; the Supabase scheduler observes that live attempt, fills at most one remaining slot, and remains the sole finalization path. Demand-worker leases now match the 180-second scheduler lease.

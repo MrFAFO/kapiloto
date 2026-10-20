@@ -1,7 +1,5 @@
-import { after } from "next/server";
 import { handleRoundResearchStateGet } from "@/lib/kapiloto/read-api";
 import { serverKapilotoReadDeps } from "@/lib/kapiloto/server-read-deps";
-import { runKapilotoDemandWorkerBurst } from "@/lib/kapiloto/worker-demand";
 
 export const maxDuration = 300;
 
@@ -14,17 +12,9 @@ export async function GET(
   context: RouteContext,
 ): Promise<Response> {
   const params = await context.params;
-  const response = await handleRoundResearchStateGet(
+  return handleRoundResearchStateGet(
     request,
     params,
     serverKapilotoReadDeps,
   );
-
-  if (response.ok) {
-    after(() =>
-      runKapilotoDemandWorkerBurst(`state:${params.roundId}`, 2),
-    );
-  }
-
-  return response;
 }

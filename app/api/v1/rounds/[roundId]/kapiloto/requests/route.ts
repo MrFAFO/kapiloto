@@ -193,14 +193,11 @@ export async function POST(
         ? research.run_id ?? null
         : null);
 
-    if (
-      research.outcome === "created_run" ||
-      research.outcome === "joined_run"
-    ) {
+    if (research.outcome === "created_run") {
       after(() =>
         runKapilotoDemandWorkerBurst(
           `request:${research.run_id ?? roundId}`,
-          2,
+          1,
         ),
       );
     }
