@@ -299,6 +299,39 @@ export class SportmonksClient {
     return "participants;league;round;state;lineups;sidelined";
   }
 
+  async getFixturesBetween(
+    startDate: string,
+    endDate: string,
+  ): Promise<ProviderFixture[]> {
+    const rows: ProviderFixture[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const envelope = await this.request<SportmonksFixtureRow[]>(
+        `/fixtures/between/${startDate}/${endDate}`,
+        {
+          include: "participants;league;round;state",
+          page,
+        },
+      );
+
+      for (const raw of requireData(envelope, "fixture date range")) {
+        const fixture = toProviderFixture(raw);
+        if (fixture) rows.push(fixture);
+      }
+
+      hasMore = envelope.pagination?.has_more === true;
+      page = envelope.pagination?.next_page ?? page + 1;
+
+      if (page > 100) {
+        throw new Error("Sportmonks fixture pagination exceeded safety limit.");
+      }
+    }
+
+    return rows;
+  }
+
   async getFixtureById(fixtureId: number): Promise<{
     fixture: ProviderFixture | null;
     raw: SportmonksFixtureRow | null;
