@@ -127,7 +127,7 @@ export function buildTelesportGameUpdate(
   return update;
 }
 
-let inFlight: Promise<AutomaticLiveSyncResult> | null = null;
+const inFlightByRound = new Map<string, Promise<AutomaticLiveSyncResult>>();
 
 async function syncOnce(
   client: SupabaseClient<Database>,
@@ -266,11 +266,13 @@ export async function runAutomaticLiveSync(
   roundId: string,
   options: { now?: Date } = {},
 ): Promise<AutomaticLiveSyncResult> {
-  if (inFlight) return inFlight;
+  const existing = inFlightByRound.get(roundId);
+  if (existing) return existing;
 
-  inFlight = syncOnce(client, roundId, options.now ?? new Date()).finally(() => {
-    inFlight = null;
+  const promise = syncOnce(client, roundId, options.now ?? new Date()).finally(() => {
+    inFlightByRound.delete(roundId);
   });
+  inFlightByRound.set(roundId, promise);
 
-  return inFlight;
+  return promise;
 }
