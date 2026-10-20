@@ -155,9 +155,9 @@ export function buildTelesportGameUpdate(
         update.settlement_source = corroboratedSource;
       }
     } else {
-      update.pool_settlement_status = "settled";
-      update.pool_outcome = source.outcome;
-      update.settlement_source = settlementSource;
+      update.pool_settlement_status = "under_review";
+      update.settlement_source =
+        `${settlementSource};365scores:unverified`;
     }
   } else if (
     source.status === "postponed" ||

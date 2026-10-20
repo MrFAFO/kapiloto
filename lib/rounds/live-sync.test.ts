@@ -40,7 +40,7 @@ test("live Telesport outcome stays provisional", () => {
   assert.equal(payload.pool_outcome, undefined);
 });
 
-test("finished Telesport row with 1X2 settles the pool result", () => {
+test("finished Telesport row stays under review until 365Scores corroborates", () => {
   const payload = buildTelesportGameUpdate(
     game,
     {
@@ -57,11 +57,11 @@ test("finished Telesport row with 1X2 settles the pool result", () => {
   ) as Record<string, unknown>;
 
   assert.equal(payload.status, "finished");
-  assert.equal(payload.pool_settlement_status, "settled");
-  assert.equal(payload.pool_outcome, "1");
+  assert.equal(payload.pool_settlement_status, "under_review");
+  assert.equal(payload.pool_outcome, undefined);
   assert.equal(
     payload.settlement_source,
-    "telesport-winner16:sha256:official",
+    "telesport-winner16:sha256:official;365scores:unverified",
   );
 });
 
