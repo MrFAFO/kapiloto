@@ -144,7 +144,7 @@ export function buildTelesportGameUpdate(
         (scores365.result.homeScore !== source.homeScore ||
           scores365.result.awayScore !== source.awayScore);
       const corroboratedSource =
-        `${settlementSource};365scores:${scores365.sourceVersion}`;
+        `${settlementSource};365scores:event=${scores365.result.eventId}:${scores365.sourceVersion}`;
 
       if (outcomeConflict || scoreConflict) {
         update.pool_settlement_status = "under_review";

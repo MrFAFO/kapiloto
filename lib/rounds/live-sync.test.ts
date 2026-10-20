@@ -139,7 +139,7 @@ test("matching 365Scores final corroborates Telesport settlement", () => {
   assert.equal(payload.pool_outcome, "1");
   assert.equal(
     payload.settlement_source,
-    "telesport-winner16:sha256:telesport;365scores:sha256:365",
+    "telesport-winner16:sha256:telesport;365scores:event=365-1:sha256:365",
   );
 });
 
@@ -177,5 +177,41 @@ test("365Scores disagreement forces under-review and never publishes a pool outc
   assert.match(
     String(payload.settlement_source),
     /telesport-winner16:.*365scores:/,
+  );
+});
+
+
+test("365Scores event id is retained in settlement provenance", () => {
+  const payload = buildTelesportGameUpdate(
+    game,
+    {
+      gameNumber: 1,
+      status: "finished",
+      homeScore: 0,
+      awayScore: 0,
+      outcome: "X",
+      rawStatus: "הסתיים",
+      rawScore: "0 - 0",
+    },
+    "sha256:telesport",
+    "2026-10-24T16:00:00.000Z",
+    {
+      sourceVersion: "sha256:365snapshot",
+      result: {
+        eventId: "4739302",
+        date: "2026-10-24",
+        startTime: "2026-10-24T16:00:00.000Z",
+        homeTeam: "Home",
+        awayTeam: "Away",
+        homeScore: 0,
+        awayScore: 0,
+        outcome: "X",
+      },
+    },
+  ) as Record<string, unknown>;
+
+  assert.match(
+    String(payload.settlement_source),
+    /365scores:event=4739302:sha256:365snapshot$/,
   );
 });

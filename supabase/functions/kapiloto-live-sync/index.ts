@@ -705,7 +705,7 @@ Deno.serve(async (req: Request) => {
           crossCheck.outcome
         ) {
           const sourceLabel =
-            `${settlementSource};365scores:${snapshot!.sourceVersion}`;
+            `${settlementSource};365scores:event=${crossCheck.eventId}:${snapshot!.sourceVersion}`;
           const scoreConflict =
             source.homeScore != null &&
             source.awayScore != null &&
