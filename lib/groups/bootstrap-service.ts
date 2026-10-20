@@ -10,6 +10,21 @@ export type CreatedGroup = {
   defaultMaxDoubles: number;
 };
 
+export type GroupJoinRequestResult = {
+  groupId: string;
+  groupName: string;
+  status: "pending" | "already_member";
+  requestId: string | null;
+};
+
+export type GroupJoinDecisionResult = {
+  requestId: string;
+  groupId: string;
+  userId: string;
+  status: "approved" | "rejected";
+  replayed: boolean;
+};
+
 export type GroupRoundSettings = {
   groupId: string;
   roundId: string;
@@ -56,6 +71,78 @@ export class GroupBootstrapService {
       joinCode: row.join_code,
       role: "owner",
       defaultMaxDoubles: row.default_max_doubles,
+    };
+  }
+
+  async requestJoin(
+    userId: string,
+    joinCode: string,
+  ): Promise<GroupJoinRequestResult> {
+    const { data, error } = await this.client.rpc(
+      "kapiloto_request_group_join",
+      {
+        p_user_id: userId,
+        p_join_code: joinCode,
+      },
+    );
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const row = object(data, "Join group");
+    if (
+      typeof row.group_id !== "string" ||
+      typeof row.group_name !== "string" ||
+      (row.status !== "pending" && row.status !== "already_member") ||
+      (row.request_id !== null && typeof row.request_id !== "string")
+    ) {
+      throw new Error("Join group response is incomplete.");
+    }
+
+    return {
+      groupId: row.group_id,
+      groupName: row.group_name,
+      status: row.status,
+      requestId: typeof row.request_id === "string" ? row.request_id : null,
+    };
+  }
+
+  async decideJoin(
+    actorUserId: string,
+    requestId: string,
+    decision: "approved" | "rejected",
+  ): Promise<GroupJoinDecisionResult> {
+    const { data, error } = await this.client.rpc(
+      "kapiloto_decide_group_join",
+      {
+        p_actor_user_id: actorUserId,
+        p_request_id: requestId,
+        p_decision: decision,
+      },
+    );
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const row = object(data, "Decide group join");
+    if (
+      typeof row.request_id !== "string" ||
+      typeof row.group_id !== "string" ||
+      typeof row.user_id !== "string" ||
+      (row.status !== "approved" && row.status !== "rejected") ||
+      typeof row.replayed !== "boolean"
+    ) {
+      throw new Error("Decide group join response is incomplete.");
+    }
+
+    return {
+      requestId: row.request_id,
+      groupId: row.group_id,
+      userId: row.user_id,
+      status: row.status,
+      replayed: row.replayed,
     };
   }
 
