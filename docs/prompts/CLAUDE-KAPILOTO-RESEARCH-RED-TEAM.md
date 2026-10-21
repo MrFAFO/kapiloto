@@ -127,3 +127,32 @@ Required output:
   or trigger any research run.
 - End with GO / NO-GO for allowing the existing slot-1 run to continue retries
   after the patch is deployed.
+
+
+### Additional live finding after handoff was prepared
+
+Production Supabase currently has **no research-worker cron job** in `cron.job`.
+The only Kapiloto cron present is `kapiloto-live-sync-every-2-min`.
+However migration history shows all three research-worker migrations as applied:
+- kapiloto_research_worker_scheduler_v1
+- kapiloto_research_worker_parallelism_v1
+- kapiloto_research_worker_concurrency_guard_v1
+
+Current active-run attempt state at the time of this note:
+- failed attempts: 4
+- queued attempts: 16
+- running attempts: 0
+
+This means retries are effectively paused right now, which is desirable while
+debugging, but it also exposes an operational drift problem: migration history
+says the scheduler exists while the live cron catalog says it does not.
+
+Add these questions to the review:
+9. Trace every code/migration path that can unschedule
+   `kapiloto-research-worker-every-2-min`. Determine why the live job is absent
+   after the concurrency-guard migration was recorded as applied.
+10. Recommend a safe idempotent reconciliation mechanism so scheduler drift can
+    be detected/repaired without blindly re-enabling work during an incident.
+11. Do not re-enable the research scheduler as part of the review. Keep the live
+    run paused until the provider/schema fixes are deployed and explicitly
+    approved.
