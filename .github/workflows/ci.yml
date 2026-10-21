@@ -8,6 +8,7 @@ on:
   pull_request:
     branches:
       - main
+      - feat/**
 
 jobs:
   validate:
@@ -28,6 +29,27 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Provider tests
+        run: npm run test:providers
+
+      - name: Round import tests
+        run: npm run test:rounds
+
+      - name: Ticket persistence tests
+        run: npm run test:tickets
+
+      - name: Group flow tests
+        run: npm run test:groups
+
+      - name: Kapiloto core tests
+        run: npm run test:kapiloto
+
+      - name: Auth tests
+        run: npm run test:auth
+
+      - name: UI tests
+        run: npm run test:ui
 
       - name: Build
         run: npm run build

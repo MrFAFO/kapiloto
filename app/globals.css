@@ -1,34 +1,37 @@
 @import "tailwindcss";
 
+/* Dark Stadium tokens — Figma 2Pp5ae9bgqhTfwcU2JcIlK, "02 — Design System" and
+   "01 — Mobile App" screens 10.1 / 10.2 / 10.12–10.14. */
 :root {
-  --background: #f6f8fc;
-  --surface: #ffffff;
-  --text: #0e1220;
-  --muted: #667085;
-  --border: #e3e7ef;
-  --brand: #1c50d9;
-  --brand-soft: #e9efff;
-  --kapiloto: #6b40d6;
-  --kapiloto-soft: #f1ecff;
-  --ink: #111a2f;
-  --warning: #ed8f1a;
-}
-
-* {
-  box-sizing: border-box;
+  --canvas: #04060f;
+  --panel: #070c17;
+  --elevated: #0a1120;
+  --nav: #050812;
+  --border: #1c263c;
+  --text: #f6f9ff;
+  --muted: #96a8c9;
+  --muted-strong: #54637d;
+  --kapiloto: #7038fa;
+  --kapiloto-surface: #130d2a;
+  --kapiloto-deep: #241254;
+  --kapiloto-border: rgba(112, 56, 250, 0.45);
+  --action: #1f75ff;
+  --live: #eb4266;
+  --success: #14b273;
+  --diego: #14ccff;
+  --diego-surface: #091b25;
+  --header-from: #0a1a38;
+  --header-to: #120a2e;
 }
 
 html {
-  background: var(--background);
+  background: var(--canvas);
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
   color: var(--text);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-button {
-  font: inherit;
+  background: var(--canvas);
+  font-family: var(--font-hebrew), "Noto Sans Hebrew", Arial, sans-serif;
 }

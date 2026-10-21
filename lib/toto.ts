@@ -23,6 +23,41 @@ export function outcomesToPick(outcomes: Outcome[]): Pick {
   return "12";
 }
 
+/**
+ * Applies a user tap on a 1/X/2 control. This is the only way a draft pick
+ * changes; Kapiloto recommendations never call it.
+ */
+export function toggleOutcomeInPicks<K extends string | number>(
+  picks: Record<K, Pick>,
+  key: K,
+  outcome: Outcome,
+  maxDoubles: number,
+): Record<K, Pick> {
+  const currentOutcomes = pickToOutcomes(picks[key]);
+  const isSelected = currentOutcomes.includes(outcome);
+
+  let nextOutcomes: Outcome[];
+
+  if (isSelected) {
+    if (currentOutcomes.length === 1) return picks;
+    nextOutcomes = currentOutcomes.filter((value) => value !== outcome);
+  } else if (currentOutcomes.length === 2) {
+    nextOutcomes = [outcome];
+  } else {
+    const doublesNow = (Object.values(picks) as Pick[]).filter(
+      (pick) => pickToOutcomes(pick).length === 2,
+    ).length;
+
+    if (doublesNow >= maxDoubles) return picks;
+    nextOutcomes = [...currentOutcomes, outcome];
+  }
+
+  return {
+    ...picks,
+    [key]: outcomesToPick(nextOutcomes),
+  };
+}
+
 export function isHit(pick: Pick, outcome: Outcome): boolean {
   return pickToOutcomes(pick).includes(outcome);
 }

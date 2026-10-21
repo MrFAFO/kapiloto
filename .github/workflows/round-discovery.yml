@@ -1,0 +1,52 @@
+name: Winner 16 Discovery
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - design/mobile-first-dark-stadium
+    paths:
+      - .github/round-discovery-trigger
+      - .github/workflows/round-discovery.yml
+      - scripts/discover-toto-round.ts
+      - lib/rounds/telesport.ts
+      - lib/rounds/toto-source.ts
+      - lib/rounds/telesport.test.ts
+      - lib/rounds/toto-source.test.ts
+  schedule:
+    - cron: "17 */6 * * *"
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Round source tests
+        run: npm run test:rounds
+
+      - name: Discover current Winner 16
+        run: |
+          npm run round:discover --             --out artifacts/round-discovery/current.json
+
+      - name: Upload discovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: winner16-discovery
+          path: artifacts/round-discovery/current.json
+          if-no-files-found: error
+          retention-days: 14
