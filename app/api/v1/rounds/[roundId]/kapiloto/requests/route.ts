@@ -18,6 +18,7 @@ import {
 } from "@/lib/kapiloto/response-state";
 import { ensureServerKapilotoResearch } from "@/lib/kapiloto/server-research";
 import { runKapilotoDemandWorkerBurst } from "@/lib/kapiloto/worker-demand";
+import { kapilotoInvocationDeadline } from "@/lib/kapiloto/worker-runtime";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthenticatedUserId } from "@/lib/supabase/auth";
 
@@ -79,6 +80,7 @@ export async function POST(
   request: Request,
   context: RouteContext,
 ): Promise<NextResponse> {
+  const requestStartedAt = Date.now();
   try {
     const { roundId } = await context.params;
     if (!UUID_RE.test(roundId)) {
@@ -197,6 +199,7 @@ export async function POST(
       after(() =>
         runKapilotoDemandWorkerBurst(
           `request:${research.run_id ?? roundId}`,
+          kapilotoInvocationDeadline(requestStartedAt),
         ),
       );
     }

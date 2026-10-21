@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import researchOutputSchema from "@/docs/ai/kapiloto-research-output.schema.json";
+
 import { KAPILOTO_SOL_SYSTEM_PROMPT } from "./research-prompt";
 import type { KapilotoRunConfig } from "./research-request-service";
 import type { KapilotoSolReasoningEffort } from "./openai-research";
@@ -20,6 +22,14 @@ export function sha256Text(value: string): string {
 
 export const KAPILOTO_PROMPT_TEMPLATE_SHA256 = sha256Text(
   KAPILOTO_SOL_SYSTEM_PROMPT,
+);
+
+/**
+ * Hash of the strict output schema actually sent to Sol. Recorded per attempt
+ * because the schema can change while a frozen run is still executing.
+ */
+export const KAPILOTO_RESEARCH_SCHEMA_SHA256 = sha256Text(
+  JSON.stringify(researchOutputSchema),
 );
 
 function parsePositiveInteger(
@@ -50,7 +60,9 @@ export function getKapilotoOpenAIModel(
 export function getKapilotoReasoningEffort(
   env: KapilotoEnv = process.env,
 ): KapilotoSolReasoningEffort {
-  const effort = (env.KAPILOTO_OPENAI_REASONING_EFFORT ?? "high").trim();
+  // Medium by default: high effort plus high-context web search and the full
+  // structured output did not fit one synchronous serverless invocation.
+  const effort = (env.KAPILOTO_OPENAI_REASONING_EFFORT ?? "medium").trim();
   if (effort !== "low" && effort !== "medium" && effort !== "high") {
     throw new Error(
       "KAPILOTO_OPENAI_REASONING_EFFORT must be low, medium, or high.",

@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test": "npm run test:providers && npm run test:kapiloto && npm run test:ui && npm run test:auth && npm run test:rounds && npm run test:tickets && npm run test:groups",
     "test:providers": "tsx --test lib/providers/*.test.ts",
     "spike:provider": "tsx scripts/provider-spike.ts",
     "spike:compare": "tsx scripts/compare-provider-reports.ts",
@@ -28,6 +29,7 @@
     "openai": "7.28.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "26.6.5",
     "@types/react": "19.3.0",

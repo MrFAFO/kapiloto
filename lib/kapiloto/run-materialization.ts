@@ -1,3 +1,7 @@
+import type {
+  EntailmentJudgeCall,
+  UnsupportedEntailment,
+} from "./entailment-verifier";
 import type { KapilotoFixtureCard } from "./fixture-card";
 import {
   deriveFixtureAnalysis,
@@ -17,7 +21,14 @@ export type ValidatedFixtureResearch = {
   card: KapilotoFixtureCard;
   output: SolFixtureResearchOutput;
   grounding: GroundingResult;
+  /** Audit detail when entailment rejected material evidence. */
+  entailment?: {
+    unsupported: UnsupportedEntailment[];
+    calls: EntailmentJudgeCall[];
+  };
 };
+
+export const ENTAILMENT_DOWNGRADE_REASON = "material_entailment_unsupported";
 
 export type MaterializedEvidence = {
   model_evidence_id: string;
@@ -35,8 +46,8 @@ export type MaterializedEvidence = {
   entailment: "supported" | "unsupported" | "not_checked";
   syndication_cluster_id: string | null;
   content_sha256: string;
-  status: "accepted";
-  rejected_reason: null;
+  status: "accepted" | "rejected";
+  rejected_reason: string | null;
 };
 
 export type MaterializedFactor = {
@@ -169,6 +180,12 @@ function assertFixtureIdentity(input: ValidatedFixtureResearch): void {
 function acceptedEvidence(
   grounding: GroundingResult,
 ): MaterializedEvidence[] {
+  if (grounding.accepted.some((item) => item.entailment === "unsupported")) {
+    throw new Error(
+      "Unsupported evidence can only be materialized through the entailment downgrade path.",
+    );
+  }
+
   return grounding.accepted.map((item) => ({
     model_evidence_id: item.modelEvidenceId,
     url_canonical: item.canonicalUrl,
@@ -306,10 +323,164 @@ function analyzedPayload(
   };
 }
 
+/**
+ * Fail-closed fixture-level fallback when entailment rejected material
+ * evidence. The fixture keeps its identity and frozen prior/context, but
+ * publishes no Sol estimate, pick, double, factor or model narrative. The
+ * rejected evidence is persisted with status `rejected` for audit and can
+ * never count as accepted support.
+ */
+function materializeEntailmentDowngrade(
+  input: ValidatedFixtureResearch,
+): MaterializedAnalysis {
+  const { card, output, grounding } = input;
+  const unsupportedIds = grounding.accepted
+    .filter((item) => item.entailment === "unsupported")
+    .map((item) => item.modelEvidenceId)
+    .sort();
+
+  return {
+    round_game_id: input.roundGameId,
+    fixture_id: input.fixtureId,
+    outcome: "insufficient_data",
+    carried_from_analysis_id: null,
+    research_cutoff_at: card.research_cutoff_at,
+    kickoff_at_snapshot: card.kickoff_at,
+    settlement_rule_snapshot: card.settlement,
+    neutral_venue_snapshot: card.neutral_venue,
+    orientation_verified: true,
+    prior_type: card.structured.prior.type,
+    market_snapshot_id: card.structured.prior.snapshot_id,
+    p_prior_1_bp: card.structured.prior.p_home_bp,
+    p_prior_x_bp: card.structured.prior.p_draw_bp,
+    p_prior_2_bp: card.structured.prior.p_away_bp,
+    p_sol_1_bp: null,
+    p_sol_x_bp: null,
+    p_sol_2_bp: null,
+    p_final_1_bp: null,
+    p_final_x_bp: null,
+    p_final_2_bp: null,
+    reliability: null,
+    reliability_band: "low",
+    reliability_reasons: [
+      ENTAILMENT_DOWNGRADE_REASON,
+      ...unsupportedIds.map((id) => `entailment_unsupported:${id}`),
+    ],
+    model_self_confidence: null,
+    primary_pick: null,
+    suggested_double: null,
+    double_priority_rank: null,
+    double_gain_score: null,
+    blend_weight: null,
+    deviation_cap_applied: false,
+    summary: null,
+    main_risk: null,
+    availability: [],
+    dimension_coverage: [],
+    conflicts: [],
+    watch_items: [],
+    key_assumptions: [],
+    data_quality: {
+      sparse_coverage: output.data_quality.sparse_coverage,
+      language_limited: output.data_quality.language_limited,
+      notes: `${ENTAILMENT_DOWNGRADE_REASON}: ${unsupportedIds.length} material claim(s) failed entailment verification; fixture withheld.`,
+    },
+    suspicious_content: output.suspicious_content_observed,
+    valid_until: null,
+    generated_at: null,
+    evidence: grounding.accepted.map((item) => {
+      const rejected = item.entailment === "unsupported";
+      return {
+        model_evidence_id: item.modelEvidenceId,
+        url_canonical: item.canonicalUrl,
+        domain: item.domain,
+        claim_type: item.claimType,
+        about_team: item.aboutTeam,
+        quote: item.quote,
+        claim: item.claim,
+        source_event_time: item.sourceEventTime,
+        published_at: item.publishedAt,
+        retrieved_at: item.retrievedAt,
+        trust_tier: item.trustTier,
+        quote_verified: true,
+        entailment: item.entailment,
+        syndication_cluster_id: item.syndicationClusterId,
+        content_sha256: item.contentSha256,
+        status: rejected ? ("rejected" as const) : ("accepted" as const),
+        rejected_reason: rejected ? "entailment_unsupported" : null,
+      };
+    }),
+    factors: [],
+    inputs: [
+      {
+        input_type: "fixture_card",
+        input_version: card.fixture_card_version,
+        metadata: {
+          fixture_id: card.fixture_id,
+          market_snapshot_id: card.structured.prior.snapshot_id,
+        },
+      },
+      {
+        input_type: "grounding_report",
+        input_version: "kapiloto-grounding-v1",
+        metadata: {
+          accepted_count: grounding.accepted.length,
+          rejected: grounding.rejected,
+        },
+      },
+      {
+        input_type: "entailment_downgrade",
+        input_version: "kapiloto-entailment-downgrade-v1",
+        metadata: {
+          reason: ENTAILMENT_DOWNGRADE_REASON,
+          unsupported_evidence_ids: unsupportedIds,
+          unsupported: (input.entailment?.unsupported ?? []).map((item) => ({
+            evidence_id: item.evidenceId,
+            claim: item.claim,
+            quote: item.quote,
+            domain: item.domain,
+            url: item.canonicalUrl,
+          })),
+          judge_calls: (input.entailment?.calls ?? []).map((call) => ({
+            response_id: call.responseId,
+            model: call.model,
+            claims: call.claims,
+          })),
+          withheld: [
+            "p_sol",
+            "p_final",
+            "primary_pick",
+            "suggested_double",
+            "double_priority_rank",
+            "factors",
+            "summary",
+            "main_risk",
+            "availability",
+            "watch_items",
+            "key_assumptions",
+          ],
+        },
+      },
+    ],
+  };
+}
+
 function materializeResearchFixture(
   input: ValidatedFixtureResearch,
 ): MaterializedAnalysis {
   assertFixtureIdentity(input);
+
+  if (input.grounding.requiresEntailmentVerification.length > 0) {
+    throw new Error(
+      `Fixture ${input.fixtureId} still requires material-factor entailment verification.`,
+    );
+  }
+
+  // Fail closed: any accepted evidence the judge rejected withholds the
+  // whole fixture, whether or not audit metadata was supplied.
+  if (input.grounding.accepted.some((item) => item.entailment === "unsupported")) {
+    return materializeEntailmentDowngrade(input);
+  }
 
   if (
     input.output.outcome === "analyzed" &&
@@ -317,12 +488,6 @@ function materializeResearchFixture(
   ) {
     throw new Error(
       `Analyzed fixture ${input.fixtureId} has no accepted grounded evidence.`,
-    );
-  }
-
-  if (input.grounding.requiresEntailmentVerification.length > 0) {
-    throw new Error(
-      `Fixture ${input.fixtureId} still requires material-factor entailment verification.`,
     );
   }
 

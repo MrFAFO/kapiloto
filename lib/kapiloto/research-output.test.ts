@@ -167,3 +167,53 @@ test("rejects references to unknown evidence ids", () => {
     /unknown evidence id/,
   );
 });
+
+test("rejects key_assumptions longer than the shared limit", () => {
+  const raw = output();
+  raw.key_assumptions = ["x".repeat(151)] as never[];
+
+  assert.throws(
+    () =>
+      validateSolFixtureResearchOutput(raw, card, [
+        "https://example.com/team-news",
+      ]),
+    /key_assumptions exceeds 150 characters/,
+  );
+});
+
+test("bounds conflict topics and watch-item conditions like the schema", () => {
+  const conflictRaw = output();
+  conflictRaw.conflicts = [
+    {
+      topic: "t".repeat(151),
+      evidence_ids_a: ["e1"],
+      evidence_ids_b: ["e1"],
+      resolution: "unresolved",
+    },
+  ] as never[];
+  assert.throws(
+    () =>
+      validateSolFixtureResearchOutput(conflictRaw, card, [
+        "https://example.com/team-news",
+      ]),
+    /conflicts\.topic exceeds 150/,
+  );
+
+  const watchRaw = output();
+  watchRaw.watch_items = [
+    {
+      signal_type: "lineup",
+      team: "home",
+      player_name: null,
+      condition: "c".repeat(151),
+      impact_if_triggered: "uncertain",
+    },
+  ] as never[];
+  assert.throws(
+    () =>
+      validateSolFixtureResearchOutput(watchRaw, card, [
+        "https://example.com/team-news",
+      ]),
+    /watch_items\.condition exceeds 150/,
+  );
+});

@@ -4,11 +4,45 @@ import type { KapilotoFixtureCard } from "./fixture-card";
 import type { SolFixtureResearchOutput } from "./research-output";
 import type { GroundingResult } from "./source-grounding";
 import {
+  classifyOpenAICallError,
+  KAPILOTO_SOL_DEFAULT_MAX_OUTPUT_TOKENS,
   researchFixtureWithSol,
   SolFixtureResearchError,
+  type KapilotoSearchContextSize,
+  type KapilotoSolReasoningEffort,
+  type SolFailureProvenance,
   type SolFixtureResearchOptions,
   type SolFixtureResearchResult,
 } from "./openai-research";
+import {
+  KAPILOTO_PROMPT_TEMPLATE_SHA256,
+  KAPILOTO_RESEARCH_SCHEMA_SHA256,
+} from "./research-config";
+
+/** The provider request shape used by one attempt; persisted for audit. */
+export type ResearchRequestProfile = {
+  reasoningEffort: KapilotoSolReasoningEffort;
+  searchContextSize: KapilotoSearchContextSize;
+  maxOutputTokens: number;
+};
+
+export type PriorAttemptFailure = {
+  attemptNo: number;
+  failureCode: string | null;
+  failureDetail: string | null;
+  requestProfile: ResearchRequestProfile | null;
+};
+
+export const DEFAULT_RESEARCH_REQUEST_PROFILE: ResearchRequestProfile = {
+  reasoningEffort: "medium",
+  searchContextSize: "high",
+  maxOutputTokens: KAPILOTO_SOL_DEFAULT_MAX_OUTPUT_TOKENS,
+};
+
+/** Grounding fetches sources (8s per request) and finishes the attempt. */
+export const DEFAULT_POST_MODEL_RESERVE_MS = 60_000;
+/** Below this, a fixture research call is not worth starting. */
+export const DEFAULT_MINIMUM_MODEL_BUDGET_MS = 120_000;
 
 export type ClaimedResearchAttempt = {
   attemptId: string;
@@ -67,6 +101,12 @@ export interface ResearchAttemptQueue {
     retryCreated: boolean;
     nextAttemptId: string | null;
   }>;
+  /** Earlier terminal attempts of the same task, used to vary retries. */
+  priorFailures?(
+    runId: string,
+    taskKey: string,
+    beforeAttemptNo: number,
+  ): Promise<PriorAttemptFailure[]>;
 }
 
 export interface FixtureResearchRunner {
@@ -91,12 +131,20 @@ export type ExecuteResearchTaskOptions = {
   leaseSeconds?: number;
   heartbeatIntervalMs?: number;
   reasoningEffort?: SolFixtureResearchOptions["reasoningEffort"];
+  searchContextSize?: KapilotoSearchContextSize;
+  maxOutputTokens?: number;
   grounder?: FixtureEvidenceGrounder;
   traceId?: string | null;
+  /** Epoch ms by which this invocation must have finished its attempt. */
+  deadlineAtMs?: number;
+  postModelReserveMs?: number;
+  minimumModelBudgetMs?: number;
+  now?: () => number;
 };
 
 export type ExecuteResearchTaskResult =
   | { status: "no_work" }
+  | { status: "deferred"; reason: "insufficient_time" }
   | { status: "succeeded"; attemptId: string; runId: string }
   | {
       status: "failed";
@@ -133,17 +181,115 @@ function validateClaim(attempt: ClaimedResearchAttempt): KapilotoFixtureCard {
   return attempt.fixtureCard;
 }
 
-function retryableFailure(error: unknown): boolean {
-  if (!(error instanceof SolFixtureResearchError)) return false;
+const EFFORT_LADDER: KapilotoSolReasoningEffort[] = ["low", "medium", "high"];
+const SEARCH_CONTEXT_LADDER: KapilotoSearchContextSize[] = [
+  "low",
+  "medium",
+  "high",
+];
+
+function sameProfile(
+  left: ResearchRequestProfile,
+  right: ResearchRequestProfile,
+): boolean {
   return (
-    error.failureClass === "provider_transient" ||
-    error.failureClass === "model_output_invalid"
+    left.reasoningEffort === right.reasoningEffort &&
+    left.searchContextSize === right.searchContextSize &&
+    left.maxOutputTokens === right.maxOutputTokens
   );
 }
 
-function failureClass(error: unknown): string {
-  if (error instanceof SolFixtureResearchError) return error.failureClass;
-  return "internal";
+/**
+ * The next cheaper request shape after a capacity failure (output budget or
+ * deadline exhausted): lower reasoning effort first, then a smaller search
+ * context. Returns null when nothing cheaper remains.
+ */
+export function stepDownRequestProfile(
+  profile: ResearchRequestProfile,
+): ResearchRequestProfile | null {
+  const effortIndex = EFFORT_LADDER.indexOf(profile.reasoningEffort);
+  if (effortIndex > 0) {
+    return { ...profile, reasoningEffort: EFFORT_LADDER[effortIndex - 1] };
+  }
+  const contextIndex = SEARCH_CONTEXT_LADDER.indexOf(profile.searchContextSize);
+  if (contextIndex > 0) {
+    return {
+      ...profile,
+      searchContextSize: SEARCH_CONTEXT_LADDER[contextIndex - 1],
+    };
+  }
+  return null;
+}
+
+export function isCapacityFailure(failure: PriorAttemptFailure): boolean {
+  const code = failure.failureCode ?? "";
+  return (
+    code === "sol_incomplete:max_output_tokens" ||
+    code === "sol_incomplete:unknown" ||
+    code === "sol_deadline_exceeded"
+  );
+}
+
+/**
+ * Never repeat a request shape that already exhausted its budget for this
+ * task. Failures recorded without a profile (pre-patch attempts that ran
+ * with a smaller output cap) do not force a step-down.
+ */
+export function selectRequestProfile(
+  base: ResearchRequestProfile,
+  priorFailures: PriorAttemptFailure[],
+): ResearchRequestProfile {
+  let profile = base;
+  const ordered = [...priorFailures].sort((a, b) => a.attemptNo - b.attemptNo);
+
+  for (const failure of ordered) {
+    if (!isCapacityFailure(failure) || !failure.requestProfile) continue;
+    if (!sameProfile(failure.requestProfile, profile)) continue;
+    profile = stepDownRequestProfile(profile) ?? profile;
+  }
+
+  return profile;
+}
+
+function profileReport(profile: ResearchRequestProfile) {
+  return {
+    reasoning_effort: profile.reasoningEffort,
+    search_context_size: profile.searchContextSize,
+    max_output_tokens: profile.maxOutputTokens,
+    prompt_template_sha256: KAPILOTO_PROMPT_TEMPLATE_SHA256,
+    output_schema_sha256: KAPILOTO_RESEARCH_SCHEMA_SHA256,
+  };
+}
+
+function solFailure(error: unknown): SolFixtureResearchError {
+  return error instanceof SolFixtureResearchError
+    ? error
+    : classifyOpenAICallError(error);
+}
+
+function provenanceUsage(provenance: SolFailureProvenance | null) {
+  return {
+    inputTokens: provenance?.usage.inputTokens ?? null,
+    cachedInputTokens: provenance?.usage.cachedInputTokens ?? null,
+    outputTokens: provenance?.usage.outputTokens ?? null,
+    reasoningTokens: provenance?.usage.reasoningTokens ?? null,
+  };
+}
+
+function semanticStage(code: string): string {
+  if (code === "sol_semantic_validation_failed") return "failed";
+  if (code === "sol_output_unparseable" || code === "sol_output_empty") {
+    return "failed";
+  }
+  return "not_started";
+}
+
+/** Marks a failed write of a successful result; never recorded as failure. */
+class SuccessFinishError extends Error {
+  constructor(readonly cause: unknown) {
+    super("Failed to record a successful Kapiloto research attempt.");
+    this.name = "SuccessFinishError";
+  }
 }
 
 function retryDelaySeconds(attemptNo: number): number {
@@ -156,7 +302,6 @@ function emptyUsage() {
     cachedInputTokens: null,
     outputTokens: null,
     reasoningTokens: null,
-    totalTokens: null,
   };
 }
 
@@ -178,11 +323,29 @@ export async function executeOneResearchTask(
   const leaseSeconds = options.leaseSeconds ?? 900;
   const heartbeatIntervalMs =
     options.heartbeatIntervalMs ?? Math.max(15_000, Math.floor((leaseSeconds * 1000) / 3));
+  const now = options.now ?? Date.now;
+  const postModelReserveMs =
+    options.postModelReserveMs ?? DEFAULT_POST_MODEL_RESERVE_MS;
+  const minimumModelBudgetMs =
+    options.minimumModelBudgetMs ?? DEFAULT_MINIMUM_MODEL_BUDGET_MS;
+
+  const modelBudgetMs = () =>
+    options.deadlineAtMs == null
+      ? null
+      : options.deadlineAtMs - now() - postModelReserveMs;
+
+  // Do not claim work this invocation cannot finish: a platform kill after a
+  // paid provider call loses its provenance and burns an attempt via lease
+  // expiry.
+  const initialBudget = modelBudgetMs();
+  if (initialBudget != null && initialBudget < minimumModelBudgetMs) {
+    return { status: "deferred", reason: "insufficient_time" };
+  }
 
   const attempt = await queue.claim(options.workerId, leaseSeconds);
   if (!attempt) return { status: "no_work" };
 
-  const startedAt = Date.now();
+  const startedAt = now();
   let heartbeatLost = false;
   let heartbeatInFlight = false;
 
@@ -194,35 +357,82 @@ export async function executeOneResearchTask(
           void queue
             .heartbeat(attempt.attemptId, options.workerId, leaseSeconds)
             .then((owned) => {
+              // Only an explicit rejection proves another owner. A transient
+              // RPC error is re-checked by the ownership test before finish.
               if (!owned) heartbeatLost = true;
             })
-            .catch(() => {
-              heartbeatLost = true;
-            })
+            .catch(() => undefined)
             .finally(() => {
               heartbeatInFlight = false;
             });
         }, heartbeatIntervalMs)
       : null;
 
+  const confirmOwnership = async (): Promise<boolean> =>
+    heartbeatLost
+      ? false
+      : queue
+          .heartbeat(attempt.attemptId, options.workerId, leaseSeconds)
+          .catch(() => false);
+
+  const reportLostProvenance = (
+    stage: string,
+    provenance: SolFailureProvenance | SolFixtureResearchResult["provenance"] | null,
+  ) => {
+    if (!provenance) return;
+    // The finish RPC rejects a non-owner, so keep billable usage visible in
+    // logs when the lease was lost after the provider call returned.
+    console.warn("Kapiloto attempt lost its lease after a provider response", {
+      attemptId: attempt.attemptId,
+      runId: attempt.runId,
+      stage,
+      providerResponseId: provenance.responseId,
+      model: provenance.model,
+      usage: provenance.usage,
+      webSearchCalls: provenance.webSearchCalls,
+    });
+  };
+
   try {
     const card = validateClaim(attempt);
-    const modelStartedAt = Date.now();
+
+    const baseProfile: ResearchRequestProfile = {
+      reasoningEffort:
+        options.reasoningEffort ?? DEFAULT_RESEARCH_REQUEST_PROFILE.reasoningEffort,
+      searchContextSize:
+        options.searchContextSize ??
+        DEFAULT_RESEARCH_REQUEST_PROFILE.searchContextSize,
+      maxOutputTokens:
+        options.maxOutputTokens ?? DEFAULT_RESEARCH_REQUEST_PROFILE.maxOutputTokens,
+    };
+    // Retry-shape selection is an optimisation: a failed history read must
+    // not turn into a non-retryable task failure.
+    const priorFailures =
+      attempt.attemptNo > 1 && queue.priorFailures
+        ? await queue
+            .priorFailures(attempt.runId, attempt.taskKey, attempt.attemptNo)
+            .catch(() => [])
+        : [];
+    const profile = selectRequestProfile(baseProfile, priorFailures);
+    const timeoutMs = modelBudgetMs();
+
+    const modelStartedAt = now();
 
     let research: SolFixtureResearchResult;
     try {
       research = await runner.research(card, {
         model: attempt.run.modelKey,
-        reasoningEffort: options.reasoningEffort ?? "high",
+        reasoningEffort: profile.reasoningEffort,
+        searchContextSize: profile.searchContextSize,
+        maxOutputTokens: profile.maxOutputTokens,
+        ...(timeoutMs != null ? { timeoutMs: Math.max(1_000, timeoutMs) } : {}),
       });
     } catch (error) {
-      const owned = heartbeatLost
-        ? false
-        : await queue
-            .heartbeat(attempt.attemptId, options.workerId, leaseSeconds)
-            .catch(() => false);
+      const failure = solFailure(error);
+      const provenance = failure.provenance;
 
-      if (!owned) {
+      if (!(await confirmOwnership())) {
+        reportLostProvenance("model_call", provenance);
         return {
           status: "lease_lost",
           attemptId: attempt.attemptId,
@@ -230,30 +440,41 @@ export async function executeOneResearchTask(
         };
       }
 
-      const retryable = retryableFailure(error);
+      // A capacity failure only deserves another attempt if the next attempt
+      // can use a cheaper request shape; repeating it verbatim wastes budget.
+      const retryable =
+        failure.retryable &&
+        (!failure.capacityLimited || stepDownRequestProfile(profile) != null);
+
       const finish = await queue.finish({
         attemptId: attempt.attemptId,
         workerId: options.workerId,
         success: false,
         retryable,
         retryDelaySeconds: retryDelaySeconds(attempt.attemptNo),
-        modelSnapshot: attempt.run.modelKey,
-        providerResponseId: null,
-        ...emptyUsage(),
-        webSearchCalls: null,
-        sourcesCount: null,
+        modelSnapshot: provenance?.model ?? attempt.run.modelKey,
+        providerResponseId: provenance?.responseId ?? null,
+        ...provenanceUsage(provenance),
+        webSearchCalls: provenance?.webSearchCalls ?? null,
+        sourcesCount: provenance ? provenance.sourceUrls.length : null,
         costMicros: null,
         pricingVersion: null,
-        modelMs: Date.now() - modelStartedAt,
+        modelMs: now() - modelStartedAt,
         validationMs: null,
-        totalMs: Date.now() - startedAt,
-        failureClass: failureClass(error),
-        failureCode:
-          error instanceof SolFixtureResearchError ? error.name : "internal_error",
-        failureDetail: error instanceof Error ? error.message : String(error),
+        totalMs: now() - startedAt,
+        failureClass: failure.failureClass,
+        failureCode: failure.code,
+        failureDetail: failure.message,
         validatedOutput: null,
         validationReport: {
-          semantic_validation: "failed",
+          semantic_validation: semanticStage(failure.code),
+          request_profile: profileReport(profile),
+          request_timeout_ms: timeoutMs,
+          provider_response_received: provenance != null,
+          provider_total_tokens: provenance?.usage.totalTokens ?? null,
+          source_urls_observed: provenance?.sourceUrls ?? [],
+          capacity_limited: failure.capacityLimited,
+          prior_failure_codes: priorFailures.map((item) => item.failureCode),
         },
         traceId: options.traceId ?? null,
       });
@@ -264,11 +485,11 @@ export async function executeOneResearchTask(
         runId: attempt.runId,
         retryable,
         retryCreated: finish.retryCreated,
-        failureClass: failureClass(error),
+        failureClass: failure.failureClass,
       };
     }
 
-    const validationStartedAt = Date.now();
+    const validationStartedAt = now();
     let grounding:
       | {
           grounding: GroundingResult;
@@ -277,16 +498,25 @@ export async function executeOneResearchTask(
       | null = null;
 
     if (options.grounder) {
+      const grounder = options.grounder;
+      const groundOnce = () => grounder.ground(card, research.output);
       try {
-        grounding = await options.grounder.ground(card, research.output);
+        try {
+          grounding = await groundOnce();
+        } catch (firstError) {
+          // Grounding re-fetches sources and reads the registry; a transient
+          // failure there must not discard a paid, validated Sol result.
+          // Retry once in-process when the invocation still has time.
+          const remaining =
+            options.deadlineAtMs == null
+              ? Number.POSITIVE_INFINITY
+              : options.deadlineAtMs - now();
+          if (remaining < 30_000) throw firstError;
+          grounding = await groundOnce();
+        }
       } catch (error) {
-        const ownedAfterGrounding = heartbeatLost
-          ? false
-          : await queue
-              .heartbeat(attempt.attemptId, options.workerId, leaseSeconds)
-              .catch(() => false);
-
-        if (!ownedAfterGrounding) {
+        if (!(await confirmOwnership())) {
+          reportLostProvenance("grounding", research.provenance);
           return {
             status: "lease_lost",
             attemptId: attempt.attemptId,
@@ -311,14 +541,17 @@ export async function executeOneResearchTask(
           costMicros: null,
           pricingVersion: null,
           modelMs: validationStartedAt - modelStartedAt,
-          validationMs: Date.now() - validationStartedAt,
-          totalMs: Date.now() - startedAt,
+          validationMs: now() - validationStartedAt,
+          totalMs: now() - startedAt,
           failureClass: "model_output_invalid",
           failureCode: "evidence_grounding_failed",
           failureDetail: error instanceof Error ? error.message : String(error),
           validatedOutput: null,
           validationReport: {
             semantic_validation: "passed",
+            request_profile: profileReport(profile),
+            request_timeout_ms: timeoutMs,
+            provider_total_tokens: research.provenance.usage.totalTokens,
             source_urls_observed: research.provenance.sourceUrls,
             quote_verification: "failed",
             entailment_verification: "not_started",
@@ -337,13 +570,8 @@ export async function executeOneResearchTask(
       }
     }
 
-    const owned = heartbeatLost
-      ? false
-      : await queue
-          .heartbeat(attempt.attemptId, options.workerId, leaseSeconds)
-          .catch(() => false);
-
-    if (!owned) {
+    if (!(await confirmOwnership())) {
+      reportLostProvenance("finish", research.provenance);
       return {
         status: "lease_lost",
         attemptId: attempt.attemptId,
@@ -351,7 +579,7 @@ export async function executeOneResearchTask(
       };
     }
 
-    await queue.finish({
+    const successInput: FinishResearchAttemptInput = {
       attemptId: attempt.attemptId,
       workerId: options.workerId,
       success: true,
@@ -368,14 +596,17 @@ export async function executeOneResearchTask(
       costMicros: null,
       pricingVersion: null,
       modelMs: validationStartedAt - modelStartedAt,
-      validationMs: Date.now() - validationStartedAt,
-      totalMs: Date.now() - startedAt,
+      validationMs: now() - validationStartedAt,
+      totalMs: now() - startedAt,
       failureClass: null,
       failureCode: null,
       failureDetail: null,
       validatedOutput: research.output,
       validationReport: {
         semantic_validation: "passed",
+        request_profile: profileReport(profile),
+        request_timeout_ms: timeoutMs,
+        provider_total_tokens: research.provenance.usage.totalTokens,
         source_urls_observed: research.provenance.sourceUrls,
         quote_verification: grounding ? "passed" : "pending",
         entailment_verification:
@@ -387,7 +618,22 @@ export async function executeOneResearchTask(
         source_retrieval_failures: grounding?.retrievalFailures ?? [],
       },
       traceId: options.traceId ?? null,
-    });
+    };
+
+    try {
+      await queue.finish(successInput);
+    } catch {
+      // Retry the success write once. If it still fails, do NOT fall through
+      // to the generic failure path: recording a non-retryable failure would
+      // fail the whole run although the research succeeded. Leaving the
+      // attempt running lets lease recovery retry it instead.
+      try {
+        await queue.finish(successInput);
+      } catch (finishError) {
+        reportLostProvenance("finish", research.provenance);
+        throw new SuccessFinishError(finishError);
+      }
+    }
 
     return {
       status: "succeeded",
@@ -395,13 +641,9 @@ export async function executeOneResearchTask(
       runId: attempt.runId,
     };
   } catch (error) {
-    const owned = heartbeatLost
-      ? false
-      : await queue
-          .heartbeat(attempt.attemptId, options.workerId, leaseSeconds)
-          .catch(() => false);
+    if (error instanceof SuccessFinishError) throw error.cause;
 
-    if (!owned) {
+    if (!(await confirmOwnership())) {
       return {
         status: "lease_lost",
         attemptId: attempt.attemptId,
@@ -424,7 +666,7 @@ export async function executeOneResearchTask(
       pricingVersion: null,
       modelMs: null,
       validationMs: null,
-      totalMs: Date.now() - startedAt,
+      totalMs: now() - startedAt,
       failureClass: "internal",
       failureCode: "executor_validation_failed",
       failureDetail: error instanceof Error ? error.message : String(error),

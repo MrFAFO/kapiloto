@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { ensureServerKapilotoResearch } from "@/lib/kapiloto/server-research";
 import { verifyKapilotoWorkerAuthorization } from "@/lib/kapiloto/worker-auth";
 import { runKapilotoDemandWorkerBurst } from "@/lib/kapiloto/worker-demand";
+import { kapilotoInvocationDeadline } from "@/lib/kapiloto/worker-runtime";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +18,8 @@ export const maxDuration = 300;
  * The normal product path remains the authenticated user-facing request API.
  */
 export async function POST(request: Request): Promise<Response> {
+  const requestStartedAt = Date.now();
+
   if (
     !verifyKapilotoWorkerAuthorization(
       request.headers.get("authorization"),
@@ -135,6 +138,7 @@ export async function POST(request: Request): Promise<Response> {
     after(() =>
       runKapilotoDemandWorkerBurst(
         `operator:${result.run_id ?? roundResult.data!.id}`,
+        kapilotoInvocationDeadline(requestStartedAt),
       ),
     );
   }

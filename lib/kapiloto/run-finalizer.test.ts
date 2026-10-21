@@ -159,9 +159,11 @@ class MemoryPublisher implements KapilotoRunPublicationSink {
   published = 0;
   lastAnalysisCount = 0;
   lastOutcomes: string[] = [];
+  last: MaterializedRound | null = null;
 
   async publish(runId: string, materialized: MaterializedRound) {
     this.published += 1;
+    this.last = materialized;
     this.lastAnalysisCount = materialized.analyses.length;
     this.lastOutcomes = materialized.analyses.map((analysis) => analysis.outcome);
     return {
@@ -249,7 +251,7 @@ test("incomplete succeeded-attempt set is never published", async () => {
   assert.equal(publisher.published, 0);
 });
 
-test("unsupported material evidence blocks publication", async () => {
+test("unsupported material evidence withholds only that fixture; the round still publishes", async () => {
   const publisher = new MemoryPublisher();
   const judge: EntailmentJudge = {
     async verify(items) {
@@ -265,18 +267,34 @@ test("unsupported material evidence blocks publication", async () => {
     },
   };
 
-  await assert.rejects(
-    () =>
-      finalizeKapilotoRun(
-        new MemoryStore(finalizableRun(true)),
-        publisher,
-        judge,
-        "run-1",
-      ),
-    /not entailed/,
+  const result = await finalizeKapilotoRun(
+    new MemoryStore(finalizableRun(true)),
+    publisher,
+    judge,
+    "run-1",
   );
 
-  assert.equal(publisher.published, 0);
+  assert.equal(publisher.published, 1);
+  assert.equal(result.analysisCount, 16);
+  assert.deepEqual(result.downgradedFixtureIds, ["fixture-1"]);
+  assert.equal(publisher.lastOutcomes[0], "insufficient_data");
+  assert.deepEqual(
+    publisher.lastOutcomes.slice(1),
+    Array.from({ length: 15 }, () => "analyzed"),
+  );
+
+  const withheld = publisher.last!.analyses[0];
+  assert.equal(withheld.primary_pick, null);
+  assert.equal(withheld.p_final_1_bp, null);
+  assert.equal(withheld.double_priority_rank, null);
+  assert.equal(withheld.evidence[0].status, "rejected");
+  assert.equal(withheld.evidence[0].entailment, "unsupported");
+  assert.equal(
+    publisher.last!.synthesis.double_ranking.some(
+      (item) => item.fixture_id === "fixture-1",
+    ),
+    false,
+  );
 });
 
 

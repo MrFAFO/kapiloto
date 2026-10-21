@@ -3,13 +3,18 @@ import { randomUUID } from "node:crypto";
 import { after } from "next/server";
 
 import { verifyKapilotoWorkerAuthorization } from "@/lib/kapiloto/worker-auth";
-import { runKapilotoWorkerCycle } from "@/lib/kapiloto/worker-runtime";
+import {
+  kapilotoInvocationDeadline,
+  runKapilotoWorkerCycle,
+} from "@/lib/kapiloto/worker-runtime";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(request: Request): Promise<Response> {
+  const requestStartedAt = Date.now();
+
   if (
     !verifyKapilotoWorkerAuthorization(
       request.headers.get("authorization"),
@@ -118,6 +123,7 @@ export async function POST(request: Request): Promise<Response> {
         leaseSeconds: 180,
         heartbeatIntervalMs: 30_000,
         finalizeRuns,
+        deadlineAtMs: kapilotoInvocationDeadline(requestStartedAt),
       });
 
       console.info("Kapiloto scheduled worker cycle completed", {

@@ -68,10 +68,12 @@
             "type": "string"
           },
           "quote": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^.{1,300}$"
           },
           "claim": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^.{1,220}$"
           },
           "claim_type": {
             "type": "string",
@@ -131,7 +133,8 @@
             ]
           },
           "player_name": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^.{0,80}$"
           },
           "status": {
             "type": "string",
@@ -224,7 +227,8 @@
             }
           },
           "rationale": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^.{0,300}$"
           }
         }
       }
@@ -281,7 +285,8 @@
         ],
         "properties": {
           "topic": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^.{0,150}$"
           },
           "evidence_ids_a": {
             "type": "array",
@@ -346,7 +351,8 @@
       ],
       "properties": {
         "summary": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^.{0,300}$"
         },
         "evidence_ids": {
           "type": "array",
@@ -361,14 +367,17 @@
       "type": "array",
       "maxItems": 3,
       "items": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^.{0,150}$"
       }
     },
     "main_risk": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^.{0,300}$"
     },
     "summary": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^.{0,700}$"
     },
     "watch_items": {
       "type": "array",
@@ -412,7 +421,8 @@
             ]
           },
           "condition": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^.{0,150}$"
           },
           "impact_if_triggered": {
             "type": "string",
@@ -442,7 +452,8 @@
           "type": "boolean"
         },
         "notes": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^.{0,220}$"
         }
       }
     },
@@ -461,7 +472,8 @@
             "type": "string"
           },
           "description": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^.{0,220}$"
           }
         }
       }

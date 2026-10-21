@@ -3,8 +3,40 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   ClaimedResearchAttempt,
   FinishResearchAttemptInput,
+  PriorAttemptFailure,
   ResearchAttemptQueue,
+  ResearchRequestProfile,
 } from "./research-task-executor";
+
+function recordedProfile(report: unknown): ResearchRequestProfile | null {
+  if (!report || typeof report !== "object" || Array.isArray(report)) {
+    return null;
+  }
+  const raw = (report as { request_profile?: unknown }).request_profile;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+
+  const profile = raw as Record<string, unknown>;
+  const effort = profile.reasoning_effort;
+  const context = profile.search_context_size;
+  const maxOutputTokens = profile.max_output_tokens;
+  const levels = ["low", "medium", "high"];
+
+  if (
+    typeof effort !== "string" ||
+    !levels.includes(effort) ||
+    typeof context !== "string" ||
+    !levels.includes(context) ||
+    typeof maxOutputTokens !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    reasoningEffort: effort as ResearchRequestProfile["reasoningEffort"],
+    searchContextSize: context as ResearchRequestProfile["searchContextSize"],
+    maxOutputTokens,
+  };
+}
 
 function camelClaim(data: Record<string, unknown>): ClaimedResearchAttempt {
   const run = data.run as Record<string, unknown>;
@@ -78,6 +110,35 @@ export class SupabaseResearchAttemptQueue implements ResearchAttemptQueue {
       throw new Error(`Failed to heartbeat Kapiloto attempt: ${error.message}`);
     }
     return data === true;
+  }
+
+  async priorFailures(
+    runId: string,
+    taskKey: string,
+    beforeAttemptNo: number,
+  ): Promise<PriorAttemptFailure[]> {
+    const { data, error } = await this.client
+      .from("kapiloto_research_attempts")
+      .select("attempt_no,failure_code,failure_detail,validation_report")
+      .eq("run_id", runId)
+      .eq("task_key", taskKey)
+      .lt("attempt_no", beforeAttemptNo)
+      .in("status", ["failed", "abandoned"])
+      .order("attempt_no", { ascending: true });
+
+    if (error) {
+      throw new Error(
+        `Failed to load prior Kapiloto attempts: ${error.message}`,
+      );
+    }
+
+    return (data ?? []).map((row) => ({
+      attemptNo: Number(row.attempt_no),
+      failureCode: row.failure_code == null ? null : String(row.failure_code),
+      failureDetail:
+        row.failure_detail == null ? null : String(row.failure_detail),
+      requestProfile: recordedProfile(row.validation_report),
+    }));
   }
 
   async finish(input: FinishResearchAttemptInput): Promise<{
