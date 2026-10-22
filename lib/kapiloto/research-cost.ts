@@ -83,6 +83,7 @@ export type KapilotoWeeklyBudgetStatus = {
   fixedReserveMicros: number;
   untrackedReserveMicros: number;
   meteredAiMicros: number;
+  inflightReserveMicros: number;
   committedMicros: number;
   remainingMicros: number;
   attemptReserveMicros: number;
@@ -146,7 +147,12 @@ export async function loadKapilotoWeeklyBudgetStatus(
   const windowStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const windowStartedAt = windowStart.toISOString();
 
-  const [attemptsResult, finalizationResult] = await Promise.all([
+  const [
+    attemptsResult,
+    finalizationResult,
+    runningAttemptsResult,
+    runningFinalizationResult,
+  ] = await Promise.all([
     client
       .from("kapiloto_research_attempts")
       .select(
@@ -159,6 +165,14 @@ export async function loadKapilotoWeeklyBudgetStatus(
         "input_tokens,cached_input_tokens,output_tokens,finished_at",
       )
       .gte("finished_at", windowStartedAt),
+    client
+      .from("kapiloto_research_attempts")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "running"),
+    (client as SupabaseClient<any>)
+      .from("kapiloto_run_finalization_attempts")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["claimed", "running"]),
   ]);
 
   if (attemptsResult.error) {
@@ -169,6 +183,16 @@ export async function loadKapilotoWeeklyBudgetStatus(
   if (finalizationResult.error) {
     throw new Error(
       `Failed to read Kapiloto finalization usage for budget guard: ${finalizationResult.error.message}`,
+    );
+  }
+  if (runningAttemptsResult.error) {
+    throw new Error(
+      `Failed to read in-flight Kapiloto attempts for budget guard: ${runningAttemptsResult.error.message}`,
+    );
+  }
+  if (runningFinalizationResult.error) {
+    throw new Error(
+      `Failed to read in-flight Kapiloto finalization for budget guard: ${runningFinalizationResult.error.message}`,
     );
   }
 
@@ -192,8 +216,14 @@ export async function loadKapilotoWeeklyBudgetStatus(
       }) ?? 0;
   }
 
+  const inflightReserveMicros =
+    (runningAttemptsResult.count ?? 0) * attemptReserveMicros +
+    (runningFinalizationResult.count ?? 0) * finalizationReserveMicros;
   const committedMicros =
-    fixedReserveMicros + untrackedReserveMicros + meteredAiMicros;
+    fixedReserveMicros +
+    untrackedReserveMicros +
+    meteredAiMicros +
+    inflightReserveMicros;
   const remainingMicros = Math.max(0, capMicros - committedMicros);
 
   const canStartAttempt =
@@ -209,6 +239,7 @@ export async function loadKapilotoWeeklyBudgetStatus(
     fixedReserveMicros,
     untrackedReserveMicros,
     meteredAiMicros,
+    inflightReserveMicros,
     committedMicros,
     remainingMicros,
     attemptReserveMicros,
