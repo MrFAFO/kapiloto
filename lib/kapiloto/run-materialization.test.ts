@@ -348,3 +348,107 @@ test("mixed run keeps 16-row coherence and ranks carried analysis with fresh res
   assert.equal(result.analyses[15].outcome, "research_unavailable");
   assert.equal(result.analyses[15].primary_pick, null);
 });
+
+
+test("structured-only grounded factor survives publication and contributes reliability", () => {
+  const fixtures = round();
+  const first = fixtures[0];
+
+  first.card = {
+    ...first.card,
+    fixture_card_version: "kapiloto-fixture-card-v3",
+    structured: {
+      ...first.card.structured,
+      structured_snapshot: {
+        id: "snapshot-1",
+        feature_version: "kapiloto-features-v1",
+        sha256: "a".repeat(64),
+        computed_at: "2026-10-20T09:55:00.000Z",
+        cutoff_at: first.card.research_cutoff_at,
+        features: {
+          feature_version: "kapiloto-features-v1",
+          home: {
+            form: {
+              played: 6,
+              points: 15,
+              gf: 12,
+              ga: 5,
+              venue_played: 4,
+              venue_points: 10,
+              venue_gf: 8,
+              venue_ga: 3,
+              last_match_at: "2026-10-17T18:00:00.000Z",
+            },
+            rest: { rest_days: 4, matches_last_14d: 2 },
+            table: null,
+            coverage: {
+              form: "partial",
+              rest: "available",
+              table: "unavailable",
+            },
+          },
+          away: {
+            form: {
+              played: 6,
+              points: 7,
+              gf: 6,
+              ga: 10,
+              venue_played: 4,
+              venue_points: 4,
+              venue_gf: 3,
+              venue_ga: 8,
+              last_match_at: "2026-10-18T18:00:00.000Z",
+            },
+            rest: { rest_days: 2, matches_last_14d: 4 },
+            table: null,
+            coverage: {
+              form: "partial",
+              rest: "available",
+              table: "unavailable",
+            },
+          },
+          sources: [],
+        },
+      },
+    },
+  };
+
+  first.output.protocol_version = "kapiloto-research-v2";
+  first.output.evidence = [];
+  first.output.availability = [];
+  first.output.factors = [
+    {
+      dimension: "baseline_form",
+      favors: "home",
+      magnitude: "small",
+      evidence_ids: [],
+      structured_refs: ["home.form", "away.form"],
+      rationale: "The frozen form snapshot favors the home side.",
+    },
+  ];
+  first.grounding = {
+    accepted: [],
+    rejected: [],
+    requiresEntailmentVerification: [],
+  };
+
+  const result = materializeValidatedResearchRound(fixtures);
+  const analysis = result.analyses[0];
+
+  assert.equal(analysis.outcome, "analyzed");
+  assert.notEqual(analysis.p_sol_1_bp, null);
+  assert.equal(analysis.evidence.length, 0);
+  assert.deepEqual(analysis.factors[0].structured_refs, [
+    "home.form",
+    "away.form",
+  ]);
+  assert.equal(
+    analysis.reliability_reasons.includes("verified_structured_evidence"),
+    true,
+  );
+  assert.ok(
+    analysis.inputs.some(
+      (input) => input.input_type === "structured_factor_refs",
+    ),
+  );
+});
