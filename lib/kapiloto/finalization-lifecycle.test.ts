@@ -516,3 +516,56 @@ test("materialization keeps the exactly-16 and unique-identity guards", () => {
     /duplicate or invalid fixture identity/,
   );
 });
+
+test("finalization is fenced to the round's current active run", async () => {
+  const scenarios: Array<[string, string]> = [
+    ["active run cleared", "update public.kapiloto_round_research_state set active_run_id = null"],
+    [
+      "another run is active",
+      "update public.kapiloto_round_research_state set active_run_id = '33333333-3333-4333-8333-333333333333'",
+    ],
+    ["round state missing", "delete from public.kapiloto_round_research_state"],
+  ];
+
+  for (const [label, mutation] of scenarios) {
+    const db = await createFinalizationDb();
+    await db.exec(mutation);
+    const ledger = new PgliteFinalizationLedger(db);
+    const judge = countingJudge();
+    const store = new MemoryStore(finalizableRun());
+
+    const claim = await ledger.claim(RUN_ID, "worker-a", 180);
+    if (claim.outcome === "claimed") throw new Error(`${label}: must not claim`);
+    assert.equal(claim.outcome, "not_finalizable", label);
+    assert.equal(claim.detail.reason, "not_active_run", label);
+
+    const result = await finalizeKapilotoRunWithClaim(
+      { ledger, store, judge },
+      RUN_ID,
+      options("worker-b"),
+    );
+    assert.deepEqual(result, { status: "skipped", runId: RUN_ID, reason: "not_finalizable" }, label);
+
+    assert.equal(judge.calls, 0, `${label}: entailment never runs`);
+    assert.equal(store.loads, 0, label);
+    assert.equal((await finalizationAttempts(db)).length, 0, `${label}: no attempt consumed`);
+    assert.equal((await runRow(db)).status, "running", `${label}: run is not failed`);
+    assert.equal((await publishedAnalyses(db)).length, 0, label);
+  }
+});
+
+test("an expired claim on a superseded run is left untouched, not consumed", async () => {
+  const db = await createFinalizationDb();
+  const ledger = new PgliteFinalizationLedger(db);
+  assert.equal((await ledger.claim(RUN_ID, "worker-a", 180)).outcome, "claimed");
+  await expireLeases(db);
+  await db.exec("update public.kapiloto_round_research_state set active_run_id = null");
+
+  const claim = await ledger.claim(RUN_ID, "worker-b", 180);
+  if (claim.outcome === "claimed") throw new Error("must not claim");
+  assert.equal(claim.detail.reason, "not_active_run");
+  assert.deepEqual(
+    (await finalizationAttempts(db)).map((item) => item.status),
+    ["running"],
+  );
+});

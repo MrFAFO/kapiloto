@@ -169,6 +169,7 @@ declare
   v_live public.kapiloto_run_finalization_attempts%rowtype;
   v_last public.kapiloto_run_finalization_attempts%rowtype;
   v_attempt_count integer;
+  v_active_run_id uuid;
   v_active_tasks integer;
   v_missing_tasks integer;
   v_attempt_id uuid;
@@ -208,7 +209,27 @@ begin
   where a.run_id = p_run_id and a.status = 'running'
   for update;
 
-  if found then
+  -- Fence at the claim boundary: only the round's current active run may be
+  -- finalized. Checked before any attempt is created or an expired claim is
+  -- abandoned, so a superseded run never consumes an attempt or triggers paid
+  -- entailment that publication would later reject. Lock order is preserved:
+  -- research run -> finalization attempt -> round research state.
+  select s.active_run_id into v_active_run_id
+  from public.kapiloto_round_research_state s
+  where s.round_id = v_run.round_id
+  for update;
+
+  if not found or v_active_run_id is distinct from p_run_id then
+    return jsonb_build_object(
+      'outcome', 'not_finalizable',
+      'run_id', p_run_id,
+      'run_status', v_run.status,
+      'reason', 'not_active_run',
+      'active_run_id', v_active_run_id
+    );
+  end if;
+
+  if v_live.id is not null then
     if v_live.lease_expires_at > now() then
       return jsonb_build_object(
         'outcome', 'already_claimed',
