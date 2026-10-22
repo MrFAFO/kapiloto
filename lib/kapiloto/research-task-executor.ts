@@ -124,6 +124,7 @@ export interface FixtureEvidenceGrounder {
   ground(
     card: KapilotoFixtureCard,
     output: SolFixtureResearchOutput,
+    observedSourceUrls: string[],
   ): Promise<{
     grounding: GroundingResult;
     retrievalFailures: Array<{ url: string; error: string }>;
@@ -662,6 +663,9 @@ export async function executeOneResearchTask(
     }
 
     const validationStartedAt = now();
+    const rawValidatedOutput = JSON.parse(
+      JSON.stringify(research.output),
+    ) as SolFixtureResearchOutput;
     let grounding:
       | {
           grounding: GroundingResult;
@@ -671,7 +675,8 @@ export async function executeOneResearchTask(
 
     if (options.grounder) {
       const grounder = options.grounder;
-      const groundOnce = () => grounder.ground(card, research.output);
+      const groundOnce = () =>
+        grounder.ground(card, research.output, research.provenance.sourceUrls);
       try {
         try {
           grounding = await groundOnce();
@@ -824,6 +829,7 @@ export async function executeOneResearchTask(
         grounding_policy_failures: groundingPolicyFailures,
         grounding_policy_dropped_items:
           groundingSanitization?.droppedItems ?? [],
+        raw_validated_output: rawValidatedOutput,
         source_retrieval_failures: grounding?.retrievalFailures ?? [],
       },
       traceId: options.traceId ?? null,
