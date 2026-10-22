@@ -1,4 +1,5 @@
 import type { KapilotoFixtureCard } from "./fixture-card";
+import { validateStructuredRefs } from "./structured-refs";
 
 export const KAPILOTO_RESEARCH_DIMENSIONS = [
   "baseline_form",
@@ -27,7 +28,7 @@ export type SolEvidence = {
 };
 
 export type SolFixtureResearchOutput = {
-  protocol_version: "kapiloto-research-v1";
+  protocol_version: "kapiloto-research-v1" | "kapiloto-research-v2";
   fixture_key: string;
   home_team_id: string;
   away_team_id: string;
@@ -46,6 +47,7 @@ export type SolFixtureResearchOutput = {
     favors: "home" | "draw" | "away" | "none";
     magnitude: "small" | "medium" | "large";
     evidence_ids: string[];
+    structured_refs?: string[];
     rationale: string;
   }>;
   dimension_coverage: Array<{
@@ -207,7 +209,10 @@ export function validateSolFixtureResearchOutput(
   // policy replay/audit later in the pipeline.
   const output = JSON.parse(JSON.stringify(raw)) as SolFixtureResearchOutput;
 
-  if (output.protocol_version !== "kapiloto-research-v1") {
+  if (
+    output.protocol_version !== "kapiloto-research-v1" &&
+    output.protocol_version !== "kapiloto-research-v2"
+  ) {
     throw new Error("Unexpected Kapiloto research protocol version.");
   }
   if (output.fixture_key !== card.fixture_key) {
@@ -309,6 +314,16 @@ export function validateSolFixtureResearchOutput(
       factor.evidence_ids,
       `factor:${factor.dimension}`,
     );
+
+    const structuredRefs = factor.structured_refs ?? [];
+    factor.structured_refs = validateStructuredRefs(structuredRefs, card);
+
+    if (factor.evidence_ids.length === 0 && factor.structured_refs.length === 0) {
+      throw new Error(
+        `factor:${factor.dimension} must cite web evidence or structured refs.`,
+      );
+    }
+
     assertLimit(factor.rationale, "factors.rationale");
     assertNoUrl(factor.rationale, "factor.rationale");
   }
