@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { ensureServerKapilotoResearch } from "@/lib/kapiloto/server-research";
 import { verifyKapilotoWorkerAuthorization } from "@/lib/kapiloto/worker-auth";
 import { runKapilotoDemandWorkerBurst } from "@/lib/kapiloto/worker-demand";
+import { kapilotoInvocationDeadline } from "@/lib/kapiloto/worker-runtime";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +18,8 @@ export const maxDuration = 300;
  * The normal product path remains the authenticated user-facing request API.
  */
 export async function POST(request: Request): Promise<Response> {
+  const requestStartedAt = Date.now();
+
   if (
     !verifyKapilotoWorkerAuthorization(
       request.headers.get("authorization"),
@@ -29,6 +32,7 @@ export async function POST(request: Request): Promise<Response> {
   let body: {
     externalRoundNumber?: unknown;
     gameNumber?: unknown;
+    intent?: unknown;
   } = {};
 
   try {
@@ -45,6 +49,8 @@ export async function POST(request: Request): Promise<Response> {
       ? body.externalRoundNumber.trim()
       : "";
   const gameNumber = Number(body.gameNumber ?? 1);
+  const intent =
+    body.intent === "recheck" ? "recheck" : "consult";
 
   if (!/^\d{6}$/.test(externalRoundNumber)) {
     return Response.json(
@@ -121,13 +127,35 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
+  let basedOnRunId: string | null = null;
+  if (intent === "recheck") {
+    const { data: roundState, error: roundStateError } = await admin
+      .from("kapiloto_round_research_state")
+      .select("current_run_id")
+      .eq("round_id", roundResult.data.id)
+      .maybeSingle();
+
+    if (roundStateError) {
+      throw new Error(
+        `Failed to resolve bootstrap recheck base: ${roundStateError.message}`,
+      );
+    }
+    basedOnRunId = roundState?.current_run_id ?? null;
+    if (!basedOnRunId) {
+      return Response.json(
+        { ok: false, error: "no_current_run_for_recheck", researchRunCreated: false },
+        { status: 409 },
+      );
+    }
+  }
+
   const result = await ensureServerKapilotoResearch(admin, {
     userId: String(profiles[0].id),
     roundId: String(roundResult.data.id),
     roundGameId: String(roundGame.id),
-    intent: "consult",
-    idempotencyKey: `operator-${externalRoundNumber}-${gameNumber}-${randomUUID()}`,
-    basedOnRunId: null,
+    intent,
+    idempotencyKey: `operator-${intent}-${externalRoundNumber}-${gameNumber}-${randomUUID()}`,
+    basedOnRunId,
     breakerOpen: false,
   });
 
@@ -135,6 +163,7 @@ export async function POST(request: Request): Promise<Response> {
     after(() =>
       runKapilotoDemandWorkerBurst(
         `operator:${result.run_id ?? roundResult.data!.id}`,
+        kapilotoInvocationDeadline(requestStartedAt),
       ),
     );
   }
@@ -143,6 +172,7 @@ export async function POST(request: Request): Promise<Response> {
     ok: true,
     externalRoundNumber,
     gameNumber,
+    intent,
     outcome: result.outcome,
     runId: result.run_id ?? null,
     activeRunId: result.active_run_id ?? null,

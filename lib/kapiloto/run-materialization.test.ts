@@ -125,7 +125,7 @@ function grounding(): GroundingResult {
         retrievedAt: "2026-10-20T09:00:00.000Z",
         trustTier: 2,
         quoteVerified: true,
-        entailment: "not_checked",
+        entailment: "supported",
         syndicationClusterId: null,
         contentSha256: "abc123",
       },
@@ -175,6 +175,58 @@ test("materializes 16 grounded fixtures and assigns a unique deterministic doubl
   assert.equal(first.orientation_verified, true);
 });
 
+test("directional factor with rejected evidence invalidates p_sol and falls back to market only", () => {
+  const fixtures = round();
+  fixtures[0].output.evidence.push({
+    evidence_id: "e2",
+    url: "https://example.com/rejected",
+    quote: "Rejected source text",
+    claim: "Unsupported availability.",
+    claim_type: "availability",
+    about_team: "home",
+    event_time: null,
+  });
+  fixtures[0].output.availability = [
+    {
+      team: "home",
+      player_name: "Player One",
+      status: "out",
+      role: "regular",
+      certainty: "reported",
+      evidence_ids: ["e2"],
+    },
+  ];
+  fixtures[0].output.factors[0].evidence_ids = ["e1", "e2"];
+  fixtures[0].output.conflicts = [
+    {
+      topic: "availability",
+      evidence_ids_a: ["e1"],
+      evidence_ids_b: ["e2"],
+      resolution: "unresolved",
+    },
+  ];
+  fixtures[0].grounding = {
+    ...grounding(),
+    rejected: [{ evidenceId: "e2", reason: "document_missing" }],
+  };
+
+  const result = materializeValidatedResearchRound(fixtures);
+  const first = result.analyses[0];
+
+  assert.equal(first.outcome, "analyzed");
+  assert.equal(first.blend_weight, 0);
+  assert.equal(first.p_sol_1_bp, null);
+  assert.equal(first.p_final_1_bp, first.p_prior_1_bp);
+  assert.deepEqual(first.factors, []);
+  assert.deepEqual(first.availability, []);
+  assert.deepEqual(first.conflicts, []);
+  assert.equal(first.double_priority_rank, null);
+  assert.equal(
+    first.reliability_reasons.includes("p_sol_invalidated:baseline_form"),
+    true,
+  );
+});
+
 test("insufficient-data fixture is materialized without pick or double rank", () => {
   const fixtures = round();
   fixtures[4].output.outcome = "insufficient_data";
@@ -198,7 +250,7 @@ test("insufficient-data fixture is materialized without pick or double rank", ()
   assert.equal(result.synthesis.double_ranking.length, 15);
 });
 
-test("analyzed fixture cannot materialize without accepted grounded evidence", () => {
+test("analyzed fixture with no grounded directional evidence falls back to market only", () => {
   const fixtures = round();
   fixtures[0].grounding = {
     accepted: [],
@@ -206,10 +258,13 @@ test("analyzed fixture cannot materialize without accepted grounded evidence", (
     requiresEntailmentVerification: [],
   };
 
-  assert.throws(
-    () => materializeValidatedResearchRound(fixtures),
-    /no accepted grounded evidence/,
-  );
+  const result = materializeValidatedResearchRound(fixtures);
+  const first = result.analyses[0];
+  assert.equal(first.outcome, "analyzed");
+  assert.equal(first.blend_weight, 0);
+  assert.equal(first.p_sol_1_bp, null);
+  assert.equal(first.p_final_1_bp, first.p_prior_1_bp);
+  assert.equal(first.double_priority_rank, null);
 });
 
 test("pending material-factor entailment blocks publication", () => {
@@ -292,4 +347,108 @@ test("mixed run keeps 16-row coherence and ranks carried analysis with fresh res
   assert.equal(result.analyses[14].carried_from_analysis_id, "analysis-old-15");
   assert.equal(result.analyses[15].outcome, "research_unavailable");
   assert.equal(result.analyses[15].primary_pick, null);
+});
+
+
+test("structured-only grounded factor survives publication and contributes reliability", () => {
+  const fixtures = round();
+  const first = fixtures[0];
+
+  first.card = {
+    ...first.card,
+    fixture_card_version: "kapiloto-fixture-card-v3",
+    structured: {
+      ...first.card.structured,
+      structured_snapshot: {
+        id: "snapshot-1",
+        feature_version: "kapiloto-features-v1",
+        sha256: "a".repeat(64),
+        computed_at: "2026-10-20T09:55:00.000Z",
+        cutoff_at: first.card.research_cutoff_at,
+        features: {
+          feature_version: "kapiloto-features-v1",
+          home: {
+            form: {
+              played: 6,
+              points: 15,
+              gf: 12,
+              ga: 5,
+              venue_played: 4,
+              venue_points: 10,
+              venue_gf: 8,
+              venue_ga: 3,
+              last_match_at: "2026-10-17T18:00:00.000Z",
+            },
+            rest: { rest_days: 4, matches_last_14d: 2 },
+            table: null,
+            coverage: {
+              form: "partial",
+              rest: "available",
+              table: "unavailable",
+            },
+          },
+          away: {
+            form: {
+              played: 6,
+              points: 7,
+              gf: 6,
+              ga: 10,
+              venue_played: 4,
+              venue_points: 4,
+              venue_gf: 3,
+              venue_ga: 8,
+              last_match_at: "2026-10-18T18:00:00.000Z",
+            },
+            rest: { rest_days: 2, matches_last_14d: 4 },
+            table: null,
+            coverage: {
+              form: "partial",
+              rest: "available",
+              table: "unavailable",
+            },
+          },
+          sources: [],
+        },
+      },
+    },
+  };
+
+  first.output.protocol_version = "kapiloto-research-v2";
+  first.output.evidence = [];
+  first.output.availability = [];
+  first.output.factors = [
+    {
+      dimension: "baseline_form",
+      favors: "home",
+      magnitude: "small",
+      evidence_ids: [],
+      structured_refs: ["home.form", "away.form"],
+      rationale: "The frozen form snapshot favors the home side.",
+    },
+  ];
+  first.grounding = {
+    accepted: [],
+    rejected: [],
+    requiresEntailmentVerification: [],
+  };
+
+  const result = materializeValidatedResearchRound(fixtures);
+  const analysis = result.analyses[0];
+
+  assert.equal(analysis.outcome, "analyzed");
+  assert.notEqual(analysis.p_sol_1_bp, null);
+  assert.equal(analysis.evidence.length, 0);
+  assert.deepEqual(analysis.factors[0].structured_refs, [
+    "away.form",
+    "home.form",
+  ]);
+  assert.equal(
+    analysis.reliability_reasons.includes("verified_structured_evidence"),
+    true,
+  );
+  assert.ok(
+    analysis.inputs.some(
+      (input) => input.input_type === "structured_factor_refs",
+    ),
+  );
 });

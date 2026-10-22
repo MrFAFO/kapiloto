@@ -1,5 +1,8 @@
 import { createOpenAIClient } from "@/lib/kapiloto/openai-research";
-import { runKapilotoOpenAIPreflight } from "@/lib/kapiloto/openai-preflight";
+import {
+  runKapilotoOpenAIPreflight,
+  runKapilotoResearchSchemaPreflight,
+} from "@/lib/kapiloto/openai-preflight";
 import { getKapilotoOpenAIModel } from "@/lib/kapiloto/research-config";
 import { verifyKapilotoWorkerAuthorization } from "@/lib/kapiloto/worker-auth";
 
@@ -30,11 +33,25 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
+  let checkSchema = false;
   try {
-    const result = await runKapilotoOpenAIPreflight(
-      createOpenAIClient(),
-      getKapilotoOpenAIModel(),
-    );
+    const body = (await request.json()) as unknown;
+    checkSchema =
+      Boolean(body) &&
+      typeof body === "object" &&
+      !Array.isArray(body) &&
+      (body as { schema?: unknown }).schema === true;
+  } catch {
+    // Empty body: basic connectivity preflight only.
+  }
+
+  try {
+    const client = createOpenAIClient();
+    const model = getKapilotoOpenAIModel();
+    const result = await runKapilotoOpenAIPreflight(client, model);
+    const schema = checkSchema
+      ? await runKapilotoResearchSchemaPreflight(client, model)
+      : null;
 
     return Response.json({
       ok: true,
@@ -45,6 +62,7 @@ export async function POST(request: Request): Promise<Response> {
         inputTokens: result.inputTokens,
         outputTokens: result.outputTokens,
       },
+      schemaPreflight: schema,
       researchRunCreated: false,
     });
   } catch (error) {

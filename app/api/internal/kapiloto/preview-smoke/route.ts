@@ -103,10 +103,7 @@ export async function GET(request: Request): Promise<Response> {
       );
     }
 
-    const prepared = await new SupabaseKapilotoResearchPreparer(
-      admin,
-      null,
-    ).prepare({
+    const prepared = await new SupabaseKapilotoResearchPreparer(admin).prepare({
       roundId: round.id,
       currentRunId: stateResult.data?.current_run_id ?? null,
     });

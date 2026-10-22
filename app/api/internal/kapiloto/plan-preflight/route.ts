@@ -76,10 +76,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const prepared = await new SupabaseKapilotoResearchPreparer(
-      admin,
-      null,
-    ).prepare({
+    const prepared = await new SupabaseKapilotoResearchPreparer(admin).prepare({
       roundId: round.id,
       currentRunId: state?.current_run_id ?? null,
     });

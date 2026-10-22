@@ -4,6 +4,7 @@ import test from "node:test";
 import type { KapilotoFixtureCard } from "./fixture-card";
 import {
   executeOneResearchTask,
+  sanitizeOutputForGrounding,
   type ClaimedResearchAttempt,
   type FixtureEvidenceGrounder,
   type FixtureResearchRunner,
@@ -288,6 +289,124 @@ test("grounder runs before a successful attempt is persisted", async () => {
   assert.deepEqual(
     queue.finishes[0].validationReport.source_retrieval_failures,
     [],
+  );
+});
+
+test("grounding sanitization drops unsupported items without sinking a supported recommendation", () => {
+  const researched = successResult().output;
+  researched.evidence = [
+    {
+      evidence_id: "e1",
+      url: "https://example.com/accepted",
+      quote: "Accepted",
+      claim: "Supported form signal.",
+      claim_type: "baseline_form",
+      about_team: "home",
+      event_time: null,
+    },
+    {
+      evidence_id: "e2",
+      url: "https://example.com/rejected",
+      quote: "Rejected",
+      claim: "Unsupported availability.",
+      claim_type: "availability",
+      about_team: "home",
+      event_time: null,
+    },
+  ];
+  researched.factors = [
+    {
+      dimension: "baseline_form",
+      favors: "home",
+      magnitude: "small",
+      evidence_ids: ["e1"],
+      rationale: "The supported form evidence modestly favors the home side.",
+    },
+  ];
+  researched.availability = [
+    {
+      team: "home",
+      player_name: "Player A",
+      status: "out",
+      role: "regular",
+      certainty: "reported",
+      evidence_ids: ["e2"],
+    },
+  ];
+
+  const result = sanitizeOutputForGrounding(researched, {
+    accepted: [
+      {
+        modelEvidenceId: "e1",
+        canonicalUrl: "https://example.com/accepted",
+        domain: "example.com",
+        claimType: "baseline_form",
+        aboutTeam: "home",
+        quote: "Accepted",
+        claim: "Supported form signal.",
+        sourceEventTime: null,
+        publishedAt: "2026-10-18T10:00:00Z",
+        retrievedAt: "2026-10-18T11:00:00Z",
+        trustTier: 2,
+        quoteVerified: true,
+        entailment: "not_checked",
+        syndicationClusterId: null,
+        contentSha256: "a".repeat(64),
+      },
+    ],
+    rejected: [{ evidenceId: "e2", reason: "quote_not_found" }],
+    requiresEntailmentVerification: [],
+    policyFailures: ["availability:Player A has evidence that failed grounding."],
+  });
+
+  assert.equal(result.wholeFixtureDowngraded, false);
+  assert.equal(result.output.outcome, "analyzed");
+  assert.equal(result.output.factors.length, 1);
+  assert.deepEqual(result.output.availability, []);
+  assert.deepEqual(result.droppedItems, ["availability:Player A"]);
+});
+
+test("grounding policy failures are preserved for finalization instead of mutating the attempt output", async () => {
+  const queue = new MemoryQueue();
+  const runner: FixtureResearchRunner = {
+    async research() {
+      return successResult();
+    },
+  };
+  const grounder: FixtureEvidenceGrounder = {
+    async ground() {
+      return {
+        grounding: {
+          accepted: [],
+          rejected: [{ evidenceId: "e1", reason: "quote_not_found" }],
+          requiresEntailmentVerification: [],
+          policyFailures: [
+            "availability:Player A has no evidence that passed grounding.",
+          ],
+        },
+        retrievalFailures: [],
+      };
+    },
+  };
+
+  const result = await executeOneResearchTask(queue, runner, {
+    workerId: "worker-1",
+    heartbeatIntervalMs: 0,
+    grounder,
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(queue.finishes.length, 1);
+  assert.equal(queue.finishes[0].success, true);
+  const output = queue.finishes[0].validatedOutput as SolFixtureResearchResult["output"];
+  assert.equal(output.outcome, "analyzed");
+  assert.equal(queue.finishes[0].validationReport.grounding_policy_downgraded, false);
+  assert.deepEqual(queue.finishes[0].validationReport.grounding_policy_failures, [
+    "availability:Player A has no evidence that passed grounding.",
+  ]);
+  assert.deepEqual(
+    queue.finishes[0].validationReport.raw_validated_output,
+    output,
   );
 });
 

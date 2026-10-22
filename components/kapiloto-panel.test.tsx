@@ -277,7 +277,7 @@ test("budget exhaustion and rate limiting render distinctly", () => {
 test("closed shows only the consult bar; collapsed keeps a compact cached summary", () => {
   const closed = render(state({ expanded: false, envelope: null }));
   assert.equal(closed.panelOnly, "");
-  assert.ok(closed.markup.includes("התייעץ עם קפילוטו"));
+  assert.ok(closed.markup.includes("מחקר משותף למחזור"));
   assert.ok(closed.markup.includes('aria-expanded="false"'));
 
   const collapsed = render(visualStates.collapsed);
