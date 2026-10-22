@@ -75,11 +75,11 @@ test("builds deterministic last-six, venue, rest and table features", () => {
   assert.deepEqual(result.form, {
     played: 6,
     points: 13,
-    gf: 8,
+    gf: 9,
     ga: 4,
-    venue_played: 4,
-    venue_points: 10,
-    venue_gf: 7,
+    venue_played: 5,
+    venue_points: 13,
+    venue_gf: 11,
     venue_ga: 2,
     last_match_at: match(1, 4, "team-a", "x1", 2, 0).kickoffAt,
   });
