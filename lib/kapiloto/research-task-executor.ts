@@ -342,6 +342,136 @@ function downgradeOutputForGroundingPolicy(
   };
 }
 
+function groundedEvidenceIndependent(
+  left: GroundingResult["accepted"][number],
+  right: GroundingResult["accepted"][number],
+): boolean {
+  if (left.domain === right.domain) return false;
+  return !(
+    left.syndicationClusterId &&
+    right.syndicationClusterId &&
+    left.syndicationClusterId === right.syndicationClusterId
+  );
+}
+
+export function sanitizeOutputForGrounding(
+  output: SolFixtureResearchOutput,
+  grounding: GroundingResult,
+): {
+  output: SolFixtureResearchOutput;
+  droppedItems: string[];
+  wholeFixtureDowngraded: boolean;
+} {
+  const acceptedById = new Map(
+    grounding.accepted.map((item) => [item.modelEvidenceId, item]),
+  );
+  const allAccepted = (ids: string[]) =>
+    ids.length > 0 && ids.every((id) => acceptedById.has(id));
+  const droppedItems: string[] = [];
+
+  const availability = output.availability.filter((item) => {
+    const keep = allAccepted(item.evidence_ids);
+    if (!keep) droppedItems.push(`availability:${item.player_name}`);
+    return keep;
+  });
+
+  const factors = output.factors.filter((factor) => {
+    if (!allAccepted(factor.evidence_ids)) {
+      droppedItems.push(`factor:${factor.dimension}`);
+      return false;
+    }
+    if (factor.magnitude === "small") return true;
+
+    const supporting = factor.evidence_ids.map((id) => acceptedById.get(id)!);
+    const hasStrongSource = supporting.some((item) => item.trustTier <= 2);
+    const hasTwoIndependent = supporting.some((left, index) =>
+      supporting
+        .slice(index + 1)
+        .some((right) => groundedEvidenceIndependent(left, right)),
+    );
+    if (!hasStrongSource && !hasTwoIndependent) {
+      droppedItems.push(`factor:${factor.dimension}:insufficient_corroboration`);
+      return false;
+    }
+    return true;
+  });
+
+  const conflicts = output.conflicts.filter((conflict) => {
+    const keep =
+      allAccepted(conflict.evidence_ids_a) &&
+      allAccepted(conflict.evidence_ids_b);
+    if (!keep) droppedItems.push(`conflict:${conflict.topic}`);
+    return keep;
+  });
+
+  const marketDeviation =
+    output.market_deviation &&
+    allAccepted(output.market_deviation.evidence_ids)
+      ? output.market_deviation
+      : null;
+  if (output.market_deviation && !marketDeviation) {
+    droppedItems.push("market_deviation");
+  }
+
+  if (output.outcome === "analyzed" && factors.length === 0) {
+    return {
+      output: downgradeOutputForGroundingPolicy(output),
+      droppedItems,
+      wholeFixtureDowngraded: true,
+    };
+  }
+
+  const droppedDimensions = new Set(
+    droppedItems
+      .filter((item) => item.startsWith("factor:"))
+      .map((item) => item.split(":")[1]),
+  );
+
+  return {
+    output: {
+      ...output,
+      availability,
+      factors,
+      conflicts,
+      market_deviation: marketDeviation,
+      dimension_coverage: output.dimension_coverage.map((item) =>
+        droppedDimensions.has(item.dimension)
+          ? { ...item, status: "insufficient_data" as const }
+          : item,
+      ),
+      ...(droppedItems.length > 0
+        ? {
+            summary:
+              factors.length > 0
+                ? factors
+                    .slice(0, 2)
+                    .map((factor) => factor.rationale)
+                    .join(" ")
+                : output.summary,
+            main_risk:
+              "Some reported inputs were excluded because they did not pass evidence grounding.",
+            key_assumptions: [],
+            watch_items: [],
+            data_quality: {
+              ...output.data_quality,
+              sparse_coverage: true,
+              notes: [
+                output.data_quality.notes,
+                "unsupported_items_removed",
+              ]
+                .filter(Boolean)
+                .join("; "),
+            },
+          }
+        : {}),
+    },
+    droppedItems,
+    wholeFixtureDowngraded: false,
+  };
+}
+
+}
+
 export function createOpenAIFixtureResearchRunner(
   client: OpenAI,
 ): FixtureResearchRunner {
@@ -621,21 +751,24 @@ export async function executeOneResearchTask(
 
     const groundingPolicyFailures =
       grounding?.grounding.policyFailures?.filter(Boolean) ?? [];
-    if (groundingPolicyFailures.length > 0) {
-      // Grounding already proved that one or more material claims cannot be
-      // safely supported. A second paid model call is not evidence; fail
-      // closed for this fixture and let the round continue coherently.
+    const groundingSanitization = grounding
+      ? sanitizeOutputForGrounding(research.output, grounding.grounding)
+      : null;
+
+    if (groundingSanitization) {
       research = {
         ...research,
-        output: downgradeOutputForGroundingPolicy(research.output),
+        output: groundingSanitization.output,
       };
-      grounding = {
-        ...grounding!,
-        grounding: {
-          ...grounding!.grounding,
-          requiresEntailmentVerification: [],
-        },
-      };
+      if (groundingSanitization.wholeFixtureDowngraded) {
+        grounding = {
+          ...grounding!,
+          grounding: {
+            ...grounding!.grounding,
+            requiresEntailmentVerification: [],
+          },
+        };
+      }
     }
 
     if (!(await confirmOwnership())) {
@@ -688,8 +821,11 @@ export async function executeOneResearchTask(
             ? "not_required"
             : "pending",
         grounding: grounding?.grounding ?? null,
-        grounding_policy_downgraded: groundingPolicyFailures.length > 0,
+        grounding_policy_downgraded:
+          groundingSanitization?.wholeFixtureDowngraded ?? false,
         grounding_policy_failures: groundingPolicyFailures,
+        grounding_policy_dropped_items:
+          groundingSanitization?.droppedItems ?? [],
         source_retrieval_failures: grounding?.retrievalFailures ?? [],
       },
       traceId: options.traceId ?? null,
