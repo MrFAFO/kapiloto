@@ -9,6 +9,7 @@ import {
   getKapilotoOpenAIModel,
   getKapilotoReasoningEffort,
 } from "./research-config";
+import { loadKapilotoWeeklyBudgetStatus } from "./research-cost";
 import {
   createOpenAIFixtureResearchRunner,
   executeOneResearchTask,
@@ -216,6 +217,18 @@ export async function runKapilotoWorkerCycle(
   const touchedRuns = new Set<string>();
 
   for (let index = 0; index < maxTasks; index += 1) {
+    const budget = await loadKapilotoWeeklyBudgetStatus(admin);
+    if (!budget.canStartAttempt) {
+      console.warn("Kapiloto weekly budget blocked another research attempt", {
+        committedMicros: budget.committedMicros,
+        capMicros: budget.capMicros,
+        remainingMicros: budget.remainingMicros,
+        attemptReserveMicros: budget.attemptReserveMicros,
+      });
+      tasks.push({ status: "deferred", reason: "weekly_budget" });
+      break;
+    }
+
     const result = await executeOneResearchTask(queue, runner, {
       workerId: options.workerId,
       leaseSeconds,
@@ -245,6 +258,27 @@ export async function runKapilotoWorkerCycle(
   if (options.finalizeRuns !== false) {
     for (const runId of await loadFinalizationCandidateRunIds(admin)) {
       touchedRuns.add(runId);
+    }
+
+    const finalizationBudget = await loadKapilotoWeeklyBudgetStatus(admin);
+    if (!finalizationBudget.canStartFinalization) {
+      console.warn("Kapiloto weekly budget blocked paid finalization", {
+        committedMicros: finalizationBudget.committedMicros,
+        capMicros: finalizationBudget.capMicros,
+        remainingMicros: finalizationBudget.remainingMicros,
+        finalizationReserveMicros:
+          finalizationBudget.finalizationReserveMicros,
+      });
+      for (const runId of touchedRuns) {
+        finalizationDeferred.push({ runId, reason: "weekly_budget" });
+      }
+      return {
+        recoveredAttempts,
+        failedRuns,
+        tasks,
+        finalizedRuns,
+        finalizationDeferred,
+      };
     }
 
     // Correctness does not depend on which scheduler slot finalizes: the
