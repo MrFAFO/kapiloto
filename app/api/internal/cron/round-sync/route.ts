@@ -121,13 +121,14 @@ export async function GET(request: Request): Promise<Response> {
     structuredSync,
     liveSync,
   };
+  const persistedDetail = JSON.parse(JSON.stringify(detail));
 
   const { error: controlError } = await admin
     .from("round_sync_control")
     .update({
       last_finished_at: checkedAt,
       last_status: hasFailure ? "partial_failure" : "ok",
-      last_detail: detail,
+      last_detail: persistedDetail,
       updated_at: checkedAt,
     })
     .eq("id", 1);
