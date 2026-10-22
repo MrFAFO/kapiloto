@@ -238,7 +238,7 @@ test("material factors that lack corroboration request a fail-closed downgrade",
 });
 
 
-test("blocked or missing evidence does not sink a claim when remaining evidence still satisfies policy", () => {
+test("partially grounded items are flagged for item-level removal", () => {
   const output = baseOutput();
   output.evidence.push({
     evidence_id: "e2",
@@ -279,7 +279,17 @@ test("blocked or missing evidence does not sink a claim when remaining evidence 
     result.accepted.map((item) => item.modelEvidenceId),
     ["e2"],
   );
-  assert.deepEqual(result.requiresEntailmentVerification, ["e2"]);
+  assert.deepEqual(result.requiresEntailmentVerification, []);
+  assert.ok(
+    result.policyFailures?.some((failure) =>
+      failure.includes("availability:Player A has evidence that failed grounding"),
+    ),
+  );
+  assert.ok(
+    result.policyFailures?.some((failure) =>
+      failure.includes("factor:availability has evidence that failed grounding"),
+    ),
+  );
 });
 
 test("a claim with no grounded support requests a fail-closed downgrade without a retry", () => {
@@ -294,7 +304,7 @@ test("a claim with no grounded support requests a fail-closed downgrade without 
   assert.deepEqual(result.requiresEntailmentVerification, []);
   assert.ok(
     result.policyFailures?.some((failure) =>
-      failure.includes("no evidence that passed grounding"),
+      failure.includes("evidence that failed grounding"),
     ),
   );
 });
