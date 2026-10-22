@@ -56,7 +56,7 @@ function providerFailureJudge(): EntailmentJudge & { calls: number } {
   return judge;
 }
 
-test("15 supported fixtures publish normally while one unsupported fixture is withheld", async () => {
+test("15 supported fixtures use Sol while one unsupported fixture falls back to market only", async () => {
   const db = await createFinalizationDb();
   const ledger = new PgliteFinalizationLedger(db);
   const judge = countingJudge(["fixture-7:e-7"]);
@@ -75,10 +75,10 @@ test("15 supported fixtures publish normally while one unsupported fixture is wi
   const rows = await publishedAnalyses(db);
   assert.equal(rows.length, 16);
   const outcomes = new Map(rows.map((row) => [row.fixture_id, row.payload.outcome]));
-  assert.equal(outcomes.get("fixture-7"), "insufficient_data");
+  assert.equal(outcomes.get("fixture-7"), "analyzed");
   assert.equal(
     [...outcomes.values()].filter((outcome) => outcome === "analyzed").length,
-    15,
+    16,
   );
 
   const withheld = rows.find((row) => row.fixture_id === "fixture-7")!.payload as Record<
@@ -86,26 +86,31 @@ test("15 supported fixtures publish normally while one unsupported fixture is wi
     unknown
   >;
   assert.equal(withheld.round_game_id, "game-7");
-  assert.equal(withheld.primary_pick, null);
+  assert.equal(withheld.primary_pick, "1");
   assert.equal(withheld.suggested_double, null);
-  assert.equal(withheld.p_final_1_bp, null);
+  assert.equal(withheld.p_final_1_bp, 4500);
   assert.equal(withheld.p_sol_1_bp, null);
   assert.equal(withheld.double_priority_rank, null);
   assert.equal(withheld.p_prior_1_bp, 4500, "frozen prior is preserved");
   assert.equal(withheld.kickoff_at_snapshot, "2026-10-21T18:00:00.000Z");
-  assert.equal(withheld.summary, null);
+  assert.equal(
+    withheld.summary,
+    "Kapiloto found no verified reason to move away from the market baseline.",
+  );
   assert.deepEqual(withheld.key_assumptions, []);
   assert.deepEqual(withheld.factors, []);
   assert.ok(
-    (withheld.reliability_reasons as string[]).includes("material_entailment_unsupported"),
+    (withheld.reliability_reasons as string[]).includes(
+      "p_sol_invalidated:baseline_form",
+    ),
   );
   const withheldEvidence = withheld.evidence as Array<Record<string, unknown>>;
   assert.equal(withheldEvidence[0].status, "rejected");
   assert.equal(withheldEvidence[0].rejected_reason, "entailment_unsupported");
   const audit = (withheld.inputs as Array<Record<string, unknown>>).find(
-    (input) => input.input_type === "entailment_downgrade",
+    (input) => input.input_type === "grounding_policy",
   );
-  assert.ok(audit, "downgrade audit input is recorded");
+  assert.ok(audit, "grounding-policy audit input is recorded");
 
   // No unsupported claim is ever published as accepted evidence.
   for (const row of rows) {
@@ -462,7 +467,7 @@ test("finalization error classification separates operational from terminal fail
   }
 });
 
-test("an unsupported verdict always withholds the fixture, even without audit metadata", () => {
+test("an unsupported directional verdict invalidates p_sol even without audit metadata", () => {
   const run = finalizableRun();
   const fixtures = run.fixtureSet.map((fixture, index) => {
     if (fixture.mode !== "research") throw new Error("expected research fixture");
@@ -481,10 +486,13 @@ test("an unsupported verdict always withholds the fixture, even without audit me
 
   const round = materializeValidatedResearchRound(fixtures);
   const withheld = round.analyses[2];
-  assert.equal(withheld.outcome, "insufficient_data");
-  assert.equal(withheld.primary_pick, null);
+  assert.equal(withheld.outcome, "analyzed");
+  assert.equal(withheld.blend_weight, 0);
+  assert.equal(withheld.p_sol_1_bp, null);
+  assert.equal(withheld.p_final_1_bp, withheld.p_prior_1_bp);
+  assert.equal(withheld.primary_pick, "1");
   assert.equal(withheld.evidence[0].status, "rejected");
-  assert.equal(round.synthesis.insufficient_data_fixtures, 1);
+  assert.equal(round.synthesis.insufficient_data_fixtures, 0);
   assert.equal(round.synthesis.double_ranking.length, 15);
 });
 
