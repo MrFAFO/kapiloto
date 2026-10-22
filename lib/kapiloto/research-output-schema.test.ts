@@ -93,3 +93,41 @@ test("key_assumptions limit matches the failure seen in production", () => {
   assert.equal(KAPILOTO_TEXT_LIMITS.key_assumptions, 150);
   assert.equal(pattern.test("x".repeat(151)), false);
 });
+
+
+test("v2 strict schema requires structured_refs on every factor", () => {
+  const schema = researchOutputSchema as unknown as {
+    properties: {
+      protocol_version: { enum: string[] };
+      factors: {
+        items: {
+          required: string[];
+          properties: {
+            structured_refs: {
+              items: { enum: string[] };
+            };
+          };
+        };
+      };
+    };
+  };
+
+  assert.deepEqual(schema.properties.protocol_version.enum, [
+    "kapiloto-research-v2",
+  ]);
+  assert.equal(
+    schema.properties.factors.items.required.includes("structured_refs"),
+    true,
+  );
+  assert.deepEqual(
+    schema.properties.factors.items.properties.structured_refs.items.enum,
+    [
+      "home.form",
+      "away.form",
+      "home.rest",
+      "away.rest",
+      "home.table",
+      "away.table",
+    ],
+  );
+});
