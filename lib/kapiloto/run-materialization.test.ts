@@ -125,7 +125,7 @@ function grounding(): GroundingResult {
         retrievedAt: "2026-10-20T09:00:00.000Z",
         trustTier: 2,
         quoteVerified: true,
-        entailment: "not_checked",
+        entailment: "supported",
         syndicationClusterId: null,
         contentSha256: "abc123",
       },
@@ -175,8 +175,17 @@ test("materializes 16 grounded fixtures and assigns a unique deterministic doubl
   assert.equal(first.orientation_verified, true);
 });
 
-test("materialization strips references to evidence rejected by grounding", () => {
+test("directional factor with rejected evidence invalidates p_sol and falls back to market only", () => {
   const fixtures = round();
+  fixtures[0].output.evidence.push({
+    evidence_id: "e2",
+    url: "https://example.com/rejected",
+    quote: "Rejected source text",
+    claim: "Unsupported availability.",
+    claim_type: "availability",
+    about_team: "home",
+    event_time: null,
+  });
   fixtures[0].output.availability = [
     {
       team: "home",
@@ -204,12 +213,17 @@ test("materialization strips references to evidence rejected by grounding", () =
   const result = materializeValidatedResearchRound(fixtures);
   const first = result.analyses[0];
 
-  assert.deepEqual(first.factors[0].evidence_model_ids, ["e1"]);
+  assert.equal(first.outcome, "analyzed");
+  assert.equal(first.blend_weight, 0);
+  assert.equal(first.p_sol_1_bp, null);
+  assert.equal(first.p_final_1_bp, first.p_prior_1_bp);
+  assert.deepEqual(first.factors, []);
   assert.deepEqual(first.availability, []);
   assert.deepEqual(first.conflicts, []);
+  assert.equal(first.double_priority_rank, null);
   assert.equal(
-    first.factors.some((factor) => factor.evidence_model_ids.includes("e2")),
-    false,
+    first.reliability_reasons.includes("p_sol_invalidated:baseline_form"),
+    true,
   );
 });
 
@@ -236,7 +250,7 @@ test("insufficient-data fixture is materialized without pick or double rank", ()
   assert.equal(result.synthesis.double_ranking.length, 15);
 });
 
-test("analyzed fixture cannot materialize without accepted grounded evidence", () => {
+test("analyzed fixture with no grounded directional evidence falls back to market only", () => {
   const fixtures = round();
   fixtures[0].grounding = {
     accepted: [],
@@ -244,10 +258,13 @@ test("analyzed fixture cannot materialize without accepted grounded evidence", (
     requiresEntailmentVerification: [],
   };
 
-  assert.throws(
-    () => materializeValidatedResearchRound(fixtures),
-    /no accepted grounded evidence/,
-  );
+  const result = materializeValidatedResearchRound(fixtures);
+  const first = result.analyses[0];
+  assert.equal(first.outcome, "analyzed");
+  assert.equal(first.blend_weight, 0);
+  assert.equal(first.p_sol_1_bp, null);
+  assert.equal(first.p_final_1_bp, first.p_prior_1_bp);
+  assert.equal(first.double_priority_rank, null);
 });
 
 test("pending material-factor entailment blocks publication", () => {
