@@ -12,6 +12,23 @@ import { runAutomaticLiveSync } from "@/lib/rounds/live-sync";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
+type CronStep<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: string };
+
+async function runStep<T>(
+  step: string,
+  work: () => Promise<T>,
+): Promise<CronStep<T>> {
+  try {
+    return { ok: true, value: await work() };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Kapiloto cron step failed", { step, error: message });
+    return { ok: false, error: message };
+  }
+}
+
 export async function GET(request: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET?.trim();
   const authorization = request.headers.get("authorization");
@@ -23,62 +40,78 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
 
-  try {
-    const admin = createAdminClient();
-    const roundSync = await runAutomaticRoundSync(admin);
-    const currentRound = await new SupabaseCurrentRoundLoader(admin).load();
+  const admin = createAdminClient();
 
-    const apiFootballKey = process.env.API_FOOTBALL_API_KEY?.trim();
-    const sportmonksToken = process.env.SPORTMONKS_API_TOKEN?.trim();
-    const apiFootball = apiFootballKey
-      ? new ApiFootballClient(apiFootballKey, {
-          minRequestIntervalMs: getApiFootballMinRequestIntervalMs(),
-        })
-      : null;
-    const sportmonks = sportmonksToken
-      ? new SportmonksClient(sportmonksToken)
-      : null;
+  // The Winner 16 import is useful, but provider snapshots must not depend on
+  // it succeeding. Existing canonical rounds remain usable even when the
+  // discovery/import source is temporarily unavailable.
+  const roundSync = await runStep("round_sync", () =>
+    runAutomaticRoundSync(admin),
+  );
+  const currentRound = await runStep("current_round", () =>
+    new SupabaseCurrentRoundLoader(admin).load(),
+  );
 
-    let marketSync = null;
-    let structuredSync = null;
-    if (currentRound) {
-      if (apiFootball) {
-        marketSync = await syncApiFootballRoundMarket(
-          new SupabaseApiFootballSyncStore(admin),
-          apiFootball,
-          currentRound.roundId,
-        );
-      }
+  const apiFootballKey = process.env.API_FOOTBALL_API_KEY?.trim();
+  const sportmonksToken = process.env.SPORTMONKS_API_TOKEN?.trim();
+  const apiFootball = apiFootballKey
+    ? new ApiFootballClient(apiFootballKey, {
+        minRequestIntervalMs: getApiFootballMinRequestIntervalMs(),
+      })
+    : null;
+  const sportmonks = sportmonksToken
+    ? new SportmonksClient(sportmonksToken)
+    : null;
 
-      if (sportmonks || apiFootball) {
-        structuredSync = await syncKapilotoStructuredRound(
-          admin,
-          currentRound.roundId,
-          { sportmonks, apiFootball },
-        );
-      }
-    }
+  let marketSync: CronStep<unknown> | null = null;
+  let structuredSync: CronStep<unknown> | null = null;
+  let liveSync: CronStep<unknown> | null = null;
 
-    const liveSync = currentRound
-      ? await runAutomaticLiveSync(admin, currentRound.roundId)
-      : null;
+  if (currentRound.ok && currentRound.value) {
+    const roundId = currentRound.value.roundId;
 
-    return Response.json({
-      ok: true,
+    marketSync = apiFootball
+      ? await runStep("market_sync", () =>
+          syncApiFootballRoundMarket(
+            new SupabaseApiFootballSyncStore(admin),
+            apiFootball,
+            roundId,
+          ),
+        )
+      : { ok: false, error: "API_FOOTBALL_API_KEY_missing" };
+
+    structuredSync =
+      sportmonks || apiFootball
+        ? await runStep("structured_sync", () =>
+            syncKapilotoStructuredRound(admin, roundId, {
+              sportmonks,
+              apiFootball,
+            }),
+          )
+        : {
+            ok: false,
+            error: "SPORTMONKS_API_TOKEN_and_API_FOOTBALL_API_KEY_missing",
+          };
+
+    liveSync = await runStep("live_sync", () =>
+      runAutomaticLiveSync(admin, roundId),
+    );
+  }
+
+  const steps = [roundSync, currentRound, marketSync, structuredSync, liveSync]
+    .filter((step): step is CronStep<unknown> => step !== null);
+  const hasFailure = steps.some((step) => !step.ok);
+
+  return Response.json(
+    {
+      ok: !hasFailure,
       checkedAt: new Date().toISOString(),
       roundSync,
+      currentRound,
       marketSync,
       structuredSync,
       liveSync,
-    });
-  } catch (error) {
-    return Response.json(
-      {
-        ok: false,
-        checkedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error),
-      },
-      { status: 503 },
-    );
-  }
+    },
+    { status: hasFailure ? 207 : 200 },
+  );
 }
