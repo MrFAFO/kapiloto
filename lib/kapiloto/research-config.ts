@@ -11,7 +11,7 @@ export const KAPILOTO_DERIVATION_VERSION = "kapiloto-derivation-v4";
 export const KAPILOTO_SOURCE_POLICY_VERSION = "kapiloto-source-v4";
 export const KAPILOTO_RECENCY_POLICY_VERSION = "kapiloto-recency-v1";
 export const KAPILOTO_RELIABILITY_FORMULA_VERSION =
-  "kapiloto-reliability-shadow-v3";
+  "kapiloto-reliability-shadow-v4";
 export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v2";
 
 export type KapilotoEnv = Readonly<Record<string, string | undefined>>;
