@@ -4,7 +4,7 @@ import type { GroundedEvidence, GroundingResult } from "./source-grounding";
 import { verifyStructuredFactor } from "./structured-refs";
 
 export const KAPILOTO_GROUNDING_POLICY_VERSION =
-  "kapiloto-grounding-policy-v4" as const;
+  "kapiloto-grounding-policy-v5" as const;
 
 type ResearchFactor = SolFixtureResearchOutput["factors"][number];
 
