@@ -4,8 +4,10 @@ import type {
   BookmakerThreeWayQuote,
   ProviderFixture,
   ProviderCapabilities,
+  ProviderCompletedMatch,
   ProviderFixtureCoverage,
   ProviderSpikeFixtureInput,
+  ProviderStanding,
 } from "./types";
 
 const DEFAULT_BASE_URL = "https://v3.football.api-sports.io";
@@ -41,6 +43,10 @@ type ApiFootballFixtureRow = {
     home?: { id?: number; name?: string };
     away?: { id?: number; name?: string };
   };
+  goals?: { home?: number | null; away?: number | null };
+  score?: {
+    fulltime?: { home?: number | null; away?: number | null };
+  };
 };
 
 type ApiFootballLeagueRow = {
@@ -53,6 +59,22 @@ type ApiFootballLeagueRow = {
       predictions?: boolean;
     };
   }>;
+};
+
+type ApiFootballStandingResponseRow = {
+  league?: {
+    id?: number;
+    season?: number;
+    standings?: Array<
+      Array<{
+        rank?: number;
+        team?: { id?: number; name?: string };
+        points?: number;
+        goalsDiff?: number;
+        all?: { played?: number };
+      }>
+    >;
+  };
 };
 
 type ApiFootballOddsRow = {
@@ -121,6 +143,87 @@ function toProviderFixture(row: ApiFootballFixtureRow): ProviderFixture | null {
     home: { id: String(homeId), name: homeName },
     away: { id: String(awayId), name: awayName },
   };
+}
+
+function completedScore(
+  row: ApiFootballFixtureRow,
+): { home: number; away: number } | null {
+  const home = row.score?.fulltime?.home ?? row.goals?.home;
+  const away = row.score?.fulltime?.away ?? row.goals?.away;
+  if (
+    typeof home !== "number" ||
+    typeof away !== "number" ||
+    !Number.isInteger(home) ||
+    !Number.isInteger(away) ||
+    home < 0 ||
+    away < 0
+  ) {
+    return null;
+  }
+  return { home, away };
+}
+
+export function parseApiFootballCompletedMatches(
+  rows: ApiFootballFixtureRow[],
+): ProviderCompletedMatch[] {
+  const matches: ProviderCompletedMatch[] = [];
+  for (const row of rows) {
+    if ((row.fixture?.status?.short ?? "").toUpperCase() !== "FT") continue;
+    const fixture = toProviderFixture(row);
+    const score = completedScore(row);
+    if (!fixture || !score) continue;
+    matches.push({
+      provider: "api-football",
+      providerFixtureId: fixture.providerFixtureId,
+      kickoffAt: fixture.kickoffAt,
+      competition: {
+        id: fixture.competition.id,
+        name: fixture.competition.name,
+        country: fixture.competition.country,
+      },
+      season: fixture.season,
+      home: fixture.home,
+      away: fixture.away,
+      homeScore: score.home,
+      awayScore: score.away,
+    });
+  }
+  return matches.sort(
+    (a, b) => Date.parse(b.kickoffAt) - Date.parse(a.kickoffAt),
+  );
+}
+
+export function parseApiFootballStandings(
+  rows: ApiFootballStandingResponseRow[],
+): ProviderStanding[] {
+  const standings: ProviderStanding[] = [];
+  for (const response of rows) {
+    const league = response.league;
+    if (league?.id == null || league.season == null) continue;
+    for (const table of league.standings ?? []) {
+      for (const row of table) {
+        if (
+          row.rank == null ||
+          row.team?.id == null ||
+          row.points == null
+        ) {
+          continue;
+        }
+        standings.push({
+          provider: "api-football",
+          competitionId: String(league.id),
+          season: league.season,
+          teamId: String(row.team.id),
+          position: row.rank,
+          points: row.points,
+          played: row.all?.played ?? null,
+          goalDifference: row.goalsDiff ?? null,
+          pointsDeducted: null,
+        });
+      }
+    }
+  }
+  return standings;
 }
 
 function parseDecimal(value: string | undefined): number | null {
@@ -356,6 +459,44 @@ export class ApiFootballClient {
     }
 
     return { fixture: candidates[0].fixture, resolution: "name_match" };
+  }
+
+  async getTeamCompletedMatches(
+    teamId: string,
+    last = 12,
+  ): Promise<ProviderCompletedMatch[]> {
+    if (!/^\d+$/.test(teamId)) {
+      throw new Error("API-Football team id must be numeric.");
+    }
+    const safeLast = Math.max(1, Math.min(99, Math.trunc(last)));
+    const envelope = await this.request<ApiFootballFixtureRow>("/fixtures", {
+      team: Number(teamId),
+      last: safeLast,
+      status: "FT",
+      timezone: "UTC",
+    });
+    return parseApiFootballCompletedMatches(
+      requireResponse(envelope, "team completed fixtures"),
+    );
+  }
+
+  async getStandings(
+    leagueId: string,
+    season: number,
+  ): Promise<ProviderStanding[]> {
+    if (!/^\d+$/.test(leagueId) || !Number.isInteger(season)) {
+      throw new Error("API-Football standings require numeric league and season.");
+    }
+    const envelope = await this.request<ApiFootballStandingResponseRow>(
+      "/standings",
+      {
+        league: Number(leagueId),
+        season,
+      },
+    );
+    return parseApiFootballStandings(
+      requireResponse(envelope, "standings"),
+    );
   }
 
   async getLineupEntryCount(fixtureId: string): Promise<number> {
