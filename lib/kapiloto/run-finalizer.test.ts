@@ -68,9 +68,27 @@ function output(gameNumber: number): SolFixtureResearchOutput {
     home_team_id: `home-${gameNumber}`,
     away_team_id: `away-${gameNumber}`,
     outcome: "analyzed",
-    evidence: [],
+    evidence: [
+      {
+        evidence_id: `e-${gameNumber}`,
+        url: "https://example.com/report",
+        quote: "The home side has won four of its last five league matches.",
+        claim: "The home side has strong recent league form.",
+        claim_type: "baseline_form",
+        about_team: "home",
+        event_time: null,
+      },
+    ],
     availability: [],
-    factors: [],
+    factors: [
+      {
+        dimension: "baseline_form",
+        favors: "home",
+        magnitude: "small",
+        evidence_ids: [`e-${gameNumber}`],
+        rationale: "Verified recent form favors the home side.",
+      },
+    ],
     dimension_coverage: KAPILOTO_RESEARCH_DIMENSIONS.map((dimension) => ({
       dimension,
       status: "no_material_signal" as const,
@@ -109,7 +127,7 @@ function grounding(gameNumber: number, needsEntailment = false): GroundingResult
         retrievedAt: "2026-10-20T09:00:00.000Z",
         trustTier: 2,
         quoteVerified: true,
-        entailment: "not_checked",
+        entailment: needsEntailment ? "not_checked" : "supported",
         syndicationClusterId: null,
         contentSha256: "abc123",
       },
@@ -251,7 +269,7 @@ test("incomplete succeeded-attempt set is never published", async () => {
   assert.equal(publisher.published, 0);
 });
 
-test("unsupported material evidence withholds only that fixture; the round still publishes", async () => {
+test("unsupported directional evidence invalidates p_sol for only that fixture; the round still publishes", async () => {
   const publisher = new MemoryPublisher();
   const judge: EntailmentJudge = {
     async verify(items) {
@@ -277,18 +295,23 @@ test("unsupported material evidence withholds only that fixture; the round still
   assert.equal(publisher.published, 1);
   assert.equal(result.analysisCount, 16);
   assert.deepEqual(result.downgradedFixtureIds, ["fixture-1"]);
-  assert.equal(publisher.lastOutcomes[0], "insufficient_data");
+  assert.equal(publisher.lastOutcomes[0], "analyzed");
   assert.deepEqual(
     publisher.lastOutcomes.slice(1),
     Array.from({ length: 15 }, () => "analyzed"),
   );
 
   const withheld = publisher.last!.analyses[0];
-  assert.equal(withheld.primary_pick, null);
-  assert.equal(withheld.p_final_1_bp, null);
+  assert.equal(withheld.blend_weight, 0);
+  assert.equal(withheld.p_sol_1_bp, null);
+  assert.equal(withheld.p_final_1_bp, withheld.p_prior_1_bp);
   assert.equal(withheld.double_priority_rank, null);
   assert.equal(withheld.evidence[0].status, "rejected");
   assert.equal(withheld.evidence[0].entailment, "unsupported");
+  assert.equal(
+    withheld.reliability_reasons.includes("p_sol_invalidated:baseline_form"),
+    true,
+  );
   assert.equal(
     publisher.last!.synthesis.double_ranking.some(
       (item) => item.fixture_id === "fixture-1",
