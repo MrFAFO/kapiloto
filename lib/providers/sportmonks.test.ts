@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseSportmonksThreeWayQuotes } from "./sportmonks";
+import {
+  parseSportmonksCompletedMatches,
+  parseSportmonksStandings,
+  parseSportmonksThreeWayQuotes,
+} from "./sportmonks";
 import type { ProviderFixture } from "./types";
 
 const fixture: ProviderFixture = {
@@ -107,4 +111,80 @@ test("accepts Home/Draw/Away labels for Match Winner", () => {
     draw: 3.4,
     away: 4.1,
   });
+});
+
+
+test("normalizes finished Sportmonks fixtures using regular-time score", () => {
+  const matches = parseSportmonksCompletedMatches([
+    {
+      id: 700,
+      league_id: 372,
+      season_id: 20260,
+      starting_at: "2026-10-10 18:00:00",
+      state: { developer_name: "FT" },
+      participants: [
+        { id: 1, name: "Home", meta: { location: "home" } },
+        { id: 2, name: "Away", meta: { location: "away" } },
+      ],
+      league: { id: 372, name: "Ligat Ha'al" },
+      scores: [
+        {
+          description: "2ND_HALF",
+          score: { participant: "home", goals: 2 },
+        },
+        {
+          description: "2ND_HALF",
+          score: { participant: "away", goals: 1 },
+        },
+      ],
+    },
+    {
+      id: 701,
+      league_id: 372,
+      season_id: 20260,
+      starting_at: "2026-10-11 18:00:00",
+      state: { developer_name: "NS" },
+      participants: [
+        { id: 1, name: "Home", meta: { location: "home" } },
+        { id: 3, name: "Future", meta: { location: "away" } },
+      ],
+      league: { id: 372, name: "Ligat Ha'al" },
+      scores: [],
+    },
+  ]);
+
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].providerFixtureId, "700");
+  assert.equal(matches[0].homeScore, 2);
+  assert.equal(matches[0].awayScore, 1);
+});
+
+test("normalizes Sportmonks standings details", () => {
+  const standings = parseSportmonksStandings([
+    {
+      participant_id: 1,
+      league_id: 372,
+      season_id: 20260,
+      position: 3,
+      points: 18,
+      details: [
+        { value: 9, type: { name: "Overall Matches Played" } },
+        { value: 7, type: { name: "Goal Difference" } },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(standings, [
+    {
+      provider: "sportmonks",
+      competitionId: "372",
+      season: 20260,
+      teamId: "1",
+      position: 3,
+      points: 18,
+      played: 9,
+      goalDifference: 7,
+      pointsDeducted: null,
+    },
+  ]);
 });
