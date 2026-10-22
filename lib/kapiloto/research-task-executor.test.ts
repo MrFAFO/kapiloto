@@ -291,6 +291,48 @@ test("grounder runs before a successful attempt is persisted", async () => {
   );
 });
 
+test("grounding policy failures finish once as insufficient data instead of buying a retry", async () => {
+  const queue = new MemoryQueue();
+  const runner: FixtureResearchRunner = {
+    async research() {
+      return successResult();
+    },
+  };
+  const grounder: FixtureEvidenceGrounder = {
+    async ground() {
+      return {
+        grounding: {
+          accepted: [],
+          rejected: [{ evidenceId: "e1", reason: "quote_not_found" }],
+          requiresEntailmentVerification: [],
+          policyFailures: [
+            "availability:Player A has no evidence that passed grounding.",
+          ],
+        },
+        retrievalFailures: [],
+      };
+    },
+  };
+
+  const result = await executeOneResearchTask(queue, runner, {
+    workerId: "worker-1",
+    heartbeatIntervalMs: 0,
+    grounder,
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(queue.finishes.length, 1);
+  assert.equal(queue.finishes[0].success, true);
+  const output = queue.finishes[0].validatedOutput as SolFixtureResearchResult["output"];
+  assert.equal(output.outcome, "insufficient_data");
+  assert.deepEqual(output.factors, []);
+  assert.deepEqual(output.availability, []);
+  assert.equal(queue.finishes[0].validationReport.grounding_policy_downgraded, true);
+  assert.deepEqual(queue.finishes[0].validationReport.grounding_policy_failures, [
+    "availability:Player A has no evidence that passed grounding.",
+  ]);
+});
+
 test("grounding failure marks the attempt retryable and does not persist success", async () => {
   const queue = new MemoryQueue();
   const runner: FixtureResearchRunner = {
