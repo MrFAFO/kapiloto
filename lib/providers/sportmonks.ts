@@ -317,10 +317,15 @@ function numericStandingDetail(
     names.map((name) => normalizeTeamName(name)),
   );
   for (const detail of row.details ?? []) {
-    const name = normalizeTeamName(
-      detail.type?.developer_name ?? detail.type?.name ?? "",
-    );
-    if (!normalizedNames.has(name)) continue;
+    const candidates = [
+      detail.type?.developer_name,
+      detail.type?.name,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => normalizeTeamName(value));
+
+    if (!candidates.some((name) => normalizedNames.has(name))) continue;
+
     const value = Number(detail.value);
     if (Number.isFinite(value)) return value;
   }
@@ -348,6 +353,7 @@ export function parseSportmonksStandings(
       position: row.position,
       points: row.points,
       played: numericStandingDetail(row, [
+        "overall matches",
         "overall matched played",
         "overall matches played",
         "matches played",
