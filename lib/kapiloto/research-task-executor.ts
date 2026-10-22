@@ -470,8 +470,6 @@ export function sanitizeOutputForGrounding(
   };
 }
 
-}
-
 export function createOpenAIFixtureResearchRunner(
   client: OpenAI,
 ): FixtureResearchRunner {
