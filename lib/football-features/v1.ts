@@ -66,6 +66,7 @@ type TeamFeatureInput = {
   teamId: string;
   venue: "home" | "away";
   targetCompetitionId: string;
+  targetSeason: number | null;
   targetKickoffAt: string;
   researchCutoffAt: string;
   matches: ProviderCompletedMatch[];
@@ -136,9 +137,14 @@ function aggregateForm(
   teamId: string,
   venue: "home" | "away",
   competitionId: string,
+  season: number | null,
 ): { feature: TeamFormFeature | null; coverage: StructuredCoverageStatus } {
+  const sameCompetitionSeason = (match: ProviderCompletedMatch) =>
+    match.competition.id === competitionId &&
+    (season == null || match.season === season);
+
   const league = matches
-    .filter((match) => match.competition.id === competitionId)
+    .filter(sameCompetitionSeason)
     .slice(0, 6);
 
   if (league.length === 0) {
@@ -159,7 +165,7 @@ function aggregateForm(
   const venueMatches = matches
     .filter(
       (match) =>
-        match.competition.id === competitionId &&
+        sameCompetitionSeason(match) &&
         pointsFor(match, teamId)?.venue === venue,
     )
     .slice(0, 6);
@@ -240,6 +246,7 @@ export function buildTeamStructuredFeaturesV1(
     input.teamId,
     input.venue,
     input.targetCompetitionId,
+    input.targetSeason,
   );
   const rest = restFeature(history, targetKickoffMs);
 
