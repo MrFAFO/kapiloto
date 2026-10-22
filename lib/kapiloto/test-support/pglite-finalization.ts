@@ -181,9 +181,27 @@ function output(gameNumber: number): SolFixtureResearchOutput {
     home_team_id: `home-${gameNumber}`,
     away_team_id: `away-${gameNumber}`,
     outcome: "analyzed",
-    evidence: [],
+    evidence: [
+      {
+        evidence_id: `e-${gameNumber}`,
+        url: `https://example.com/report-${gameNumber}`,
+        quote: "The home side has won four of its last five league matches.",
+        claim: "The home side has strong recent league form.",
+        claim_type: "baseline_form",
+        about_team: "home",
+        event_time: null,
+      },
+    ],
     availability: [],
-    factors: [],
+    factors: [
+      {
+        dimension: "baseline_form",
+        favors: "home",
+        magnitude: "small",
+        evidence_ids: [`e-${gameNumber}`],
+        rationale: "Verified recent form favors the home side.",
+      },
+    ],
     dimension_coverage: KAPILOTO_RESEARCH_DIMENSIONS.map((dimension) => ({
       dimension,
       status: "no_material_signal" as const,
