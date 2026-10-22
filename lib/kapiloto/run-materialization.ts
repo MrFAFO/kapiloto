@@ -177,6 +177,17 @@ function assertFixtureIdentity(input: ValidatedFixtureResearch): void {
   }
 }
 
+function acceptedEvidenceIds(grounding: GroundingResult): Set<string> {
+  return new Set(grounding.accepted.map((item) => item.modelEvidenceId));
+}
+
+function onlyAcceptedReferences(
+  ids: string[],
+  acceptedIds: Set<string>,
+): string[] {
+  return ids.filter((id) => acceptedIds.has(id));
+}
+
 function acceptedEvidence(
   grounding: GroundingResult,
 ): MaterializedEvidence[] {
@@ -232,6 +243,45 @@ function baseMaterialization(
   | "deviation_cap_applied"
 > {
   const { card, output, grounding } = input;
+  const acceptedIds = acceptedEvidenceIds(grounding);
+
+  const availability = output.availability
+    .map((item) => ({
+      ...item,
+      evidence_ids: onlyAcceptedReferences(item.evidence_ids, acceptedIds),
+    }))
+    .filter((item) => item.evidence_ids.length > 0);
+
+  const factors = output.factors
+    .map((factor) => ({
+      dimension: factor.dimension,
+      favors: factor.favors,
+      magnitude: factor.magnitude,
+      rationale: factor.rationale,
+      evidence_model_ids: onlyAcceptedReferences(
+        factor.evidence_ids,
+        acceptedIds,
+      ),
+    }))
+    .filter((factor) => factor.evidence_model_ids.length > 0);
+
+  const conflicts = output.conflicts
+    .map((conflict) => ({
+      ...conflict,
+      evidence_ids_a: onlyAcceptedReferences(
+        conflict.evidence_ids_a,
+        acceptedIds,
+      ),
+      evidence_ids_b: onlyAcceptedReferences(
+        conflict.evidence_ids_b,
+        acceptedIds,
+      ),
+    }))
+    .filter(
+      (conflict) =>
+        conflict.evidence_ids_a.length > 0 &&
+        conflict.evidence_ids_b.length > 0,
+    );
 
   return {
     round_game_id: input.roundGameId,
@@ -247,9 +297,9 @@ function baseMaterialization(
     model_self_confidence: output.model_self_confidence,
     summary: output.summary,
     main_risk: output.main_risk,
-    availability: output.availability,
+    availability,
     dimension_coverage: output.dimension_coverage,
-    conflicts: output.conflicts,
+    conflicts,
     watch_items: output.watch_items,
     key_assumptions: output.key_assumptions,
     data_quality: output.data_quality,
@@ -257,13 +307,7 @@ function baseMaterialization(
     valid_until: null,
     generated_at: null,
     evidence: acceptedEvidence(grounding),
-    factors: output.factors.map((factor) => ({
-      dimension: factor.dimension,
-      favors: factor.favors,
-      magnitude: factor.magnitude,
-      rationale: factor.rationale,
-      evidence_model_ids: [...factor.evidence_ids],
-    })),
+    factors,
     inputs: [
       {
         input_type: "fixture_card",
