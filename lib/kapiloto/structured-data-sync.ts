@@ -123,7 +123,7 @@ async function collectSportmonks(
   if (!target || target.season == null) return null;
 
   const endMs = Date.parse(cutoffAt);
-  const startMs = endMs - 210 * 86_400_000;
+  const startMs = endMs - 100 * 86_400_000;
   const [homeMatches, awayMatches] = await Promise.all([
     source.getTeamCompletedMatches(
       target.home.id,
