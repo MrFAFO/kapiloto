@@ -366,7 +366,7 @@ test("grounding sanitization drops unsupported items without sinking a supported
   assert.deepEqual(result.droppedItems, ["availability:Player A"]);
 });
 
-test("grounding policy failures finish once as insufficient data instead of buying a retry", async () => {
+test("grounding policy failures are preserved for finalization instead of mutating the attempt output", async () => {
   const queue = new MemoryQueue();
   const runner: FixtureResearchRunner = {
     async research() {
@@ -399,13 +399,15 @@ test("grounding policy failures finish once as insufficient data instead of buyi
   assert.equal(queue.finishes.length, 1);
   assert.equal(queue.finishes[0].success, true);
   const output = queue.finishes[0].validatedOutput as SolFixtureResearchResult["output"];
-  assert.equal(output.outcome, "insufficient_data");
-  assert.deepEqual(output.factors, []);
-  assert.deepEqual(output.availability, []);
-  assert.equal(queue.finishes[0].validationReport.grounding_policy_downgraded, true);
+  assert.equal(output.outcome, "analyzed");
+  assert.equal(queue.finishes[0].validationReport.grounding_policy_downgraded, false);
   assert.deepEqual(queue.finishes[0].validationReport.grounding_policy_failures, [
     "availability:Player A has no evidence that passed grounding.",
   ]);
+  assert.deepEqual(
+    queue.finishes[0].validationReport.raw_validated_output,
+    output,
+  );
 });
 
 test("grounding failure marks the attempt retryable and does not persist success", async () => {
