@@ -54,9 +54,9 @@ export type GroundingResult = {
   rejected: GroundingRejection[];
   requiresEntailmentVerification: string[];
   /**
-   * Deterministic evidence-policy failures. These do not justify another paid
-   * model call: callers must fail closed and publish the fixture as
-   * insufficient_data instead of retrying unsupported claims.
+   * Deterministic item-level evidence-policy failures. These do not justify
+   * another paid model call: callers must remove unsupported items and only
+   * withhold the whole fixture if no supported recommendation signal remains.
    */
   policyFailures?: string[];
 };
@@ -271,9 +271,9 @@ export function verifyGroundedResearchEvidence(
       availability.evidence_ids,
       acceptedById,
     );
-    if (supporting.length === 0) {
+    if (supporting.length !== availability.evidence_ids.length) {
       policyFailures.push(
-        `availability:${availability.player_name} has no evidence that passed grounding.`,
+        `availability:${availability.player_name} has evidence that failed grounding.`,
       );
     }
   }
@@ -281,14 +281,14 @@ export function verifyGroundedResearchEvidence(
   for (const conflict of output.conflicts) {
     const left = acceptedReferences(conflict.evidence_ids_a, acceptedById);
     const right = acceptedReferences(conflict.evidence_ids_b, acceptedById);
-    if (left.length === 0) {
+    if (left.length !== conflict.evidence_ids_a.length) {
       policyFailures.push(
-        `conflict:${conflict.topic}:a has no evidence that passed grounding.`,
+        `conflict:${conflict.topic}:a has evidence that failed grounding.`,
       );
     }
-    if (right.length === 0) {
+    if (right.length !== conflict.evidence_ids_b.length) {
       policyFailures.push(
-        `conflict:${conflict.topic}:b has no evidence that passed grounding.`,
+        `conflict:${conflict.topic}:b has evidence that failed grounding.`,
       );
     }
   }
@@ -298,9 +298,9 @@ export function verifyGroundedResearchEvidence(
       output.market_deviation.evidence_ids,
       acceptedById,
     );
-    if (supporting.length === 0) {
+    if (supporting.length !== output.market_deviation.evidence_ids.length) {
       policyFailures.push(
-        "market_deviation has no evidence that passed grounding.",
+        "market_deviation has evidence that failed grounding.",
       );
     }
   }
@@ -313,9 +313,9 @@ export function verifyGroundedResearchEvidence(
       acceptedById,
     );
 
-    if (supporting.length === 0) {
+    if (supporting.length !== factor.evidence_ids.length) {
       policyFailures.push(
-        `factor:${factor.dimension} has no evidence that passed grounding.`,
+        `factor:${factor.dimension} has evidence that failed grounding.`,
       );
       continue;
     }
@@ -345,12 +345,11 @@ export function verifyGroundedResearchEvidence(
   return {
     accepted,
     rejected,
-    // A fixture already downgraded by grounding never needs a paid
-    // entailment pass: no model-derived recommendation will be published.
-    requiresEntailmentVerification:
-      policyFailures.length > 0
-        ? []
-        : [...requiresEntailmentVerification].sort(),
+    // Unsupported items are removed individually by the executor. Material
+    // factors that remain fully grounded still require entailment verification.
+    requiresEntailmentVerification: [
+      ...requiresEntailmentVerification,
+    ].sort(),
     policyFailures,
   };
 }
