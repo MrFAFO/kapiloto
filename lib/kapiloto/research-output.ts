@@ -193,16 +193,11 @@ function assertNoUrl(value: string, field: string): void {
   }
 }
 
-function assertEvidenceReferences(
+function filterEvidenceReferences(
   ids: string[],
   known: Set<string>,
-  field: string,
-): void {
-  for (const id of ids) {
-    if (!known.has(id)) {
-      throw new Error(`${field} references unknown evidence id: ${id}`);
-    }
-  }
+): string[] {
+  return ids.filter((id) => known.has(id));
 }
 
 export function validateSolFixtureResearchOutput(
@@ -263,21 +258,19 @@ export function validateSolFixtureResearchOutput(
   );
   const evidenceIds = new Set<string>();
 
-  for (const item of output.evidence) {
+  output.evidence = output.evidence.filter((item) => {
     if (!item.evidence_id || evidenceIds.has(item.evidence_id)) {
       throw new Error(
         `Evidence ids must be non-empty and unique: ${item.evidence_id}`,
       );
     }
-    evidenceIds.add(item.evidence_id);
 
     const normalized = normalizeEvidenceUrl(item.url);
     if (!observed.has(normalized)) {
-      throw new Error(
-        `Evidence URL was not observed in the web-search tool sources: ${item.url}`,
-      );
+      return false;
     }
 
+    evidenceIds.add(item.evidence_id);
     assertLimit(item.quote, "evidence.quote");
     assertLimit(item.claim, "evidence.claim");
 
@@ -286,7 +279,9 @@ export function validateSolFixtureResearchOutput(
         `evidence.event_time must be ISO/date parseable: ${item.event_time}`,
       );
     }
-  }
+
+    return true;
+  });
 
   const dimensions = new Set<string>();
   if (!Array.isArray(output.dimension_coverage) || output.dimension_coverage.length !== 10) {
@@ -304,18 +299,16 @@ export function validateSolFixtureResearchOutput(
 
   for (const item of output.availability ?? []) {
     assertLimit(item.player_name, "availability.player_name");
-    assertEvidenceReferences(
+    item.evidence_ids = filterEvidenceReferences(
       item.evidence_ids,
       evidenceIds,
-      `availability:${item.player_name}`,
     );
   }
 
   for (const factor of output.factors ?? []) {
-    assertEvidenceReferences(
+    factor.evidence_ids = filterEvidenceReferences(
       factor.evidence_ids,
       evidenceIds,
-      `factor:${factor.dimension}`,
     );
     assertLimit(factor.rationale, "factors.rationale");
     assertNoUrl(factor.rationale, "factor.rationale");
@@ -323,23 +316,20 @@ export function validateSolFixtureResearchOutput(
 
   for (const conflict of output.conflicts ?? []) {
     assertLimit(conflict.topic, "conflicts.topic");
-    assertEvidenceReferences(
+    conflict.evidence_ids_a = filterEvidenceReferences(
       conflict.evidence_ids_a,
       evidenceIds,
-      `conflict:${conflict.topic}:a`,
     );
-    assertEvidenceReferences(
+    conflict.evidence_ids_b = filterEvidenceReferences(
       conflict.evidence_ids_b,
       evidenceIds,
-      `conflict:${conflict.topic}:b`,
     );
   }
 
   if (output.market_deviation != null) {
-    assertEvidenceReferences(
+    output.market_deviation.evidence_ids = filterEvidenceReferences(
       output.market_deviation.evidence_ids,
       evidenceIds,
-      "market_deviation",
     );
     assertLimit(output.market_deviation.summary, "market_deviation.summary");
     assertNoUrl(output.market_deviation.summary, "market_deviation.summary");
@@ -361,18 +351,17 @@ export function validateSolFixtureResearchOutput(
   assertNoUrl(output.summary, "summary");
   assertNoUrl(output.data_quality.notes, "data_quality.notes");
 
-  for (const suspicious of output.suspicious_content_observed ?? []) {
+  output.suspicious_content_observed = (
+    output.suspicious_content_observed ?? []
+  ).filter((suspicious) => {
     const normalized = normalizeEvidenceUrl(suspicious.url);
-    if (!observed.has(normalized)) {
-      throw new Error(
-        `Suspicious-content URL was not observed by web search: ${suspicious.url}`,
-      );
-    }
+    if (!observed.has(normalized)) return false;
     assertLimit(
       suspicious.description,
       "suspicious_content_observed.description",
     );
-  }
+    return true;
+  });
 
   return {
     output,
