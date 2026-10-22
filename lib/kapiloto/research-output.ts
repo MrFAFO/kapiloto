@@ -193,13 +193,6 @@ function assertNoUrl(value: string, field: string): void {
   }
 }
 
-function filterEvidenceReferences(
-  ids: string[],
-  known: Set<string>,
-): string[] {
-  return ids.filter((id) => known.has(id));
-}
-
 export function validateSolFixtureResearchOutput(
   raw: unknown,
   card: KapilotoFixtureCard,
@@ -209,7 +202,10 @@ export function validateSolFixtureResearchOutput(
     throw new Error("Sol research output must be an object.");
   }
 
-  const output = raw as SolFixtureResearchOutput;
+  // Work on a detached JSON copy. Validation must never mutate the parsed
+  // provider response because the untouched validated output is retained for
+  // policy replay/audit later in the pipeline.
+  const output = JSON.parse(JSON.stringify(raw)) as SolFixtureResearchOutput;
 
   if (output.protocol_version !== "kapiloto-research-v1") {
     throw new Error("Unexpected Kapiloto research protocol version.");
@@ -258,18 +254,18 @@ export function validateSolFixtureResearchOutput(
   );
   const evidenceIds = new Set<string>();
 
-  output.evidence = output.evidence.filter((item) => {
+  for (const item of output.evidence) {
     if (!item.evidence_id || evidenceIds.has(item.evidence_id)) {
       throw new Error(
         `Evidence ids must be non-empty and unique: ${item.evidence_id}`,
       );
     }
 
-    const normalized = normalizeEvidenceUrl(item.url);
-    if (!observed.has(normalized)) {
-      return false;
-    }
-
+    // Do not remove evidence merely because its URL was not observed in the
+    // provider web-search trace. Grounding must see the original citation set
+    // so an unobserved/hallucinated reference can count against every item
+    // that cited it rather than silently disappearing.
+    normalizeEvidenceUrl(item.url);
     evidenceIds.add(item.evidence_id);
     assertLimit(item.quote, "evidence.quote");
     assertLimit(item.claim, "evidence.claim");
@@ -279,9 +275,7 @@ export function validateSolFixtureResearchOutput(
         `evidence.event_time must be ISO/date parseable: ${item.event_time}`,
       );
     }
-
-    return true;
-  });
+  }
 
   const dimensions = new Set<string>();
   if (!Array.isArray(output.dimension_coverage) || output.dimension_coverage.length !== 10) {
@@ -297,18 +291,23 @@ export function validateSolFixtureResearchOutput(
     dimensions.add(item.dimension);
   }
 
+  const assertEvidenceReferences = (ids: string[], field: string) => {
+    for (const id of ids) {
+      if (!evidenceIds.has(id)) {
+        throw new Error(`${field} references unknown evidence id ${id}.`);
+      }
+    }
+  };
+
   for (const item of output.availability ?? []) {
     assertLimit(item.player_name, "availability.player_name");
-    item.evidence_ids = filterEvidenceReferences(
-      item.evidence_ids,
-      evidenceIds,
-    );
+    assertEvidenceReferences(item.evidence_ids, `availability:${item.player_name}`);
   }
 
   for (const factor of output.factors ?? []) {
-    factor.evidence_ids = filterEvidenceReferences(
+    assertEvidenceReferences(
       factor.evidence_ids,
-      evidenceIds,
+      `factor:${factor.dimension}`,
     );
     assertLimit(factor.rationale, "factors.rationale");
     assertNoUrl(factor.rationale, "factor.rationale");
@@ -316,20 +315,20 @@ export function validateSolFixtureResearchOutput(
 
   for (const conflict of output.conflicts ?? []) {
     assertLimit(conflict.topic, "conflicts.topic");
-    conflict.evidence_ids_a = filterEvidenceReferences(
+    assertEvidenceReferences(
       conflict.evidence_ids_a,
-      evidenceIds,
+      `conflict:${conflict.topic}:a`,
     );
-    conflict.evidence_ids_b = filterEvidenceReferences(
+    assertEvidenceReferences(
       conflict.evidence_ids_b,
-      evidenceIds,
+      `conflict:${conflict.topic}:b`,
     );
   }
 
   if (output.market_deviation != null) {
-    output.market_deviation.evidence_ids = filterEvidenceReferences(
+    assertEvidenceReferences(
       output.market_deviation.evidence_ids,
-      evidenceIds,
+      "market_deviation",
     );
     assertLimit(output.market_deviation.summary, "market_deviation.summary");
     assertNoUrl(output.market_deviation.summary, "market_deviation.summary");
