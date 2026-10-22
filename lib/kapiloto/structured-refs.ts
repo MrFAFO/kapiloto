@@ -197,6 +197,24 @@ function refAvailable(
   );
 }
 
+export function structuredRefTrustTier(
+  ref: KapilotoStructuredRef,
+  card: KapilotoFixtureCard,
+): 1 | 3 | null {
+  const snapshot = card.structured.structured_snapshot;
+  if (!snapshot) return null;
+  const [side, kind] = ref.split(".") as [
+    Side,
+    "form" | "rest" | "table",
+  ];
+  const team = snapshot.features[side];
+  if (team[kind] == null) return null;
+  const coverage = team.coverage[kind];
+  if (coverage === "available") return 1;
+  if (coverage === "partial") return 3;
+  return null;
+}
+
 export function validateStructuredRefs(
   refs: string[],
   card: KapilotoFixtureCard,
