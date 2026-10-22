@@ -41,6 +41,18 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const admin = createAdminClient();
+  const startedAt = new Date().toISOString();
+
+  await admin
+    .from("round_sync_control")
+    .update({
+      last_started_at: startedAt,
+      last_finished_at: null,
+      last_status: "running",
+      last_detail: {},
+      updated_at: startedAt,
+    })
+    .eq("id", 1);
 
   // The Winner 16 import is useful, but provider snapshots must not depend on
   // it succeeding. Existing canonical rounds remain usable even when the
@@ -101,16 +113,39 @@ export async function GET(request: Request): Promise<Response> {
   const steps = [roundSync, currentRound, marketSync, structuredSync, liveSync]
     .filter((step): step is CronStep<unknown> => step !== null);
   const hasFailure = steps.some((step) => !step.ok);
+  const checkedAt = new Date().toISOString();
+  const detail = {
+    roundSync,
+    currentRound,
+    marketSync,
+    structuredSync,
+    liveSync,
+  };
+
+  const { error: controlError } = await admin
+    .from("round_sync_control")
+    .update({
+      last_finished_at: checkedAt,
+      last_status: hasFailure ? "partial_failure" : "ok",
+      last_detail: detail,
+      updated_at: checkedAt,
+    })
+    .eq("id", 1);
+
+  if (controlError) {
+    console.error("Kapiloto cron control write failed", {
+      error: controlError.message,
+    });
+  }
 
   return Response.json(
     {
       ok: !hasFailure,
-      checkedAt: new Date().toISOString(),
-      roundSync,
-      currentRound,
-      marketSync,
-      structuredSync,
-      liveSync,
+      checkedAt,
+      ...detail,
+      observability: {
+        controlPersisted: !controlError,
+      },
     },
     { status: hasFailure ? 207 : 200 },
   );
