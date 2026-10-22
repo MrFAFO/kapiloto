@@ -1,6 +1,7 @@
 import type { KapilotoFixtureCard } from "./fixture-card";
 import type { SolFixtureResearchOutput } from "./research-output";
 import type { GroundedEvidence, GroundingResult } from "./source-grounding";
+import { verifyStructuredFactor } from "./structured-refs";
 
 export const KAPILOTO_GROUNDING_POLICY_VERSION =
   "kapiloto-grounding-policy-v4" as const;
@@ -96,17 +97,32 @@ export function applyGroundingPolicy(
     const supporting = factor.evidence_ids
       .map((id) => usableById.get(id))
       .filter((item): item is GroundedEvidence => item != null);
+    const structured =
+      (factor.structured_refs?.length ?? 0) > 0
+        ? verifyStructuredFactor(factor, card)
+        : null;
 
-    const allEvidenceUsable =
-      supporting.length === factor.evidence_ids.length &&
-      supporting.length > 0;
+    const allWebEvidenceUsable =
+      supporting.length === factor.evidence_ids.length;
+    const structuredUsable =
+      structured == null || structured.valid;
+    const hasVerifiedSupport =
+      supporting.length > 0 || structured?.valid === true;
     const directionalEntailmentPassed =
       factor.favors === "none" ||
+      factor.evidence_ids.length === 0 ||
       supporting.every((item) => item.entailment === "supported");
+    const corroborationPassed =
+      factor.magnitude === "small" ||
+      (supporting.length > 0 &&
+        materialCorroboration(factor, supporting));
+
     const keep =
-      allEvidenceUsable &&
+      allWebEvidenceUsable &&
+      structuredUsable &&
+      hasVerifiedSupport &&
       directionalEntailmentPassed &&
-      materialCorroboration(factor, supporting);
+      corroborationPassed;
 
     if (keep) return true;
 
