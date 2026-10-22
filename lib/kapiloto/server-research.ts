@@ -1,11 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { ApiFootballClient } from "@/lib/providers/api-football";
-
-import {
-  getApiFootballMinRequestIntervalMs,
-  getKapilotoRunConfig,
-} from "./research-config";
+import { getKapilotoRunConfig } from "./research-config";
 import { loadKapilotoWeeklyBudgetStatus } from "./research-cost";
 import { SupabaseKapilotoResearchPreparer } from "./research-plan-preparer";
 import {
@@ -30,17 +25,7 @@ export async function ensureServerKapilotoResearch(
         );
       }
 
-      const apiKey = process.env.API_FOOTBALL_API_KEY?.trim();
-      const apiFootball = apiKey
-        ? new ApiFootballClient(apiKey, {
-            minRequestIntervalMs: getApiFootballMinRequestIntervalMs(),
-          })
-        : null;
-
-      return new SupabaseKapilotoResearchPreparer(
-        admin,
-        apiFootball,
-      ).prepare(input);
+      return new SupabaseKapilotoResearchPreparer(admin).prepare(input);
     },
   };
 
