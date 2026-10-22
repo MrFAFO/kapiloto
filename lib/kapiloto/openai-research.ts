@@ -339,7 +339,7 @@ export async function researchFixtureWithSol(
       text: {
         format: {
           type: "json_schema",
-          name: "kapiloto_fixture_research_v1",
+          name: "kapiloto_fixture_research_v2",
           description:
             "Grounded pre-match research output for one frozen Kapiloto fixture.",
           strict: true,
