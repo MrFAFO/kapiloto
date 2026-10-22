@@ -235,12 +235,19 @@ export async function syncKapilotoStructuredRound(
   const capturedAt = now.toISOString();
   const safetyMs = (options.safetyWindowMinutes ?? 15) * 60_000;
 
+  const sportmonksStore = options.sportmonks
+    ? new SupabaseSportmonksSyncStore(client)
+    : null;
+  const apiFootballStore = options.apiFootball
+    ? new SupabaseApiFootballSyncStore(client)
+    : null;
+
   const [sportmonksGames, apiGames] = await Promise.all([
-    options.sportmonks
-      ? new SupabaseSportmonksSyncStore(client).loadRoundGames(roundId)
+    sportmonksStore
+      ? sportmonksStore.loadRoundGames(roundId)
       : Promise.resolve([]),
-    options.apiFootball
-      ? new SupabaseApiFootballSyncStore(client).loadRoundGames(roundId)
+    apiFootballStore
+      ? apiFootballStore.loadRoundGames(roundId)
       : Promise.resolve([]),
   ]);
 
@@ -292,7 +299,18 @@ export async function syncKapilotoStructuredRound(
           capturedAt,
           smStandings,
         );
-        if (collected) provider = "sportmonks";
+        if (collected) {
+          provider = "sportmonks";
+          await sportmonksStore?.saveResolvedFixture({
+            game: smGame,
+            fixture: collected.target,
+            capturedAt,
+            resolution:
+              smGame.providerFixtureId != null ? "provided_id" : "name_match",
+          });
+        } else {
+          errors.push("sportmonks: no usable fixture/history");
+        }
       } catch (error) {
         errors.push(
           `sportmonks: ${error instanceof Error ? error.message : String(error)}`,
