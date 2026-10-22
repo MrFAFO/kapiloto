@@ -18,6 +18,10 @@ import type {
 } from "./research-run-plan";
 import type { SolFixtureResearchOutput } from "./research-output";
 import type { GroundingResult } from "./source-grounding";
+import {
+  structuredRefTrustTier,
+  type KapilotoStructuredRef,
+} from "./structured-refs";
 
 export type ValidatedFixtureResearch = {
   gameNumber: number;
@@ -367,12 +371,27 @@ function baseMaterialization(
   };
 }
 
-function groundingSummary(grounding: GroundingResult) {
+function groundingSummary(
+  grounding: GroundingResult,
+  output: SolFixtureResearchOutput,
+  card: KapilotoFixtureCard,
+) {
   const usable = grounding.accepted.filter(
     (item) => item.entailment !== "unsupported",
   );
+  const structuredRefs = new Set<KapilotoStructuredRef>();
+  for (const factor of output.factors) {
+    for (const ref of factor.structured_refs ?? []) {
+      structuredRefs.add(ref as KapilotoStructuredRef);
+    }
+  }
+  const structuredTrustTiers = [...structuredRefs]
+    .map((ref) => structuredRefTrustTier(ref, card))
+    .filter((tier): tier is 1 | 3 => tier != null);
+
   return {
     acceptedTrustTiers: usable.map((item) => item.trustTier),
+    structuredTrustTiers,
     rejectedCount:
       grounding.rejected.length +
       grounding.accepted.filter((item) => item.entailment === "unsupported")
@@ -678,7 +697,13 @@ function materializeResearchFixture(
   }
 
   const effective = { ...input, output: decision.output };
-  if (effective.grounding.accepted.length === 0) {
+  const hasStructuredSupport = effective.output.factors.some(
+    (factor) => (factor.structured_refs?.length ?? 0) > 0,
+  );
+  if (
+    effective.grounding.accepted.length === 0 &&
+    !hasStructuredSupport
+  ) {
     throw new Error(
       `Analyzed fixture ${input.fixtureId} has no accepted grounded evidence.`,
     );
@@ -687,7 +712,11 @@ function materializeResearchFixture(
   const derived = deriveFixtureAnalysis(
     effective.output,
     effective.card,
-    groundingSummary(effective.grounding),
+    groundingSummary(
+      effective.grounding,
+      effective.output,
+      effective.card,
+    ),
   );
 
   if (derived.outcome === "analyzed") {
