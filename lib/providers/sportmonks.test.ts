@@ -159,6 +159,37 @@ test("normalizes finished Sportmonks fixtures using regular-time score", () => {
   assert.equal(matches[0].awayScore, 1);
 });
 
+test("normalizes Sportmonks standings developer names used by the API", () => {
+  const standings = parseSportmonksStandings([
+    {
+      participant_id: 1,
+      league_id: 372,
+      season_id: 20260,
+      position: 3,
+      points: 18,
+      details: [
+        {
+          value: 9,
+          type: {
+            name: "Overall Matched Played",
+            developer_name: "OVERALL_MATCHES",
+          },
+        },
+        {
+          value: 7,
+          type: {
+            name: "Goal Difference",
+            developer_name: "GOAL_DIFFERENCE",
+          },
+        },
+      ],
+    },
+  ]);
+
+  assert.equal(standings[0]?.played, 9);
+  assert.equal(standings[0]?.goalDifference, 7);
+});
+
 test("normalizes Sportmonks standings details", () => {
   const standings = parseSportmonksStandings([
     {
