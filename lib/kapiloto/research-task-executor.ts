@@ -305,6 +305,36 @@ function emptyUsage() {
   };
 }
 
+export const GROUNDING_POLICY_DOWNGRADE_REASON =
+  "grounding_policy_insufficient";
+
+function downgradeOutputForGroundingPolicy(
+  output: SolFixtureResearchOutput,
+): SolFixtureResearchOutput {
+  return {
+    ...output,
+    outcome: "insufficient_data",
+    availability: [],
+    factors: [],
+    dimension_coverage: output.dimension_coverage.map((item) => ({
+      ...item,
+      status: "insufficient_data" as const,
+    })),
+    conflicts: [],
+    market_deviation: null,
+    key_assumptions: [],
+    main_risk: "Grounded evidence was insufficient for a reliable recommendation.",
+    summary: "No recommendation was published because required evidence did not pass grounding.",
+    watch_items: [],
+    data_quality: {
+      ...output.data_quality,
+      sparse_coverage: true,
+      notes: GROUNDING_POLICY_DOWNGRADE_REASON,
+    },
+    model_self_confidence: "low",
+  };
+}
+
 export function createOpenAIFixtureResearchRunner(
   client: OpenAI,
 ): FixtureResearchRunner {
@@ -570,6 +600,25 @@ export async function executeOneResearchTask(
       }
     }
 
+    const groundingPolicyFailures =
+      grounding?.grounding.policyFailures?.filter(Boolean) ?? [];
+    if (groundingPolicyFailures.length > 0) {
+      // Grounding already proved that one or more material claims cannot be
+      // safely supported. A second paid model call is not evidence; fail
+      // closed for this fixture and let the round continue coherently.
+      research = {
+        ...research,
+        output: downgradeOutputForGroundingPolicy(research.output),
+      };
+      grounding = {
+        ...grounding!,
+        grounding: {
+          ...grounding!.grounding,
+          requiresEntailmentVerification: [],
+        },
+      };
+    }
+
     if (!(await confirmOwnership())) {
       reportLostProvenance("finish", research.provenance);
       return {
@@ -615,6 +664,8 @@ export async function executeOneResearchTask(
             ? "not_required"
             : "pending",
         grounding: grounding?.grounding ?? null,
+        grounding_policy_downgraded: groundingPolicyFailures.length > 0,
+        grounding_policy_failures: groundingPolicyFailures,
         source_retrieval_failures: grounding?.retrievalFailures ?? [],
       },
       traceId: options.traceId ?? null,
