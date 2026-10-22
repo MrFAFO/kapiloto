@@ -70,6 +70,13 @@ function usdMicros(value: number): number {
   return Math.round(value * MICROS_PER_USD);
 }
 
+type FinalizationUsageRow = {
+  input_tokens: number | null;
+  cached_input_tokens: number | null;
+  output_tokens: number | null;
+  finished_at: string | null;
+};
+
 export type KapilotoWeeklyBudgetStatus = {
   windowStartedAt: string;
   capMicros: number;
@@ -146,7 +153,7 @@ export async function loadKapilotoWeeklyBudgetStatus(
         "input_tokens,cached_input_tokens,output_tokens,web_search_calls,finished_at",
       )
       .gte("finished_at", windowStartedAt),
-    client
+    (client as SupabaseClient<any>)
       .from("kapiloto_run_finalization_attempts")
       .select(
         "input_tokens,cached_input_tokens,output_tokens,finished_at",
@@ -175,7 +182,7 @@ export async function loadKapilotoWeeklyBudgetStatus(
         webSearchCalls: row.web_search_calls,
       }) ?? 0;
   }
-  for (const row of finalizationResult.data ?? []) {
+  for (const row of (finalizationResult.data ?? []) as FinalizationUsageRow[]) {
     meteredAiMicros +=
       estimateSolUsageCostMicros({
         inputTokens: row.input_tokens,
