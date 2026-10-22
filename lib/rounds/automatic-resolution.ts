@@ -4,6 +4,8 @@ import {
   normalizeTeamName,
 } from "@/lib/providers/match";
 
+export { crossScriptTeamSimilarity, romanizeTeamName } from "@/lib/providers/match";
+
 import type {
   DiscoveredRoundGame,
   TotoRoundDiscovery,
