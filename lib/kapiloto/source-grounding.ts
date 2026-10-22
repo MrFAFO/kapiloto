@@ -41,6 +41,7 @@ export type GroundedEvidence = {
 export type GroundingRejection = {
   evidenceId: string;
   reason:
+    | "unobserved_url"
     | "document_missing"
     | "source_denied"
     | "quote_not_found"
@@ -163,6 +164,7 @@ export function verifyGroundedResearchEvidence(
   card: KapilotoFixtureCard,
   documents: RetrievedSourceDocument[],
   registryEntries: SourceRegistryEntry[],
+  observedSourceUrls: string[] | null = null,
 ): GroundingResult {
   const cutoffMs = Date.parse(card.research_cutoff_at);
   if (!Number.isFinite(cutoffMs)) {
@@ -170,11 +172,24 @@ export function verifyGroundedResearchEvidence(
   }
 
   const documentsByUrl = documentMap(documents);
+  const observed =
+    observedSourceUrls == null
+      ? null
+      : new Set(observedSourceUrls.map((url) => normalizeEvidenceUrl(url)));
   const accepted: GroundedEvidence[] = [];
   const rejected: GroundingRejection[] = [];
 
   for (const evidence of output.evidence) {
     const canonicalUrl = normalizeEvidenceUrl(evidence.url);
+
+    if (observed != null && !observed.has(canonicalUrl)) {
+      rejected.push({
+        evidenceId: evidence.evidence_id,
+        reason: "unobserved_url",
+      });
+      continue;
+    }
+
     const document = documentsByUrl.get(canonicalUrl);
 
     if (!document) {
@@ -320,21 +335,26 @@ export function verifyGroundedResearchEvidence(
       continue;
     }
 
-    if (factor.magnitude === "small") continue;
+    // Every directional factor can move p_sol and therefore requires
+    // entailment verification, including small factors. Neutral small factors
+    // remain context-only and do not need a paid judge call.
+    if (factor.favors === "none" && factor.magnitude === "small") continue;
 
-    const hasStrongSource = supporting.some((item) => item.trustTier <= 2);
-    const hasTwoIndependent =
-      supporting.some((left, index) =>
-        supporting
-          .slice(index + 1)
-          .some((right) => isIndependent(left, right)),
-      );
+    if (factor.magnitude !== "small") {
+      const hasStrongSource = supporting.some((item) => item.trustTier <= 2);
+      const hasTwoIndependent =
+        supporting.some((left, index) =>
+          supporting
+            .slice(index + 1)
+            .some((right) => isIndependent(left, right)),
+        );
 
-    if (!hasStrongSource && !hasTwoIndependent) {
-      policyFailures.push(
-        `Material factor ${factor.dimension} lacks strong or independent corroborated evidence.`,
-      );
-      continue;
+      if (!hasStrongSource && !hasTwoIndependent) {
+        policyFailures.push(
+          `Material factor ${factor.dimension} lacks strong or independent corroborated evidence.`,
+        );
+        continue;
+      }
     }
 
     for (const item of supporting) {
