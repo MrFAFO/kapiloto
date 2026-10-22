@@ -61,6 +61,7 @@ export type MaterializedFactor = {
   magnitude: "small" | "medium" | "large";
   rationale: string;
   evidence_model_ids: string[];
+  structured_refs: string[];
 };
 
 export type MaterializedAnalysis = {
@@ -268,8 +269,13 @@ function baseMaterialization(
         factor.evidence_ids,
         acceptedIds,
       ),
+      structured_refs: [...(factor.structured_refs ?? [])].sort(),
     }))
-    .filter((factor) => factor.evidence_model_ids.length > 0);
+    .filter(
+      (factor) =>
+        factor.evidence_model_ids.length > 0 ||
+        factor.structured_refs.length > 0,
+    );
 
   const conflicts = output.conflicts
     .map((conflict) => ({
@@ -321,8 +327,32 @@ function baseMaterialization(
         metadata: {
           fixture_id: card.fixture_id,
           market_snapshot_id: card.structured.prior.snapshot_id,
+          structured_snapshot_id:
+            card.structured.structured_snapshot?.id ?? null,
+          structured_snapshot_sha256:
+            card.structured.structured_snapshot?.sha256 ?? null,
+          structured_feature_version:
+            card.structured.structured_snapshot?.feature_version ?? null,
         },
       },
+      ...(factors.some((factor) => factor.structured_refs.length > 0)
+        ? [
+            {
+              input_type: "structured_factor_refs",
+              input_version: "kapiloto-structured-refs-v1",
+              metadata: {
+                factors: factors
+                  .filter((factor) => factor.structured_refs.length > 0)
+                  .map((factor) => ({
+                    dimension: factor.dimension,
+                    favors: factor.favors,
+                    magnitude: factor.magnitude,
+                    structured_refs: factor.structured_refs,
+                  })),
+              },
+            },
+          ]
+        : []),
       {
         input_type: "grounding_report",
         input_version: "kapiloto-grounding-v1",
