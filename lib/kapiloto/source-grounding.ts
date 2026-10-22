@@ -1,4 +1,5 @@
 import type { KapilotoFixtureCard } from "./fixture-card";
+import { verifyStructuredFactor } from "./structured-refs";
 import {
   normalizeEvidenceUrl,
   type SolFixtureResearchOutput,
@@ -327,6 +328,10 @@ export function verifyGroundedResearchEvidence(
       factor.evidence_ids,
       acceptedById,
     );
+    const structured =
+      (factor.structured_refs?.length ?? 0) > 0
+        ? verifyStructuredFactor(factor, card)
+        : null;
 
     if (supporting.length !== factor.evidence_ids.length) {
       policyFailures.push(
@@ -335,12 +340,42 @@ export function verifyGroundedResearchEvidence(
       continue;
     }
 
-    // Every directional factor can move p_sol and therefore requires
-    // entailment verification, including small factors. Neutral small factors
-    // remain context-only and do not need a paid judge call.
-    if (factor.favors === "none" && factor.magnitude === "small") continue;
+    if (structured && !structured.valid) {
+      policyFailures.push(
+        `factor:${factor.dimension} failed structured verification: ${structured.reason}.`,
+      );
+      continue;
+    }
+
+    if (factor.evidence_ids.length === 0 && !structured?.valid) {
+      policyFailures.push(
+        `factor:${factor.dimension} has no verified support channel.`,
+      );
+      continue;
+    }
+
+    // Every directional web-backed factor can move p_sol and therefore its
+    // web claims require entailment verification. A structured-only small
+    // factor is checked deterministically by verifyStructuredFactor instead.
+    if (
+      factor.favors === "none" &&
+      factor.magnitude === "small" &&
+      factor.evidence_ids.length === 0
+    ) {
+      continue;
+    }
 
     if (factor.magnitude !== "small") {
+      // V1 deliberately refuses medium/large structured-only effects. When a
+      // factor is material, web support still needs the existing strong-source
+      // or independent corroboration rule.
+      if (factor.evidence_ids.length === 0) {
+        policyFailures.push(
+          `Material factor ${factor.dimension} requires grounded web corroboration in V1.`,
+        );
+        continue;
+      }
+
       const hasStrongSource = supporting.some((item) => item.trustTier <= 2);
       const hasTwoIndependent =
         supporting.some((left, index) =>
