@@ -18,6 +18,10 @@ import {
   KAPILOTO_PROMPT_TEMPLATE_SHA256,
   KAPILOTO_RESEARCH_SCHEMA_SHA256,
 } from "./research-config";
+import {
+  estimateSolUsageCostMicros,
+  KAPILOTO_SOL_PRICING_VERSION,
+} from "./research-cost";
 
 /** The provider request shape used by one attempt; persisted for audit. */
 export type ResearchRequestProfile = {
@@ -487,8 +491,15 @@ export async function executeOneResearchTask(
         ...provenanceUsage(provenance),
         webSearchCalls: provenance?.webSearchCalls ?? null,
         sourcesCount: provenance ? provenance.sourceUrls.length : null,
-        costMicros: null,
-        pricingVersion: null,
+        costMicros: provenance
+          ? estimateSolUsageCostMicros({
+              inputTokens: provenance.usage.inputTokens,
+              cachedInputTokens: provenance.usage.cachedInputTokens,
+              outputTokens: provenance.usage.outputTokens,
+              webSearchCalls: provenance.webSearchCalls,
+            })
+          : null,
+        pricingVersion: provenance ? KAPILOTO_SOL_PRICING_VERSION : null,
         modelMs: now() - modelStartedAt,
         validationMs: null,
         totalMs: now() - startedAt,
@@ -568,8 +579,13 @@ export async function executeOneResearchTask(
           reasoningTokens: research.provenance.usage.reasoningTokens,
           webSearchCalls: research.provenance.webSearchCalls,
           sourcesCount: research.provenance.sourceUrls.length,
-          costMicros: null,
-          pricingVersion: null,
+          costMicros: estimateSolUsageCostMicros({
+            inputTokens: research.provenance.usage.inputTokens,
+            cachedInputTokens: research.provenance.usage.cachedInputTokens,
+            outputTokens: research.provenance.usage.outputTokens,
+            webSearchCalls: research.provenance.webSearchCalls,
+          }),
+          pricingVersion: KAPILOTO_SOL_PRICING_VERSION,
           modelMs: validationStartedAt - modelStartedAt,
           validationMs: now() - validationStartedAt,
           totalMs: now() - startedAt,
@@ -642,8 +658,13 @@ export async function executeOneResearchTask(
       reasoningTokens: research.provenance.usage.reasoningTokens,
       webSearchCalls: research.provenance.webSearchCalls,
       sourcesCount: research.provenance.sourceUrls.length,
-      costMicros: null,
-      pricingVersion: null,
+      costMicros: estimateSolUsageCostMicros({
+        inputTokens: research.provenance.usage.inputTokens,
+        cachedInputTokens: research.provenance.usage.cachedInputTokens,
+        outputTokens: research.provenance.usage.outputTokens,
+        webSearchCalls: research.provenance.webSearchCalls,
+      }),
+      pricingVersion: KAPILOTO_SOL_PRICING_VERSION,
       modelMs: validationStartedAt - modelStartedAt,
       validationMs: now() - validationStartedAt,
       totalMs: now() - startedAt,
