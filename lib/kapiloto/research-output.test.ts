@@ -45,6 +45,78 @@ const card: KapilotoFixtureCard = {
   },
 };
 
+
+const structuredCard: KapilotoFixtureCard = {
+  ...card,
+  fixture_card_version: "kapiloto-fixture-card-v3",
+  structured: {
+    ...card.structured,
+    structured_snapshot: {
+      id: "snapshot-1",
+      feature_version: "kapiloto-features-v1",
+      sha256: "a".repeat(64),
+      computed_at: "2026-10-18T11:50:00.000Z",
+      cutoff_at: "2026-10-18T12:00:00.000Z",
+      features: {
+        feature_version: "kapiloto-features-v1",
+        home: {
+          form: {
+            played: 6,
+            points: 15,
+            gf: 12,
+            ga: 5,
+            venue_played: 4,
+            venue_points: 10,
+            venue_gf: 8,
+            venue_ga: 3,
+            last_match_at: "2026-10-15T18:00:00.000Z",
+          },
+          rest: { rest_days: 5, matches_last_14d: 2 },
+          table: {
+            position: 2,
+            points: 20,
+            played: 8,
+            goal_difference: 9,
+            points_deducted: null,
+          },
+          coverage: {
+            form: "partial",
+            rest: "available",
+            table: "available",
+          },
+        },
+        away: {
+          form: {
+            played: 6,
+            points: 7,
+            gf: 6,
+            ga: 10,
+            venue_played: 4,
+            venue_points: 4,
+            venue_gf: 3,
+            venue_ga: 8,
+            last_match_at: "2026-10-16T18:00:00.000Z",
+          },
+          rest: { rest_days: 2, matches_last_14d: 4 },
+          table: {
+            position: 9,
+            points: 9,
+            played: 8,
+            goal_difference: -5,
+            points_deducted: null,
+          },
+          coverage: {
+            form: "partial",
+            rest: "available",
+            table: "available",
+          },
+        },
+        sources: [],
+      },
+    },
+  },
+};
+
 function output() {
   return {
     protocol_version: "kapiloto-research-v1",
@@ -218,5 +290,46 @@ test("bounds conflict topics and watch-item conditions like the schema", () => {
         "https://example.com/team-news",
       ]),
     /watch_items\.condition exceeds 150/,
+  );
+});
+
+
+test("v2 accepts a structured-only small factor from a frozen v3 card", () => {
+  const raw = output();
+  raw.protocol_version = "kapiloto-research-v2";
+  raw.evidence = [];
+  raw.availability = [];
+  raw.factors = [
+    {
+      dimension: "baseline_form",
+      favors: "home",
+      magnitude: "small",
+      evidence_ids: [],
+      structured_refs: ["home.form", "away.form"],
+      rationale: "The frozen form snapshot favors the home side.",
+    },
+  ] as never[];
+
+  const result = validateSolFixtureResearchOutput(raw, structuredCard, []);
+  assert.deepEqual(result.output.factors[0].structured_refs, [
+    "away.form",
+    "home.form",
+  ]);
+});
+
+test("structured refs fail closed when the frozen card does not contain them", () => {
+  const raw = output();
+  raw.protocol_version = "kapiloto-research-v2";
+  raw.factors[0] = {
+    ...raw.factors[0],
+    structured_refs: ["home.form", "away.form"],
+  } as never;
+
+  assert.throws(
+    () =>
+      validateSolFixtureResearchOutput(raw, card, [
+        "https://example.com/team-news",
+      ]),
+    /Structured references require a frozen Fixture Card v3 snapshot/,
   );
 });
