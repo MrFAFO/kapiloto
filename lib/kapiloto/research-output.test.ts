@@ -126,8 +126,8 @@ test("preserves evidence URLs not observed by web search for grounding rejection
 
   assert.equal(result.output.evidence.length, 1);
   assert.equal(result.output.evidence[0].evidence_id, "e1");
-  assert.deepEqual(result.output.factors[0].evidence_ids, []);
-  assert.deepEqual(result.output.availability[0].evidence_ids, []);
+  assert.deepEqual(result.output.factors[0].evidence_ids, ["e1"]);
+  assert.deepEqual(result.output.availability[0].evidence_ids, ["e1"]);
 });
 
 test("rejects wrong fixture orientation", () => {
@@ -157,15 +157,15 @@ test("rejects p_sol that does not sum to 10000", () => {
 });
 
 test("rejects references to unknown evidence ids", () => {
-  const output = baseOutput();
-  output.factors[0].evidence_ids = ["missing"];
+  const raw = output();
+  raw.factors[0].evidence_ids = ["missing"];
 
   assert.throws(
     () =>
       validateSolFixtureResearchOutput(
-        output,
+        raw,
         card,
-        ["https://example.com/news"],
+        ["https://example.com/team-news"],
       ),
     /references unknown evidence id missing/,
   );
