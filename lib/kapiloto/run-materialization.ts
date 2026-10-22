@@ -4,6 +4,11 @@ import type {
 } from "./entailment-verifier";
 import type { KapilotoFixtureCard } from "./fixture-card";
 import {
+  applyGroundingPolicy,
+  KAPILOTO_GROUNDING_POLICY_VERSION,
+  type GroundingPolicyDecision,
+} from "./grounding-policy";
+import {
   deriveFixtureAnalysis,
   type DerivedAnalyzedFixture,
 } from "./derivation";
@@ -178,7 +183,11 @@ function assertFixtureIdentity(input: ValidatedFixtureResearch): void {
 }
 
 function acceptedEvidenceIds(grounding: GroundingResult): Set<string> {
-  return new Set(grounding.accepted.map((item) => item.modelEvidenceId));
+  return new Set(
+    grounding.accepted
+      .filter((item) => item.entailment !== "unsupported")
+      .map((item) => item.modelEvidenceId),
+  );
 }
 
 function onlyAcceptedReferences(
@@ -191,31 +200,28 @@ function onlyAcceptedReferences(
 function acceptedEvidence(
   grounding: GroundingResult,
 ): MaterializedEvidence[] {
-  if (grounding.accepted.some((item) => item.entailment === "unsupported")) {
-    throw new Error(
-      "Unsupported evidence can only be materialized through the entailment downgrade path.",
-    );
-  }
-
-  return grounding.accepted.map((item) => ({
-    model_evidence_id: item.modelEvidenceId,
-    url_canonical: item.canonicalUrl,
-    domain: item.domain,
-    claim_type: item.claimType,
-    about_team: item.aboutTeam,
-    quote: item.quote,
-    claim: item.claim,
-    source_event_time: item.sourceEventTime,
-    published_at: item.publishedAt,
-    retrieved_at: item.retrievedAt,
-    trust_tier: item.trustTier,
-    quote_verified: true,
-    entailment: item.entailment,
-    syndication_cluster_id: item.syndicationClusterId,
-    content_sha256: item.contentSha256,
-    status: "accepted",
-    rejected_reason: null,
-  }));
+  return grounding.accepted.map((item) => {
+    const unsupported = item.entailment === "unsupported";
+    return {
+      model_evidence_id: item.modelEvidenceId,
+      url_canonical: item.canonicalUrl,
+      domain: item.domain,
+      claim_type: item.claimType,
+      about_team: item.aboutTeam,
+      quote: item.quote,
+      claim: item.claim,
+      source_event_time: item.sourceEventTime,
+      published_at: item.publishedAt,
+      retrieved_at: item.retrievedAt,
+      trust_tier: item.trustTier,
+      quote_verified: true,
+      entailment: item.entailment,
+      syndication_cluster_id: item.syndicationClusterId,
+      content_sha256: item.contentSha256,
+      status: unsupported ? ("rejected" as const) : ("accepted" as const),
+      rejected_reason: unsupported ? "entailment_unsupported" : null,
+    };
+  });
 }
 
 function baseMaterialization(
@@ -332,9 +338,117 @@ function baseMaterialization(
 }
 
 function groundingSummary(grounding: GroundingResult) {
+  const usable = grounding.accepted.filter(
+    (item) => item.entailment !== "unsupported",
+  );
   return {
-    acceptedTrustTiers: grounding.accepted.map((item) => item.trustTier),
-    rejectedCount: grounding.rejected.length,
+    acceptedTrustTiers: usable.map((item) => item.trustTier),
+    rejectedCount:
+      grounding.rejected.length +
+      grounding.accepted.filter((item) => item.entailment === "unsupported")
+        .length,
+  };
+}
+
+function policyAuditInput(decision: GroundingPolicyDecision) {
+  return {
+    input_type: "grounding_policy",
+    input_version: KAPILOTO_GROUNDING_POLICY_VERSION,
+    metadata: {
+      mode: decision.mode,
+      p_sol_valid: decision.pSolValid,
+      removed_items: decision.removedItems,
+      removed_directional_dimensions:
+        decision.removedDirectionalDimensions,
+      non_directional_removal_count: decision.nonDirectionalRemovalCount,
+      reasons: decision.reasons,
+    },
+  };
+}
+
+function marketOnlyPayload(
+  input: ValidatedFixtureResearch,
+  decision: GroundingPolicyDecision,
+): MaterializedAnalysis {
+  const effective = { ...input, output: decision.output };
+  const base = baseMaterialization(effective);
+  const prior = input.card.structured.prior;
+  const ordered = [
+    { pick: "1" as const, bp: prior.p_home_bp },
+    { pick: "X" as const, bp: prior.p_draw_bp },
+    { pick: "2" as const, bp: prior.p_away_bp },
+  ].sort(
+    (a, b) =>
+      b.bp - a.bp ||
+      OUTCOME_ORDER.indexOf(a.pick) - OUTCOME_ORDER.indexOf(b.pick),
+  );
+
+  return {
+    ...base,
+    outcome: "analyzed",
+    p_prior_1_bp: prior.p_home_bp,
+    p_prior_x_bp: prior.p_draw_bp,
+    p_prior_2_bp: prior.p_away_bp,
+    p_sol_1_bp: null,
+    p_sol_x_bp: null,
+    p_sol_2_bp: null,
+    p_final_1_bp: prior.p_home_bp,
+    p_final_x_bp: prior.p_draw_bp,
+    p_final_2_bp: prior.p_away_bp,
+    reliability: 0.2,
+    reliability_band: "low",
+    reliability_reasons: decision.reasons,
+    model_self_confidence: null,
+    primary_pick: ordered[0].pick,
+    suggested_double: null,
+    double_priority_rank: null,
+    double_gain_score: null,
+    blend_weight: 0,
+    deviation_cap_applied: false,
+    summary:
+      "Kapiloto found no verified reason to move away from the market baseline.",
+    main_risk:
+      "The research probability was withheld because a directional signal failed evidence policy.",
+    factors: base.factors.filter((factor) => factor.favors === "none"),
+    inputs: [...base.inputs, policyAuditInput(decision)],
+  };
+}
+
+function insufficientPolicyPayload(
+  input: ValidatedFixtureResearch,
+  decision: GroundingPolicyDecision,
+): MaterializedAnalysis {
+  const effective = { ...input, output: decision.output };
+  const base = baseMaterialization(effective);
+  return {
+    ...base,
+    outcome: "insufficient_data",
+    p_prior_1_bp: input.card.structured.prior.p_home_bp,
+    p_prior_x_bp: input.card.structured.prior.p_draw_bp,
+    p_prior_2_bp: input.card.structured.prior.p_away_bp,
+    p_sol_1_bp: null,
+    p_sol_x_bp: null,
+    p_sol_2_bp: null,
+    p_final_1_bp: null,
+    p_final_x_bp: null,
+    p_final_2_bp: null,
+    reliability: 0.2,
+    reliability_band: "low",
+    reliability_reasons: decision.reasons,
+    model_self_confidence: null,
+    primary_pick: null,
+    suggested_double: null,
+    double_priority_rank: null,
+    double_gain_score: null,
+    blend_weight: null,
+    deviation_cap_applied: false,
+    summary:
+      decision.output.outcome === "insufficient_data"
+        ? decision.output.summary
+        : "No Kapiloto pick was published because no grounded directional signal remained.",
+    main_risk: decision.output.main_risk,
+    factors: base.factors.filter((factor) => factor.favors === "none"),
+    inputs: [...base.inputs, policyAuditInput(decision)],
   };
 }
 
@@ -520,53 +634,44 @@ function materializeResearchFixture(
     );
   }
 
-  // Fail closed: any accepted evidence the judge rejected withholds the
-  // whole fixture, whether or not audit metadata was supplied.
-  if (input.grounding.accepted.some((item) => item.entailment === "unsupported")) {
-    return materializeEntailmentDowngrade(input);
+  const decision = applyGroundingPolicy(
+    input.output,
+    input.grounding,
+    input.card,
+  );
+
+  if (decision.mode === "market_only") {
+    return marketOnlyPayload(input, decision);
+  }
+  if (decision.mode === "insufficient_data") {
+    return insufficientPolicyPayload(input, decision);
   }
 
-  if (
-    input.output.outcome === "analyzed" &&
-    input.grounding.accepted.length === 0
-  ) {
+  const effective = { ...input, output: decision.output };
+  if (effective.grounding.accepted.length === 0) {
     throw new Error(
       `Analyzed fixture ${input.fixtureId} has no accepted grounded evidence.`,
     );
   }
 
   const derived = deriveFixtureAnalysis(
-    input.output,
-    input.card,
-    groundingSummary(input.grounding),
+    effective.output,
+    effective.card,
+    groundingSummary(effective.grounding),
   );
 
   if (derived.outcome === "analyzed") {
-    return analyzedPayload(input, derived);
+    const analyzed = analyzedPayload(effective, derived);
+    analyzed.inputs.push(policyAuditInput(decision));
+    return analyzed;
   }
 
-  return {
-    ...baseMaterialization(input),
-    outcome: "insufficient_data",
-    p_prior_1_bp: input.card.structured.prior.p_home_bp,
-    p_prior_x_bp: input.card.structured.prior.p_draw_bp,
-    p_prior_2_bp: input.card.structured.prior.p_away_bp,
-    p_sol_1_bp: null,
-    p_sol_x_bp: null,
-    p_sol_2_bp: null,
-    p_final_1_bp: null,
-    p_final_x_bp: null,
-    p_final_2_bp: null,
-    reliability: derived.reliability,
-    reliability_band: "low",
-    reliability_reasons: derived.reliabilityReasons,
-    primary_pick: null,
-    suggested_double: null,
-    double_priority_rank: null,
-    double_gain_score: null,
-    blend_weight: null,
-    deviation_cap_applied: false,
-  };
+  return insufficientPolicyPayload(input, {
+    ...decision,
+    mode: "insufficient_data",
+    pSolValid: false,
+    reasons: [...decision.reasons, ...derived.reliabilityReasons],
+  });
 }
 
 function materializeCarriedFixture(
@@ -687,7 +792,8 @@ function rankMaterializedAnalyses(
       analysis.p_final_1_bp == null ||
       analysis.p_final_x_bp == null ||
       analysis.p_final_2_bp == null ||
-      analysis.reliability == null
+      analysis.reliability == null ||
+      analysis.blend_weight === 0
     ) {
       analysis.double_priority_rank = null;
       return [];
