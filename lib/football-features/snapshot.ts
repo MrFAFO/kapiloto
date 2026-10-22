@@ -63,6 +63,28 @@ function validIso(value: string, field: string): string {
   return new Date(parsed).toISOString();
 }
 
+function normalizedMatches(
+  matches: ProviderCompletedMatch[],
+): ProviderCompletedMatch[] {
+  return [...matches].sort(
+    (a, b) =>
+      Date.parse(b.kickoffAt) - Date.parse(a.kickoffAt) ||
+      a.provider.localeCompare(b.provider) ||
+      a.providerFixtureId.localeCompare(b.providerFixtureId),
+  );
+}
+
+function normalizedStandings(
+  standings: ProviderStanding[],
+): ProviderStanding[] {
+  return [...standings].sort(
+    (a, b) =>
+      a.competitionId.localeCompare(b.competitionId) ||
+      a.season - b.season ||
+      a.teamId.localeCompare(b.teamId),
+  );
+}
+
 function standingFor(
   input: TeamStructuredProviderInput,
 ): ProviderStanding | null {
@@ -144,16 +166,16 @@ export function buildFixtureStructuredSnapshotV1(
       provider_team_id: input.home.providerTeamId,
       provider_competition_id: input.home.providerCompetitionId,
       provider_season: input.home.providerSeason,
-      matches: input.home.matches,
-      standings: input.home.standings,
+      matches: normalizedMatches(input.home.matches),
+      standings: normalizedStandings(input.home.standings),
     },
     away: {
       provider: input.away.provider,
       provider_team_id: input.away.providerTeamId,
       provider_competition_id: input.away.providerCompetitionId,
       provider_season: input.away.providerSeason,
-      matches: input.away.matches,
-      standings: input.away.standings,
+      matches: normalizedMatches(input.away.matches),
+      standings: normalizedStandings(input.away.standings),
     },
   };
 
