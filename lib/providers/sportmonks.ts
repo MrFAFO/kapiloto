@@ -1,5 +1,5 @@
 import { aggregateMarketPrior } from "./market";
-import { bestAliasSimilarity, normalizeTeamName } from "./match";
+import { bestHybridAliasSimilarity, normalizeTeamName } from "./match";
 import type {
   BookmakerThreeWayQuote,
   ProviderCapabilities,
@@ -491,12 +491,12 @@ function fixtureMatchScore(
   input: ProviderSpikeFixtureInput,
   fixture: ProviderFixture,
 ): number {
-  const home = bestAliasSimilarity(
+  const home = bestHybridAliasSimilarity(
     fixture.home.name,
     input.homeTeam,
     input.aliases?.home,
   );
-  const away = bestAliasSimilarity(
+  const away = bestHybridAliasSimilarity(
     fixture.away.name,
     input.awayTeam,
     input.aliases?.away,
