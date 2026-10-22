@@ -215,22 +215,25 @@ test("denied domains can never ground research", () => {
   ]);
 });
 
-test("material factors require one strong source or two independent sources", () => {
-  assert.throws(
-    () =>
-      verifyGroundedResearchEvidence(
-        baseOutput(),
-        card,
-        [document()],
-        [
-          {
-            domain: "club.example",
-            denied: false,
-            tierByClaimType: { availability: 4 },
-          },
-        ],
-      ),
-    /lacks strong or independent corroborated evidence/,
+test("material factors that lack corroboration request a fail-closed downgrade", () => {
+  const result = verifyGroundedResearchEvidence(
+    baseOutput(),
+    card,
+    [document()],
+    [
+      {
+        domain: "club.example",
+        denied: false,
+        tierByClaimType: { availability: 4 },
+      },
+    ],
+  );
+
+  assert.deepEqual(result.requiresEntailmentVerification, []);
+  assert.ok(
+    result.policyFailures?.some((failure) =>
+      failure.includes("lacks strong or independent corroborated evidence"),
+    ),
   );
 });
 
@@ -279,15 +282,19 @@ test("blocked or missing evidence does not sink a claim when remaining evidence 
   assert.deepEqual(result.requiresEntailmentVerification, ["e2"]);
 });
 
-test("a claim still fails when every referenced evidence item failed grounding", () => {
-  assert.throws(
-    () =>
-      verifyGroundedResearchEvidence(
-        baseOutput(),
-        card,
-        [],
-        registry,
-      ),
-    /no evidence that passed grounding/,
+test("a claim with no grounded support requests a fail-closed downgrade without a retry", () => {
+  const result = verifyGroundedResearchEvidence(
+    baseOutput(),
+    card,
+    [],
+    registry,
+  );
+
+  assert.equal(result.accepted.length, 0);
+  assert.deepEqual(result.requiresEntailmentVerification, []);
+  assert.ok(
+    result.policyFailures?.some((failure) =>
+      failure.includes("no evidence that passed grounding"),
+    ),
   );
 });
