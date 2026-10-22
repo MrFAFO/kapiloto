@@ -439,8 +439,8 @@ test("structured-only grounded factor survives publication and contributes relia
   assert.notEqual(analysis.p_sol_1_bp, null);
   assert.equal(analysis.evidence.length, 0);
   assert.deepEqual(analysis.factors[0].structured_refs, [
-    "home.form",
     "away.form",
+    "home.form",
   ]);
   assert.equal(
     analysis.reliability_reasons.includes("verified_structured_evidence"),
