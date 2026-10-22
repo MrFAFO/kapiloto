@@ -3,9 +3,11 @@ import { bestAliasSimilarity, normalizeTeamName } from "./match";
 import type {
   BookmakerThreeWayQuote,
   ProviderCapabilities,
+  ProviderCompletedMatch,
   ProviderFixture,
   ProviderFixtureCoverage,
   ProviderSpikeFixtureInput,
+  ProviderStanding,
 } from "./types";
 
 const DEFAULT_BASE_URL = "https://api.sportmonks.com/v3/football";
@@ -105,6 +107,18 @@ type SportmonksFixtureRow = {
     state?: string;
     developer_name?: string;
   };
+};
+
+type SportmonksStandingRow = {
+  participant_id?: number;
+  league_id?: number;
+  season_id?: number;
+  position?: number;
+  points?: number;
+  details?: Array<{
+    value?: number | string | null;
+    type?: { name?: string; developer_name?: string };
+  }>;
 };
 
 type SportmonksOddRow = {
@@ -293,6 +307,99 @@ export function parseSportmonksLiveResult(
       : null,
     observedAt,
   };
+}
+
+function numericStandingDetail(
+  row: SportmonksStandingRow,
+  names: string[],
+): number | null {
+  const normalizedNames = new Set(
+    names.map((name) => normalizeTeamName(name)),
+  );
+  for (const detail of row.details ?? []) {
+    const name = normalizeTeamName(
+      detail.type?.developer_name ?? detail.type?.name ?? "",
+    );
+    if (!normalizedNames.has(name)) continue;
+    const value = Number(detail.value);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+export function parseSportmonksStandings(
+  rows: SportmonksStandingRow[],
+): ProviderStanding[] {
+  return rows.flatMap((row) => {
+    if (
+      row.participant_id == null ||
+      row.league_id == null ||
+      row.season_id == null ||
+      row.position == null ||
+      row.points == null
+    ) {
+      return [];
+    }
+    return [{
+      provider: "sportmonks" as const,
+      competitionId: String(row.league_id),
+      season: row.season_id,
+      teamId: String(row.participant_id),
+      position: row.position,
+      points: row.points,
+      played: numericStandingDetail(row, [
+        "overall matched played",
+        "overall matches played",
+        "matches played",
+      ]),
+      goalDifference: numericStandingDetail(row, [
+        "goal difference",
+        "overall goal difference",
+      ]),
+      pointsDeducted: null,
+    }];
+  });
+}
+
+export function parseSportmonksCompletedMatches(
+  rows: SportmonksFixtureRow[],
+): ProviderCompletedMatch[] {
+  const matches: ProviderCompletedMatch[] = [];
+
+  for (const row of rows) {
+    if (canonicalSportmonksLiveStatus(normalizedSportmonksState(row)) !== "finished") {
+      continue;
+    }
+    const fixture = toProviderFixture(row);
+    if (!fixture) continue;
+
+    const regularTime = sportmonksScorePair(row.scores, "2ND_HALF");
+    const current = sportmonksScorePair(row.scores, "CURRENT");
+    const score =
+      regularTime ??
+      (normalizedSportmonksState(row) === "FT" ? current : null);
+    if (!score) continue;
+
+    matches.push({
+      provider: "sportmonks",
+      providerFixtureId: fixture.providerFixtureId,
+      kickoffAt: fixture.kickoffAt,
+      competition: {
+        id: fixture.competition.id,
+        name: fixture.competition.name,
+        country: fixture.competition.country,
+      },
+      season: fixture.season,
+      home: fixture.home,
+      away: fixture.away,
+      homeScore: score.home,
+      awayScore: score.away,
+    });
+  }
+
+  return matches.sort(
+    (a, b) => Date.parse(b.kickoffAt) - Date.parse(a.kickoffAt),
+  );
 }
 
 function oddSide(
@@ -485,6 +592,51 @@ export class SportmonksClient {
     }
 
     return rows;
+  }
+
+  async getTeamCompletedMatches(
+    teamId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<ProviderCompletedMatch[]> {
+    if (!/^\d+$/.test(teamId)) {
+      throw new Error("Sportmonks team id must be numeric.");
+    }
+
+    const rows: SportmonksFixtureRow[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const envelope = await this.request<SportmonksFixtureRow[]>(
+        `/fixtures/between/${startDate}/${endDate}/${teamId}`,
+        {
+          include: "participants;league;round;state;scores",
+          page,
+        },
+      );
+      rows.push(...requireData(envelope, "team fixture history"));
+      hasMore = envelope.pagination?.has_more === true;
+      page = envelope.pagination?.next_page ?? page + 1;
+      if (page > 100) {
+        throw new Error("Sportmonks team fixture pagination exceeded safety limit.");
+      }
+    }
+
+    return parseSportmonksCompletedMatches(rows);
+  }
+
+  async getStandings(seasonId: number): Promise<ProviderStanding[]> {
+    if (!Number.isInteger(seasonId) || seasonId <= 0) {
+      throw new Error("Sportmonks standings require a positive season id.");
+    }
+    const envelope = await this.request<SportmonksStandingRow[]>(
+      `/standings/seasons/${seasonId}`,
+      { include: "participant;details.type" },
+    );
+    return parseSportmonksStandings(
+      requireData(envelope, "standings"),
+    );
   }
 
   async getFixtureById(fixtureId: number): Promise<{
