@@ -754,25 +754,12 @@ export async function executeOneResearchTask(
 
     const groundingPolicyFailures =
       grounding?.grounding.policyFailures?.filter(Boolean) ?? [];
-    const groundingSanitization = grounding
-      ? sanitizeOutputForGrounding(research.output, grounding.grounding)
-      : null;
 
-    if (groundingSanitization) {
-      research = {
-        ...research,
-        output: groundingSanitization.output,
-      };
-      if (groundingSanitization.wholeFixtureDowngraded) {
-        grounding = {
-          ...grounding!,
-          grounding: {
-            ...grounding!.grounding,
-            requiresEntailmentVerification: [],
-          },
-        };
-      }
-    }
+    // Publication policy is intentionally deferred until after entailment.
+    // Persist the complete validated model output here so finalization can
+    // make one deterministic decision from raw output + grounding + verdicts.
+    // Do not sanitize or downgrade the fixture at attempt time.
+    const groundingSanitization = null;
 
     if (!(await confirmOwnership())) {
       reportLostProvenance("finish", research.provenance);
@@ -824,11 +811,9 @@ export async function executeOneResearchTask(
             ? "not_required"
             : "pending",
         grounding: grounding?.grounding ?? null,
-        grounding_policy_downgraded:
-          groundingSanitization?.wholeFixtureDowngraded ?? false,
+        grounding_policy_downgraded: false,
         grounding_policy_failures: groundingPolicyFailures,
-        grounding_policy_dropped_items:
-          groundingSanitization?.droppedItems ?? [],
+        grounding_policy_dropped_items: [],
         raw_validated_output: rawValidatedOutput,
         source_retrieval_failures: grounding?.retrievalFailures ?? [],
       },
