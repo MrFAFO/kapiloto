@@ -175,6 +175,44 @@ test("materializes 16 grounded fixtures and assigns a unique deterministic doubl
   assert.equal(first.orientation_verified, true);
 });
 
+test("materialization strips references to evidence rejected by grounding", () => {
+  const fixtures = round();
+  fixtures[0].output.availability = [
+    {
+      team: "home",
+      player_name: "Player One",
+      status: "out",
+      role: "regular",
+      certainty: "reported",
+      evidence_ids: ["e2"],
+    },
+  ];
+  fixtures[0].output.factors[0].evidence_ids = ["e1", "e2"];
+  fixtures[0].output.conflicts = [
+    {
+      topic: "availability",
+      evidence_ids_a: ["e1"],
+      evidence_ids_b: ["e2"],
+      resolution: "unresolved",
+    },
+  ];
+  fixtures[0].grounding = {
+    ...grounding(),
+    rejected: [{ evidenceId: "e2", reason: "document_missing" }],
+  };
+
+  const result = materializeValidatedResearchRound(fixtures);
+  const first = result.analyses[0];
+
+  assert.deepEqual(first.factors[0].evidence_model_ids, ["e1"]);
+  assert.deepEqual(first.availability, []);
+  assert.deepEqual(first.conflicts, []);
+  assert.equal(
+    first.factors.some((factor) => factor.evidence_model_ids.includes("e2")),
+    false,
+  );
+});
+
 test("insufficient-data fixture is materialized without pick or double rank", () => {
   const fixtures = round();
   fixtures[4].output.outcome = "insufficient_data";
