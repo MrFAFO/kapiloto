@@ -119,14 +119,14 @@ test("validates identity, p_sol, dimensions and observed source URLs", () => {
   ]);
 });
 
-test("rejects an evidence URL not observed by web search", () => {
-  assert.throws(
-    () =>
-      validateSolFixtureResearchOutput(output(), card, [
-        "https://different.example.com/news",
-      ]),
-    /not observed/,
-  );
+test("drops evidence URLs not observed by web search", () => {
+  const result = validateSolFixtureResearchOutput(output(), card, [
+    "https://different.example.com/news",
+  ]);
+
+  assert.deepEqual(result.output.evidence, []);
+  assert.deepEqual(result.output.factors[0].evidence_ids, []);
+  assert.deepEqual(result.output.availability[0].evidence_ids, []);
 });
 
 test("rejects wrong fixture orientation", () => {
@@ -155,17 +155,15 @@ test("rejects p_sol that does not sum to 10000", () => {
   );
 });
 
-test("rejects references to unknown evidence ids", () => {
+test("drops references to unknown evidence ids", () => {
   const raw = output();
   raw.factors[0].evidence_ids = ["missing"];
 
-  assert.throws(
-    () =>
-      validateSolFixtureResearchOutput(raw, card, [
-        "https://example.com/team-news",
-      ]),
-    /unknown evidence id/,
-  );
+  const result = validateSolFixtureResearchOutput(raw, card, [
+    "https://example.com/team-news",
+  ]);
+
+  assert.deepEqual(result.output.factors[0].evidence_ids, []);
 });
 
 test("rejects key_assumptions longer than the shared limit", () => {
