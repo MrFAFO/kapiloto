@@ -1,4 +1,9 @@
-export const KAPILOTO_FIXTURE_CARD_VERSION = "kapiloto-fixture-card-v2" as const;
+import type { FixtureStructuredFeaturesV1 } from "@/lib/football-features/v1";
+
+export const KAPILOTO_FIXTURE_CARD_V2_VERSION =
+  "kapiloto-fixture-card-v2" as const;
+export const KAPILOTO_FIXTURE_CARD_VERSION =
+  "kapiloto-fixture-card-v3" as const;
 export const KAPILOTO_SETTLEMENT_90M =
   "result_after_90_minutes_including_stoppage_time" as const;
 export const DEFAULT_RESEARCH_SAFETY_WINDOW_MINUTES = 15;
@@ -44,11 +49,21 @@ export type FixtureCardInput = {
   recentMatches?: Record<string, unknown>[];
   squadSnapshotId?: string | null;
   coach?: string | null;
+  structuredSnapshot?: {
+    id: string;
+    featureVersion: string;
+    sha256: string;
+    computedAt: string;
+    cutoffAt: string;
+    features: FixtureStructuredFeaturesV1;
+  } | null;
   prior: FixturePriorInput | null;
 };
 
 export type KapilotoFixtureCard = {
-  fixture_card_version: typeof KAPILOTO_FIXTURE_CARD_VERSION;
+  fixture_card_version:
+    | typeof KAPILOTO_FIXTURE_CARD_V2_VERSION
+    | typeof KAPILOTO_FIXTURE_CARD_VERSION;
   fixture_key: string;
   fixture_id: string;
   round_game_id: string;
@@ -77,6 +92,14 @@ export type KapilotoFixtureCard = {
     recent_matches: Record<string, unknown>[];
     squad_snapshot_id: string | null;
     coach: string | null;
+    structured_snapshot?: {
+      id: string;
+      feature_version: string;
+      sha256: string;
+      computed_at: string;
+      cutoff_at: string;
+      features: FixtureStructuredFeaturesV1;
+    };
     prior: {
       type: FixturePriorInput["type"];
       snapshot_id: string | null;
@@ -267,7 +290,10 @@ export function buildKapilotoFixtureCard(
       : null;
 
   return {
-    fixture_card_version: KAPILOTO_FIXTURE_CARD_VERSION,
+    fixture_card_version:
+      input.structuredSnapshot == null
+        ? KAPILOTO_FIXTURE_CARD_V2_VERSION
+        : KAPILOTO_FIXTURE_CARD_VERSION,
     fixture_key: input.fixtureId,
     fixture_id: input.fixtureId,
     round_game_id: input.roundGameId,
@@ -302,6 +328,22 @@ export function buildKapilotoFixtureCard(
       recent_matches: input.recentMatches ?? [],
       squad_snapshot_id: input.squadSnapshotId ?? null,
       coach: input.coach?.trim() || null,
+      ...(input.structuredSnapshot == null
+        ? {}
+        : {
+            structured_snapshot: {
+              id: input.structuredSnapshot.id,
+              feature_version: input.structuredSnapshot.featureVersion,
+              sha256: input.structuredSnapshot.sha256,
+              computed_at: new Date(
+                input.structuredSnapshot.computedAt,
+              ).toISOString(),
+              cutoff_at: new Date(
+                input.structuredSnapshot.cutoffAt,
+              ).toISOString(),
+              features: input.structuredSnapshot.features,
+            },
+          }),
       prior: {
         type: input.prior.type,
         snapshot_id: input.prior.snapshotId,
