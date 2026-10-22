@@ -2088,6 +2088,33 @@ export type Database = {
           },
         ]
       }
+      round_sync_control: {
+        Row: {
+          id: number
+          last_detail: Json
+          last_finished_at: string | null
+          last_started_at: string | null
+          last_status: string | null
+          updated_at: string
+        }
+        Insert: {
+          id?: number
+          last_detail?: Json
+          last_finished_at?: string | null
+          last_started_at?: string | null
+          last_status?: string | null
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          last_detail?: Json
+          last_finished_at?: string | null
+          last_started_at?: string | null
+          last_status?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       rounds: {
         Row: {
           created_at: string
