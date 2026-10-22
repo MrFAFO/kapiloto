@@ -6,6 +6,7 @@ import {
   getApiFootballMinRequestIntervalMs,
   getKapilotoRunConfig,
 } from "./research-config";
+import { loadKapilotoWeeklyBudgetStatus } from "./research-cost";
 import { SupabaseKapilotoResearchPreparer } from "./research-plan-preparer";
 import {
   ensureKapilotoResearch,
@@ -43,10 +44,17 @@ export async function ensureServerKapilotoResearch(
     },
   };
 
+  const budget = await loadKapilotoWeeklyBudgetStatus(
+    admin as Parameters<typeof loadKapilotoWeeklyBudgetStatus>[0],
+  );
+
   return ensureKapilotoResearch(
     rpc,
     lazyPreparer,
-    request,
+    {
+      ...request,
+      breakerOpen: request.breakerOpen || !budget.canCreateRun,
+    },
     getKapilotoRunConfig(),
   );
 }
