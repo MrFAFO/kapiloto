@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { after } from "next/server";
 
 import { syncKapilotoStructuredRound } from "@/lib/kapiloto/structured-data-sync";
@@ -14,8 +15,6 @@ export const maxDuration = 300;
 
 const STRUCTURED_FRESHNESS_MS = 12 * 60 * 60 * 1000;
 const PRECOMPUTE_BUCKET_MS = 15 * 60 * 1000;
-
-type AdminClient = ReturnType<typeof createAdminClient>;
 
 type ProactiveCycleResult =
   | {
@@ -46,7 +45,7 @@ type ProactiveCycleResult =
     };
 
 async function freshStructuredFixtureCount(
-  admin: AdminClient,
+  admin: SupabaseClient,
   fixtureIds: string[],
   nowMs: number,
 ): Promise<number> {
@@ -142,7 +141,7 @@ async function runProactiveRoundResearchCycle(
 
   const fixtureIds = (games ?? []).map((game) => String(game.fixture_id));
   let structuredReady = await freshStructuredFixtureCount(
-    admin,
+    admin as unknown as SupabaseClient,
     fixtureIds,
     requestStartedAt,
   );
@@ -172,7 +171,7 @@ async function runProactiveRoundResearchCycle(
     });
 
     structuredReady = await freshStructuredFixtureCount(
-      admin,
+      admin as unknown as SupabaseClient,
       fixtureIds,
       Date.now(),
     );
