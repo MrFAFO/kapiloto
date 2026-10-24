@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:providers && npm run test:features && npm run test:kapiloto && npm run test:ui && npm run test:auth && npm run test:rounds && npm run test:tickets && npm run test:groups && npm run test:evaluation",
+    "test": "npm run test:providers && npm run test:features && npm run test:kapiloto && npm run test:ui && npm run test:auth && npm run test:rounds && npm run test:tickets && npm run test:groups && npm run test:evaluation && npm run test:research-v2",
     "test:providers": "tsx --test lib/providers/*.test.ts",
     "test:features": "tsx --test lib/football-features/*.test.ts",
     "spike:provider": "tsx scripts/provider-spike.ts",
@@ -20,6 +20,7 @@
     "round:import": "tsx scripts/import-toto-round.ts",
     "test:groups": "tsx --test lib/groups/*.test.ts",
     "test:evaluation": "tsx --test lib/evaluation/*.test.ts",
+    "test:research-v2": "tsx --test lib/research-v2/*.test.ts",
     "eval:shadow": "tsx scripts/evaluation-shadow.ts",
     "round:discover": "tsx scripts/discover-toto-round.ts"
   },

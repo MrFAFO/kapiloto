@@ -7,11 +7,16 @@ import { verifyKapilotoWorkerAuthorization } from "@/lib/kapiloto/worker-auth";
 import { ApiFootballClient } from "@/lib/providers/api-football";
 import { SupabaseApiFootballSyncStore } from "@/lib/providers/api-football-supabase-store";
 import { SupabaseCurrentRoundLoader } from "@/lib/rounds/current-round";
-import { shadowCycleConfigFromEnv, shadowEvaluationFlags } from "@/lib/evaluation/env";
+import { SportmonksClient } from "@/lib/providers/sportmonks";
+import { shadowCycleConfigFromEnv, shadowEvaluationFlags, shadowResultsIngestEnabled } from "@/lib/evaluation/env";
 import type { ProviderRequestMeter } from "@/lib/evaluation/market-capture";
 import { runShadowEvaluationCycle } from "@/lib/evaluation/shadow-cycle";
 import { handleShadowEvaluationRequest } from "@/lib/evaluation/shadow-route";
-import { SupabaseShadowEvaluationStore } from "@/lib/evaluation/supabase-store";
+import {
+  SupabaseMatchResultStore,
+  SupabaseResultsFreshnessStore,
+  SupabaseShadowEvaluationStore,
+} from "@/lib/evaluation/supabase-store";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -53,21 +58,39 @@ export async function POST(request: Request): Promise<Response> {
             }
           : null;
 
+      const client = admin as unknown as SupabaseClient;
+      const store = new SupabaseShadowEvaluationStore(client);
+      const sportmonksToken = process.env.SPORTMONKS_API_TOKEN?.trim();
+      // Recurring results ingestion stays off unless explicitly enabled.
+      const results =
+        shadowResultsIngestEnabled(process.env) && sportmonksToken
+          ? {
+              source: new SportmonksClient(sportmonksToken),
+              sink: new SupabaseMatchResultStore(client),
+              freshness: new SupabaseResultsFreshnessStore(client),
+              loadLeagueIds: async () =>
+                (await store.loadSupportedCompetitionKeys()).map((key) => key.slice(key.indexOf(":") + 1)),
+            }
+          : null;
+
       const summary = await runShadowEvaluationCycle({
-        store: new SupabaseShadowEvaluationStore(admin as unknown as SupabaseClient),
+        store,
         roundId: currentRound.roundId,
         loadRoundGames: (roundId) => new SupabaseApiFootballSyncStore(admin).loadRoundGames(roundId),
         market,
+        results,
         now: new Date(),
         config: shadowCycleConfigFromEnv(process.env),
       });
 
       return {
-        failed: [summary.market, summary.predictions, summary.kapiloto, summary.scoring].some(
+        failed: [summary.results, summary.market, summary.predictions, summary.kapiloto, summary.scoring].some(
           (step) => step.status === "failed",
         ),
         summary: {
           roundId: summary.roundId,
+          resultsStatus: summary.results.status,
+          resultsSaved: summary.results.saved,
           marketProviderConfigured: Boolean(apiFootballKey),
           marketStatus: summary.market.status,
           marketRequests: summary.market.requestsUsed,
@@ -75,7 +98,7 @@ export async function POST(request: Request): Promise<Response> {
           predictionsDue: summary.predictions.due,
           kapilotoInserted: summary.kapiloto.inserted,
           scoresPersisted: summary.scoring.persisted,
-          errors: [summary.market, summary.predictions, summary.kapiloto, summary.scoring]
+          errors: [summary.results, summary.market, summary.predictions, summary.kapiloto, summary.scoring]
             .map((step) => step.error)
             .filter(Boolean),
         },

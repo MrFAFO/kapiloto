@@ -592,3 +592,37 @@ export class SupabaseMarketQuoteStore implements MarketQuoteSink {
     return (data ?? []).length;
   }
 }
+
+/** Read-only freshness of the league results store, for incremental ingestion. */
+export class SupabaseResultsFreshnessStore {
+  constructor(private readonly client: SupabaseClient) {}
+
+  async loadLatestKickoffs(leagueIds: readonly string[]): Promise<Map<string, string | null>> {
+    const latest = new Map<string, string | null>();
+    for (const leagueId of [...new Set(leagueIds)].sort()) {
+      const { data, error } = await this.client
+        .from("football_match_results")
+        .select("kickoff_at")
+        .eq("provider", SHADOW_HISTORY_PROVIDER)
+        .eq("provider_competition_id", leagueId)
+        .order("kickoff_at", { ascending: false })
+        .limit(1);
+      if (error) fail("Failed to load latest result kickoff", error);
+      const row = ((data ?? []) as Row[])[0];
+      latest.set(leagueId, row ? new Date(String(row.kickoff_at)).toISOString() : null);
+    }
+    return latest;
+  }
+
+  async loadLatestObservedAt(): Promise<string | null> {
+    const { data, error } = await this.client
+      .from("football_match_results")
+      .select("observed_at")
+      .eq("provider", SHADOW_HISTORY_PROVIDER)
+      .order("observed_at", { ascending: false })
+      .limit(1);
+    if (error) fail("Failed to load latest result observation", error);
+    const row = ((data ?? []) as Row[])[0];
+    return row ? new Date(String(row.observed_at)).toISOString() : null;
+  }
+}

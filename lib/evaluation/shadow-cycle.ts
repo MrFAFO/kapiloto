@@ -19,7 +19,28 @@ import {
   scoreShadowFixtures,
   type RecordedFixture,
 } from "./shadow-jobs";
+import {
+  DEFAULT_INCREMENTAL_INGEST_CONFIG,
+  incrementalIngestDue,
+  ingestRecentLeagueResults,
+  planIncrementalIngest,
+  type IncrementalIngestConfig,
+  type LeagueResultsSource,
+  type MatchResultSink,
+} from "./results-ingest";
 import type { ShadowCycleStore } from "./supabase-store";
+
+/** Optional recurring results ingestion; absent means the step is disabled. */
+export type ShadowResultsIngestDeps = {
+  source: LeagueResultsSource;
+  sink: MatchResultSink;
+  freshness: {
+    loadLatestKickoffs(leagueIds: readonly string[]): Promise<Map<string, string | null>>;
+    loadLatestObservedAt(): Promise<string | null>;
+  };
+  loadLeagueIds(): Promise<string[]>;
+  config?: IncrementalIngestConfig;
+};
 
 export type ShadowCycleConfig = {
   cadence: CadenceConfig;
@@ -51,6 +72,14 @@ export type ShadowCycleSummary = {
   roundId: string;
   startedAt: string;
   fixtures: number;
+  results: {
+    status: StepStatus;
+    due: boolean;
+    leagues: number;
+    fetched: number;
+    saved: number;
+    error: string | null;
+  };
   market: {
     status: StepStatus;
     notDue: number;
@@ -100,6 +129,7 @@ export async function runShadowEvaluationCycle(deps: {
   roundId: string;
   loadRoundGames: (roundId: string) => Promise<ApiFootballRoundGame[]>;
   market: { source: MarketQuoteSource; meter: ProviderRequestMeter } | null;
+  results?: ShadowResultsIngestDeps | null;
   now: Date;
   config?: ShadowCycleConfig;
 }): Promise<ShadowCycleSummary> {
@@ -111,6 +141,14 @@ export async function runShadowEvaluationCycle(deps: {
     roundId: deps.roundId,
     startedAt: deps.now.toISOString(),
     fixtures: fixtureIds.length,
+    results: {
+      status: deps.results ? "ran" : "disabled",
+      due: false,
+      leagues: 0,
+      fetched: 0,
+      saved: 0,
+      error: null,
+    },
     market: {
       status: deps.market ? "ran" : "disabled",
       notDue: 0,
@@ -130,6 +168,31 @@ export async function runShadowEvaluationCycle(deps: {
     },
     scoring: { status: "ran", candidates: 0, persisted: 0, skipped: [], error: null },
   };
+
+  if (deps.results) {
+    try {
+      const ingestConfig = deps.results.config ?? DEFAULT_INCREMENTAL_INGEST_CONFIG;
+      summary.results.due = incrementalIngestDue(await deps.results.freshness.loadLatestObservedAt(), deps.now, ingestConfig);
+      if (!summary.results.due) {
+        summary.results.status = "skipped";
+      } else {
+        const leagueIds = await deps.results.loadLeagueIds();
+        const plan = planIncrementalIngest(
+          deps.now,
+          leagueIds,
+          await deps.results.freshness.loadLatestKickoffs(leagueIds),
+          ingestConfig,
+        );
+        const ingested = await ingestRecentLeagueResults(deps.results.source, deps.results.sink, { plan, now: deps.now });
+        summary.results.leagues = plan.length;
+        summary.results.fetched = ingested.reduce((sum, item) => sum + item.fetched, 0);
+        summary.results.saved = ingested.reduce((sum, item) => sum + item.saved, 0);
+      }
+    } catch (error) {
+      summary.results.status = "failed";
+      summary.results.error = message(error);
+    }
+  }
 
   const capturedNow = new Set<string>();
   if (deps.market) {

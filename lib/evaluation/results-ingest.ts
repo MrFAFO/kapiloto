@@ -243,3 +243,80 @@ export function backfillRange(now: Date, years = DEFAULT_BACKFILL_YEARS): {
   const start = new Date(Date.UTC(end.getUTCFullYear() - years, end.getUTCMonth(), end.getUTCDate() + 1));
   return { startDate: isoDate(start.getTime()), endDate: isoDate(end.getTime()) };
 }
+
+/**
+ * Recurring (incremental) results ingestion keeps league history current
+ * after the one-time backfill, so p_stat and league base rates do not freeze.
+ * It never performs a silent multi-year backfill: with no stored rows it only
+ * looks back `initialLookbackDays`; the full backfill stays an explicit step.
+ */
+export type IncrementalIngestConfig = {
+  /** Re-read this many days before the latest stored kickoff (late corrections, postponements). */
+  overlapDays: number;
+  /** Window used for a league with no stored rows. */
+  initialLookbackDays: number;
+  /** Minimum hours between incremental runs. */
+  minHoursBetweenRuns: number;
+};
+
+export const DEFAULT_INCREMENTAL_INGEST_CONFIG: IncrementalIngestConfig = {
+  overlapDays: 7,
+  initialLookbackDays: 30,
+  minHoursBetweenRuns: 20,
+};
+
+export type IncrementalIngestPlanItem = { leagueId: string; startDate: string; endDate: string };
+
+export function planIncrementalIngest(
+  now: Date,
+  leagueIds: readonly string[],
+  latestKickoffByLeague: ReadonlyMap<string, string | null>,
+  config: IncrementalIngestConfig = DEFAULT_INCREMENTAL_INGEST_CONFIG,
+): IncrementalIngestPlanItem[] {
+  const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1);
+  return [...new Set(leagueIds)]
+    .sort()
+    .flatMap((leagueId) => {
+      const latest = latestKickoffByLeague.get(leagueId);
+      const latestMs = latest ? Date.parse(latest) : Number.NaN;
+      const latestDay = Number.isFinite(latestMs)
+        ? Date.UTC(new Date(latestMs).getUTCFullYear(), new Date(latestMs).getUTCMonth(), new Date(latestMs).getUTCDate())
+        : Number.NaN;
+      const start = Number.isFinite(latestDay)
+        ? latestDay - config.overlapDays * DAY_MS
+        : end - (config.initialLookbackDays - 1) * DAY_MS;
+      return start > end ? [] : [{ leagueId, startDate: isoDate(start), endDate: isoDate(end) }];
+    });
+}
+
+/** Whether an incremental run is due, from the latest stored observation time. */
+export function incrementalIngestDue(
+  latestObservedAt: string | null,
+  now: Date,
+  config: IncrementalIngestConfig = DEFAULT_INCREMENTAL_INGEST_CONFIG,
+): boolean {
+  if (latestObservedAt == null) return true;
+  const observedMs = Date.parse(latestObservedAt);
+  if (!Number.isFinite(observedMs)) return true;
+  return now.getTime() - observedMs >= config.minHoursBetweenRuns * 3_600_000;
+}
+
+export async function ingestRecentLeagueResults(
+  source: LeagueResultsSource,
+  sink: MatchResultSink | null,
+  options: { plan: readonly IncrementalIngestPlanItem[]; now: Date; dryRun?: boolean },
+): Promise<LeagueIngestSummary[]> {
+  const summaries: LeagueIngestSummary[] = [];
+  for (const item of options.plan) {
+    summaries.push(
+      await ingestLeagueResults(source, sink, {
+        leagueId: item.leagueId,
+        startDate: item.startDate,
+        endDate: item.endDate,
+        now: options.now,
+        dryRun: options.dryRun,
+      }),
+    );
+  }
+  return summaries;
+}

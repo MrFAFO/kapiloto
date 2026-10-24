@@ -22,6 +22,8 @@ import {
   backfillRange,
   DEFAULT_BACKFILL_YEARS,
   ingestLeagueResults,
+  ingestRecentLeagueResults,
+  planIncrementalIngest,
   type MatchResultRow,
 } from "../lib/evaluation/results-ingest";
 import { runShadowEvaluationCycle } from "../lib/evaluation/shadow-cycle";
@@ -35,6 +37,7 @@ import {
   SHADOW_HISTORY_PROVIDER,
   SupabaseMarketQuoteStore,
   SupabaseMatchResultStore,
+  SupabaseResultsFreshnessStore,
   SupabaseShadowEvaluationStore,
 } from "../lib/evaluation/supabase-store";
 import { getApiFootballMinRequestIntervalMs } from "../lib/kapiloto/research-config";
@@ -58,6 +61,7 @@ Writes evaluation tables only (migration must be applied):
   score            --round <id> --mode forward|replay [--persist]
   capture-market   --round <id>                      append raw API-Football quotes
   ingest-results   --league <sportmonks id> --from YYYY-MM-DD --to YYYY-MM-DD
+  ingest-recent    [--dry-run]                       incremental results since the latest stored kickoff
   backtest         --league <sportmonks id> --from YYYY-MM-DD --to YYYY-MM-DD
 
 Requires SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_SECRET_KEY;
@@ -441,6 +445,25 @@ async function main() {
         apiFootballClient({ requests: 0, dailyRemaining: null }),
         new SupabaseMarketQuoteStore(client),
       );
+      break;
+    }
+    case "ingest-recent": {
+      const now = new Date();
+      const leagueIds = (await store.loadSupportedCompetitionKeys()).map((key) => key.slice(key.indexOf(":") + 1));
+      const plan = planIncrementalIngest(
+        now,
+        leagueIds,
+        await new SupabaseResultsFreshnessStore(client).loadLatestKickoffs(leagueIds),
+      );
+      const dry = args.includes("--dry-run");
+      result = {
+        plan,
+        summaries: await ingestRecentLeagueResults(
+          new SportmonksClient(envOrThrow("SPORTMONKS_API_TOKEN")),
+          dry ? null : new SupabaseMatchResultStore(client),
+          { plan, now, dryRun: dry },
+        ),
+      };
       break;
     }
     case "ingest-results":

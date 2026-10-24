@@ -553,3 +553,66 @@ test("shadow switches default to off and budgets are bounded", () => {
   assert.equal(config.budget.maxRequestsPerRun, 12);
   assert.equal(config.budget.maxRequestsPerDay, DEFAULT_SHADOW_CYCLE_CONFIG.budget.maxRequestsPerDay);
 });
+
+function resultsDeps(options: { latestObservedAt: string | null; latestKickoff: string | null; fail?: boolean }) {
+  const calls: Array<{ leagueId: string; startDate: string; endDate: string }> = [];
+  return {
+    calls,
+    deps: {
+      source: {
+        async getLeagueCompletedMatchesBetween(leagueId: string, startDate: string, endDate: string) {
+          if (options.fail) throw new Error("sportmonks unavailable");
+          calls.push({ leagueId, startDate, endDate });
+          return [];
+        },
+      },
+      sink: { async saveResults() { return 0; } },
+      freshness: {
+        async loadLatestObservedAt() { return options.latestObservedAt; },
+        async loadLatestKickoffs(ids: readonly string[]) { return new Map(ids.map((id) => [id, options.latestKickoff])); },
+      },
+      loadLeagueIds: async () => ["8", "372"],
+    },
+  };
+}
+
+test("recurring results ingestion is disabled unless its dependencies are supplied", async () => {
+  const summary = await cycle(setup(), null);
+  assert.equal(summary.results.status, "disabled");
+});
+
+test("recurring results ingestion skips when it ran recently and never calls the provider", async () => {
+  const store = setup();
+  const { deps, calls } = resultsDeps({ latestObservedAt: iso(store.nowMs - 2 * HOUR), latestKickoff: iso(store.nowMs - 3 * 86_400_000) });
+  const summary = await runShadowEvaluationCycle({
+    store, roundId: "round", loadRoundGames: async () => store.games(), market: null, results: deps, now: new Date(store.nowMs),
+  });
+  assert.equal(summary.results.status, "skipped");
+  assert.equal(summary.results.due, false);
+  assert.equal(calls.length, 0);
+});
+
+test("recurring results ingestion runs when due, from the latest stored kickoff minus the overlap", async () => {
+  const store = setup();
+  const latestKickoff = iso(store.nowMs - 3 * 86_400_000);
+  const { deps, calls } = resultsDeps({ latestObservedAt: iso(store.nowMs - 30 * HOUR), latestKickoff });
+  const summary = await runShadowEvaluationCycle({
+    store, roundId: "round", loadRoundGames: async () => store.games(), market: null, results: deps, now: new Date(store.nowMs),
+  });
+  assert.equal(summary.results.status, "ran");
+  assert.equal(summary.results.leagues, 2);
+  const start = new Date(Date.parse(latestKickoff.slice(0, 10)) - 7 * 86_400_000).toISOString().slice(0, 10);
+  assert.ok(calls.length >= 2 && calls.every((call) => call.startDate >= start));
+  assert.deepEqual([...new Set(calls.map((call) => call.leagueId))].sort(), ["372", "8"]);
+});
+
+test("a failing results ingestion is reported without stopping the other steps", async () => {
+  const store = setup();
+  const { deps } = resultsDeps({ latestObservedAt: null, latestKickoff: null, fail: true });
+  const summary = await runShadowEvaluationCycle({
+    store, roundId: "round", loadRoundGames: async () => store.games(), market: null, results: deps, now: new Date(store.nowMs),
+  });
+  assert.equal(summary.results.status, "failed");
+  assert.match(summary.results.error ?? "", /sportmonks unavailable/);
+  assert.equal(summary.predictions.status, "ran");
+});

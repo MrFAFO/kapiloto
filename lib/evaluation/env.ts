@@ -18,6 +18,17 @@ export function shadowEvaluationFlags(env: Env): { enabled: boolean; marketCaptu
   return { enabled, marketCapture: enabled && on("KAPILOTO_SHADOW_MARKET_CAPTURE_ENABLED") };
 }
 
+/**
+ * Recurring league-results ingestion (keeps p_stat history fresh). Off unless
+ * shadow evaluation is enabled and `KAPILOTO_SHADOW_RESULTS_INGEST_ENABLED=true`.
+ */
+export function shadowResultsIngestEnabled(env: Env): boolean {
+  return (
+    shadowEvaluationFlags(env).enabled &&
+    env.KAPILOTO_SHADOW_RESULTS_INGEST_ENABLED?.trim().toLowerCase() === "true"
+  );
+}
+
 export type ShadowCadenceProfile = "free_plan" | "adaptive";
 
 /**

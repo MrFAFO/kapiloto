@@ -211,6 +211,7 @@ Proposed schedule (not created): Supabase `pg_cron` hourly at `7 * * * *`, calli
 | `KAPILOTO_SHADOW_MARKET_MAX_REQUESTS_PER_RUN` | 30 | provider requests per cycle |
 | `KAPILOTO_SHADOW_MARKET_MAX_REQUESTS_PER_DAY` | 200 | rolling 24 h, summed from recorded attempts |
 | `KAPILOTO_SHADOW_MARKET_PROVIDER_RESERVE` | 100 | stop when the provider's own daily remaining falls below this, leaving room for the production market sync |
+| `KAPILOTO_SHADOW_RESULTS_INGEST_ENABLED` | off | `true` (with evaluation enabled and `SPORTMONKS_API_TOKEN`) runs recurring league-results ingestion at most once per 20 h |
 | `KAPILOTO_SHADOW_MARKET_CADENCE` | `free_plan` | `adaptive` opts into the 7-day cadence (paid plan); any other value, unset or misspelled, keeps the Free-plan cadence |
 
 ### Market cadence (`kapiloto-shadow-cadence-v1`)

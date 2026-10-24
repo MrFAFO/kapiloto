@@ -20,11 +20,17 @@ function sourceFiles(directory: string): string[] {
   });
 }
 
+// Research v2 foundations are shadow-side until explicitly approved.
+const RESEARCH_V2_DIR = join(ROOT, "lib", "research-v2");
+
 const productionFiles = ["app", "components", "lib", "scripts"]
   .flatMap((directory) => sourceFiles(join(ROOT, directory)))
   .filter(
     (path) =>
-      !path.startsWith(EVALUATION_DIR + sep) && path !== SHADOW_CLI && path !== SHADOW_ROUTE,
+      !path.startsWith(EVALUATION_DIR + sep) &&
+      !path.startsWith(RESEARCH_V2_DIR + sep) &&
+      path !== SHADOW_CLI &&
+      path !== SHADOW_ROUTE,
   );
 
 const evaluationFiles = sourceFiles(EVALUATION_DIR).filter(
@@ -102,4 +108,16 @@ test("the shadow cron route is worker-secret protected, POST-only, deferred and 
   assert.doesNotMatch(source, /round_sync_control|\.from\(/);
   const vercel = readFileSync(join(ROOT, "vercel.json"), "utf8");
   assert.doesNotMatch(vercel, /shadow-evaluation/);
+});
+
+test("no production module imports Research v2, and Research v2 calls no model or research code", () => {
+  const offenders = productionFiles.filter((path) =>
+    /from\s+["'](?:@\/lib\/research-v2|(?:\.\.?\/)+(?:lib\/)?research-v2)(?:\/|["'])/.test(readFileSync(path, "utf8")),
+  );
+  assert.deepEqual(offenders.map((path) => relative(ROOT, path)), []);
+  for (const path of sourceFiles(RESEARCH_V2_DIR)) {
+    const source = readFileSync(path, "utf8");
+    assert.doesNotMatch(source, /openai|web_search|OPENAI_API_KEY|responses\.create/i, relative(ROOT, path));
+    assert.doesNotMatch(source, /from\s+["'](?:@\/|(?:\.\.\/)+)lib\/kapiloto\//, relative(ROOT, path));
+  }
 });
