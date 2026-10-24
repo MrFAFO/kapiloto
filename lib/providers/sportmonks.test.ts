@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   parseSportmonksCompletedMatches,
+  parseSportmonksLeagueResults,
   parseSportmonksStandings,
   parseSportmonksThreeWayQuotes,
 } from "./sportmonks";
@@ -157,6 +158,62 @@ test("normalizes finished Sportmonks fixtures using regular-time score", () => {
   assert.equal(matches[0].providerFixtureId, "700");
   assert.equal(matches[0].homeScore, 2);
   assert.equal(matches[0].awayScore, 1);
+});
+
+test("league results keep the 90-minute score, its source and chronological order", () => {
+  const row = (
+    id: number,
+    startingAt: string,
+    state: string,
+    scores: Array<[string, "home" | "away", number]>,
+  ) => ({
+    id,
+    league_id: 8,
+    season_id: 25583,
+    starting_at: startingAt,
+    state: { developer_name: state },
+    participants: [
+      { id: 1, name: "Home", meta: { location: "home" } },
+      { id: 2, name: "Away", meta: { location: "away" } },
+    ],
+    league: { id: 8, name: "Premier League" },
+    scores: scores.map(([description, participant, goals]) => ({
+      description,
+      score: { participant, goals },
+    })),
+  });
+
+  const results = parseSportmonksLeagueResults([
+    row(3, "2026-03-02 20:00:00", "FT", [
+      ["CURRENT", "home", 0],
+      ["CURRENT", "away", 2],
+    ]),
+    row(1, "2026-03-01 15:00:00", "AET", [
+      ["2ND_HALF", "home", 1],
+      ["2ND_HALF", "away", 1],
+      ["CURRENT", "home", 2],
+      ["CURRENT", "away", 1],
+    ]),
+    row(2, "2026-03-01 17:00:00", "AET", [
+      ["CURRENT", "home", 3],
+      ["CURRENT", "away", 2],
+    ]),
+    row(4, "2026-03-03 20:00:00", "NS", []),
+  ]);
+
+  assert.deepEqual(
+    results.map((match) => [
+      match.providerFixtureId,
+      match.homeScore,
+      match.awayScore,
+      match.scoreSource,
+      match.providerState,
+    ]),
+    [
+      ["1", 1, 1, "2ND_HALF", "AET"],
+      ["3", 0, 2, "CURRENT", "FT"],
+    ],
+  );
 });
 
 test("normalizes Sportmonks standings developer names used by the API", () => {

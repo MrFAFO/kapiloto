@@ -4,10 +4,14 @@
 -- derivation, finalization, publication RPCs or the public UI. These tables
 -- are server-only evaluation data (no anon/authenticated grants or policies).
 --
--- 1. football_match_results   league-wide regular-time results for B2/B3
--- 2. fixture_market_quotes    raw per-bookmaker 1X2 prices for B4
--- 3. kapiloto_eval_predictions  append-only predictions of every arm
--- 4. kapiloto_eval_scores       append-only scored selections
+-- 1. football_match_results          league-wide regular-time results for B2/B3
+-- 2. fixture_market_quotes           raw per-bookmaker 1X2 prices for B4
+-- 3. fixture_market_capture_attempts every quote-capture attempt, incl. failures
+-- 4. kapiloto_eval_predictions       append-only predictions of every arm
+-- 5. kapiloto_eval_scores            append-only scored selections
+--
+-- Every timestamp that a leakage rule depends on is set by the database, not
+-- by the writer.
 
 create or replace function private.kapiloto_eval_reject_change()
 returns trigger
@@ -16,6 +20,22 @@ set search_path = ''
 as $$
 begin
   raise exception '% rows are immutable', tg_table_name;
+end;
+$$;
+
+create or replace function private.kapiloto_eval_stamp_created()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.created_at := now();
+  if tg_table_name = 'football_match_results' then
+    new.observed_at := now();
+  elsif tg_table_name = 'fixture_market_quotes' then
+    new.captured_at := now();
+  end if;
+  return new;
 end;
 $$;
 
@@ -44,6 +64,11 @@ create table public.football_match_results (
   away_goals_90 smallint not null check (away_goals_90 >= 0),
   result_basis text not null default 'regular_time'
     check (result_basis = 'regular_time'),
+  -- Provider state and which provider score row supplied the 90-minute score.
+  provider_state text not null
+    check (char_length(trim(provider_state)) between 1 and 40),
+  score_source text not null
+    check (score_source in ('2ND_HALF', 'CURRENT')),
   neutral_venue boolean not null default false,
   observed_at timestamptz not null default now(),
   ingest_version text not null
@@ -51,7 +76,8 @@ create table public.football_match_results (
   created_at timestamptz not null default now(),
   unique (provider, provider_fixture_id),
   check (provider_home_team_id <> provider_away_team_id),
-  check (observed_at >= kickoff_at)
+  -- A result row can only exist once the match could have finished.
+  check (observed_at >= kickoff_at + interval '150 minutes')
 );
 
 create index football_match_results_competition_kickoff_idx
@@ -61,9 +87,17 @@ create index football_match_results_competition_kickoff_idx
     kickoff_at
   );
 
+create trigger football_match_results_stamp
+before insert on public.football_match_results
+for each row execute function private.kapiloto_eval_stamp_created();
+
 create trigger football_match_results_immutable
 before update or delete on public.football_match_results
 for each row execute function private.kapiloto_eval_reject_change();
+
+create trigger football_match_results_no_truncate
+before truncate on public.football_match_results
+for each statement execute function private.kapiloto_eval_reject_change();
 
 -- ---------------------------------------------------------------------------
 -- 2. Raw per-bookmaker 1X2 quotes
@@ -94,24 +128,87 @@ create table public.fixture_market_quotes (
   source_updated_at timestamptz,
   capture_version text not null
     check (char_length(trim(capture_version)) between 1 and 80),
+  -- Server insert time (trigger-stamped): quotes cannot be backdated.
   captured_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   unique (fixture_id, provider, bookmaker_id, captured_at),
-  check (abs(implied_home + implied_draw + implied_away - 1) <= 0.000001),
-  -- Capture time is server time: a quote cannot be inserted as if it had been
-  -- observed earlier (or later) than it actually was.
-  check (abs(extract(epoch from (captured_at - created_at))) <= 600)
+  check (abs(implied_home + implied_draw + implied_away - 1) <= 0.000001)
 );
 
 create index fixture_market_quotes_fixture_time_idx
   on public.fixture_market_quotes (fixture_id, captured_at desc);
 
+create trigger fixture_market_quotes_stamp
+before insert on public.fixture_market_quotes
+for each row execute function private.kapiloto_eval_stamp_created();
+
 create trigger fixture_market_quotes_immutable
 before update or delete on public.fixture_market_quotes
 for each row execute function private.kapiloto_eval_reject_change();
 
+create trigger fixture_market_quotes_no_truncate
+before truncate on public.fixture_market_quotes
+for each statement execute function private.kapiloto_eval_reject_change();
+
 -- ---------------------------------------------------------------------------
--- 3. Evaluation predictions (one row per arm/version/cutoff)
+-- 3. Quote-capture attempts (unavailable market state is recorded, not inferred)
+-- ---------------------------------------------------------------------------
+
+create table public.fixture_market_capture_attempts (
+  id uuid primary key default gen_random_uuid(),
+  fixture_id uuid not null references public.fixtures(id) on delete restrict,
+  provider text not null
+    check (char_length(trim(provider)) between 1 and 40),
+  attempted_at timestamptz not null default now(),
+  status text not null
+    check (status in (
+      'saved', 'no_quotes', 'not_found', 'orientation_mismatch', 'error',
+      'skipped_budget'
+    )),
+  cadence_window text not null
+    check (cadence_window in ('far', 'mid', 'near', 'final')),
+  provider_fixture_id text,
+  quotes_saved integer not null default 0 check (quotes_saved >= 0),
+  provider_requests integer not null default 0 check (provider_requests >= 0),
+  provider_daily_remaining integer,
+  error text check (error is null or char_length(error) <= 500),
+  capture_version text not null
+    check (char_length(trim(capture_version)) between 1 and 80),
+  check ((status = 'saved') = (quotes_saved > 0)),
+  check (status <> 'skipped_budget' or provider_requests = 0)
+);
+
+create index fixture_market_capture_attempts_fixture_time_idx
+  on public.fixture_market_capture_attempts (fixture_id, attempted_at desc);
+
+create index fixture_market_capture_attempts_provider_time_idx
+  on public.fixture_market_capture_attempts (provider, attempted_at desc);
+
+create or replace function private.kapiloto_eval_stamp_attempt()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.attempted_at := now();
+  return new;
+end;
+$$;
+
+create trigger fixture_market_capture_attempts_stamp
+before insert on public.fixture_market_capture_attempts
+for each row execute function private.kapiloto_eval_stamp_attempt();
+
+create trigger fixture_market_capture_attempts_immutable
+before update or delete on public.fixture_market_capture_attempts
+for each row execute function private.kapiloto_eval_reject_change();
+
+create trigger fixture_market_capture_attempts_no_truncate
+before truncate on public.fixture_market_capture_attempts
+for each statement execute function private.kapiloto_eval_reject_change();
+
+-- ---------------------------------------------------------------------------
+-- 4. Evaluation predictions (one row per arm/version/cutoff)
 -- ---------------------------------------------------------------------------
 
 create table public.kapiloto_eval_predictions (
@@ -148,6 +245,11 @@ create table public.kapiloto_eval_predictions (
     issued_at_source <> 'kapiloto_publication'
     or (evaluation_mode = 'forward' and source_analysis_id is not null)
   ),
+  -- Kapiloto arms can only be projections of a real immutable publication.
+  check (
+    (arm in ('kapiloto_published', 'kapiloto_sol'))
+    = (issued_at_source = 'kapiloto_publication')
+  ),
   check (
     (
       valid
@@ -180,8 +282,9 @@ create index kapiloto_eval_predictions_fixture_arm_idx
   on public.kapiloto_eval_predictions (fixture_id, arm, arm_version, issued_at desc);
 
 -- Issue time is never trusted from the writer. `recorded` rows are stamped
--- with the insert time; Kapiloto projections take the immutable publication
--- timestamp of the referenced analysis.
+-- with the insert time and take kickoff/orientation from the fixture;
+-- Kapiloto projections take the immutable publication timestamp and must
+-- carry exactly the published probabilities of the referenced analysis.
 create or replace function private.kapiloto_eval_stamp_prediction()
 returns trigger
 language plpgsql
@@ -190,11 +293,27 @@ as $$
 declare
   v_published_at timestamptz;
   v_publication_fixture_id uuid;
+  v_fixture record;
+  v_analysis record;
+  v_bp smallint[];
 begin
   new.recorded_at := now();
 
   if new.issued_at_source = 'recorded' then
+    select f.kickoff_at, f.home_team_id, f.away_team_id
+      into v_fixture
+    from public.fixtures f
+    where f.id = new.fixture_id;
+
+    if not found then
+      raise exception 'kapiloto_eval_fixture_not_found';
+    end if;
+    if new.home_team_id <> v_fixture.home_team_id
+       or new.away_team_id <> v_fixture.away_team_id then
+      raise exception 'kapiloto_eval_orientation_mismatch';
+    end if;
     new.issued_at := new.recorded_at;
+    new.kickoff_at_snapshot := v_fixture.kickoff_at;
   elsif new.issued_at_source = 'kapiloto_publication' then
     select p.published_at, p.fixture_id
       into v_published_at, v_publication_fixture_id
@@ -207,7 +326,31 @@ begin
     if v_publication_fixture_id <> new.fixture_id then
       raise exception 'kapiloto_eval_publication_fixture_mismatch';
     end if;
+
+    select a.kickoff_at_snapshot,
+           a.p_final_1_bp, a.p_final_x_bp, a.p_final_2_bp,
+           a.p_sol_1_bp, a.p_sol_x_bp, a.p_sol_2_bp
+      into v_analysis
+    from public.kapiloto_analyses a
+    where a.id = new.source_analysis_id;
+
+    v_bp := case new.arm
+      when 'kapiloto_published' then
+        array[v_analysis.p_final_1_bp, v_analysis.p_final_x_bp, v_analysis.p_final_2_bp]
+      else
+        array[v_analysis.p_sol_1_bp, v_analysis.p_sol_x_bp, v_analysis.p_sol_2_bp]
+    end;
+    if new.valid and (
+      v_bp[1] is null or v_bp[2] is null or v_bp[3] is null
+      or abs(new.p_home - v_bp[1] / 10000.0) > 0.000000001
+      or abs(new.p_draw - v_bp[2] / 10000.0) > 0.000000001
+      or abs(new.p_away - v_bp[3] / 10000.0) > 0.000000001
+    ) then
+      raise exception 'kapiloto_eval_publication_probability_mismatch';
+    end if;
+
     new.issued_at := v_published_at;
+    new.kickoff_at_snapshot := v_analysis.kickoff_at_snapshot;
   end if;
 
   if new.evaluation_mode = 'forward'
@@ -227,8 +370,12 @@ create trigger kapiloto_eval_predictions_immutable
 before update or delete on public.kapiloto_eval_predictions
 for each row execute function private.kapiloto_eval_reject_change();
 
+create trigger kapiloto_eval_predictions_no_truncate
+before truncate on public.kapiloto_eval_predictions
+for each statement execute function private.kapiloto_eval_reject_change();
+
 -- ---------------------------------------------------------------------------
--- 4. Scored selections
+-- 5. Scored selections
 -- ---------------------------------------------------------------------------
 
 create table public.kapiloto_eval_scores (
@@ -278,9 +425,131 @@ create table public.kapiloto_eval_scores (
   )
 );
 
+-- A score must describe the selected prediction of the same fixture/arm and
+-- the fixture's actual finished 90-minute result. It mirrors selection rule
+-- v1 (lib/evaluation/selection.ts): the prediction must be eligible at the
+-- deadline (actual kickoff, else scheduled kickoff, minus 15 minutes; same
+-- orientation; kickoff snapshot within 360 minutes; no information after the
+-- deadline; forward rows not issued after it), and no strictly later eligible
+-- prediction of the same arm/version/mode may exist, so a score can neither
+-- use a post-deadline prediction nor fall back to an older one.
+create or replace function private.kapiloto_eval_check_score()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_fixture record;
+  v_prediction record;
+  v_outcome text;
+begin
+  new.scored_at := now();
+  v_outcome := case
+    when new.home_goals_90 > new.away_goals_90 then '1'
+    when new.home_goals_90 = new.away_goals_90 then 'X'
+    else '2'
+  end;
+
+  select f.status, f.home_score, f.away_score, f.home_team_id, f.away_team_id,
+         coalesce(f.actual_kickoff_at, f.kickoff_at) as effective_kickoff,
+         coalesce(f.actual_kickoff_at, f.kickoff_at) - interval '15 minutes' as deadline
+    into v_fixture
+  from public.fixtures f
+  where f.id = new.fixture_id;
+
+  if not found
+     or v_fixture.status <> 'finished'
+     or v_fixture.home_score is distinct from new.home_goals_90
+     or v_fixture.away_score is distinct from new.away_goals_90
+     or new.outcome <> v_outcome then
+    raise exception 'kapiloto_eval_score_outcome_mismatch';
+  end if;
+
+  if new.prediction_id is not null then
+    select p.fixture_id, p.arm, p.arm_version, p.evaluation_mode, p.valid,
+           p.information_cutoff_at, p.issued_at, p.home_team_id, p.away_team_id,
+           p.kickoff_at_snapshot
+      into v_prediction
+    from public.kapiloto_eval_predictions p
+    where p.id = new.prediction_id;
+
+    if not found
+       or v_prediction.fixture_id <> new.fixture_id
+       or v_prediction.arm <> new.arm
+       or v_prediction.arm_version <> new.arm_version
+       or v_prediction.evaluation_mode <> new.evaluation_mode
+       or v_prediction.valid <> (new.status = 'scored') then
+      raise exception 'kapiloto_eval_score_prediction_mismatch';
+    end if;
+
+    if v_prediction.home_team_id <> v_fixture.home_team_id
+       or v_prediction.away_team_id <> v_fixture.away_team_id
+       or abs(extract(epoch from v_prediction.kickoff_at_snapshot - v_fixture.effective_kickoff))
+          > 360 * 60
+       or v_prediction.information_cutoff_at > v_fixture.deadline
+       or (v_prediction.evaluation_mode = 'forward'
+           and v_prediction.issued_at > v_fixture.deadline) then
+      raise exception 'kapiloto_eval_score_prediction_ineligible';
+    end if;
+
+    if exists (
+      select 1
+      from public.kapiloto_eval_predictions p
+      where p.fixture_id = new.fixture_id
+        and p.arm = new.arm
+        and p.arm_version = new.arm_version
+        and p.evaluation_mode = new.evaluation_mode
+        and p.home_team_id = v_fixture.home_team_id
+        and p.away_team_id = v_fixture.away_team_id
+        and abs(extract(epoch from p.kickoff_at_snapshot - v_fixture.effective_kickoff))
+            <= 360 * 60
+        and p.information_cutoff_at <= v_fixture.deadline
+        and (
+          (new.evaluation_mode = 'forward'
+            and p.issued_at <= v_fixture.deadline
+            and p.information_cutoff_at <= p.issued_at
+            and p.issued_at > v_prediction.issued_at)
+          or (new.evaluation_mode = 'replay'
+            and p.information_cutoff_at > v_prediction.information_cutoff_at)
+        )
+    ) then
+      raise exception 'kapiloto_eval_score_not_latest_prediction';
+    end if;
+  elsif exists (
+    select 1
+    from public.kapiloto_eval_predictions p
+    where p.fixture_id = new.fixture_id
+      and p.arm = new.arm
+      and p.arm_version = new.arm_version
+      and p.evaluation_mode = new.evaluation_mode
+      and p.home_team_id = v_fixture.home_team_id
+      and p.away_team_id = v_fixture.away_team_id
+      and abs(extract(epoch from p.kickoff_at_snapshot - v_fixture.effective_kickoff))
+          <= 360 * 60
+      and p.information_cutoff_at <= v_fixture.deadline
+      and (
+        new.evaluation_mode = 'replay'
+        or (p.issued_at <= v_fixture.deadline and p.information_cutoff_at <= p.issued_at)
+      )
+  ) then
+    raise exception 'kapiloto_eval_score_prediction_available';
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger kapiloto_eval_scores_check
+before insert on public.kapiloto_eval_scores
+for each row execute function private.kapiloto_eval_check_score();
+
 create trigger kapiloto_eval_scores_immutable
 before update or delete on public.kapiloto_eval_scores
 for each row execute function private.kapiloto_eval_reject_change();
+
+create trigger kapiloto_eval_scores_no_truncate
+before truncate on public.kapiloto_eval_scores
+for each statement execute function private.kapiloto_eval_reject_change();
 
 -- ---------------------------------------------------------------------------
 -- Security: server-only evaluation data
@@ -288,19 +557,30 @@ for each row execute function private.kapiloto_eval_reject_change();
 
 alter table public.football_match_results enable row level security;
 alter table public.fixture_market_quotes enable row level security;
+alter table public.fixture_market_capture_attempts enable row level security;
 alter table public.kapiloto_eval_predictions enable row level security;
 alter table public.kapiloto_eval_scores enable row level security;
 
 revoke all on table public.football_match_results from public, anon, authenticated;
 revoke all on table public.fixture_market_quotes from public, anon, authenticated;
+revoke all on table public.fixture_market_capture_attempts from public, anon, authenticated;
 revoke all on table public.kapiloto_eval_predictions from public, anon, authenticated;
 revoke all on table public.kapiloto_eval_scores from public, anon, authenticated;
+
+revoke all on function private.kapiloto_eval_reject_change() from public, anon, authenticated;
+revoke all on function private.kapiloto_eval_stamp_created() from public, anon, authenticated;
+revoke all on function private.kapiloto_eval_stamp_attempt() from public, anon, authenticated;
+revoke all on function private.kapiloto_eval_stamp_prediction() from public, anon, authenticated;
+revoke all on function private.kapiloto_eval_check_score() from public, anon, authenticated;
 
 comment on table public.football_match_results is
   'Immutable league-wide regular-time results used by deterministic shadow baselines (B2 league_base, B3 p_stat).';
 
 comment on table public.fixture_market_quotes is
   'Immutable per-bookmaker 1X2 prices captured by Kapiloto for the shadow market arm (B4). Not read by the production prior.';
+
+comment on table public.fixture_market_capture_attempts is
+  'Immutable log of shadow quote-capture attempts, including no-quote, unresolved, error and budget-skipped outcomes.';
 
 comment on table public.kapiloto_eval_predictions is
   'Append-only shadow evaluation predictions per fixture/arm/version/cutoff. Never exposed to clients; never feeds production recommendations.';

@@ -1,6 +1,6 @@
 # Kapiloto Shadow Evaluation v1 (Research v2, Phase 1)
 
-Status: implemented in shadow mode on `feature/research-v2-foundations`. Migration `20261024090000_kapiloto_shadow_evaluation_v1.sql` is written and tested against PGlite. It is **not applied** to any hosted database, and no job is scheduled.
+Status: implemented in shadow mode on `feature/research-v2-foundations` and prepared for production shadow activation (D-042). Migration `20261024090000_kapiloto_shadow_evaluation_v1.sql` is written and tested against PGlite. It is **not applied** to any hosted database, and no job is scheduled.
 
 This document implements the measurement part of `KAPILOTO-EVALUATION-PLAN.md`. It adds no claim that any arm is better than another; that can only come from forward data scored under the rules below.
 
@@ -8,12 +8,12 @@ This document implements the measurement part of `KAPILOTO-EVALUATION-PLAN.md`. 
 
 Nothing in Phase 1 changes published Kapiloto behaviour:
 - `p_sol`, `p_final`, pick, double, double rank, grounding (v5/v6/v7), entailment, reliability, blend, finalization and the production prior path (`fixture_market_snapshots`, `aggregateMarketPrior`) are untouched;
-- no app route, component or `lib/` module outside `lib/evaluation/` imports evaluation code or references the four new tables (enforced by `lib/evaluation/shadow-isolation.test.ts`);
-- evaluation code writes only to `football_match_results`, `fixture_market_quotes`, `kapiloto_eval_predictions` and `kapiloto_eval_scores`, performs no updates/deletes, and calls no RPCs (same test);
+- no app route, component or `lib/` module outside `lib/evaluation/` imports evaluation code or references the five new tables. The single exception is the internal cron route `app/api/internal/cron/shadow-evaluation`, which requires `CRON_SECRET`, does nothing unless `KAPILOTO_SHADOW_EVALUATION_ENABLED=true`, and is not in `vercel.json` (all enforced by `lib/evaluation/shadow-isolation.test.ts`);
+- evaluation code writes only to `football_match_results`, `fixture_market_quotes`, `fixture_market_capture_attempts`, `kapiloto_eval_predictions` and `kapiloto_eval_scores`, performs no updates/deletes, and calls no RPCs (same test). It does not write `round_sync_control`, provider mappings or `fixture_market_snapshots`;
 - evaluation code makes no OpenAI or web-search calls;
 - the new tables have RLS enabled, no policies and no `anon`/`authenticated` privileges, so numeric probabilities cannot reach the browser.
 
-The only shared-file change is an additive `SportmonksClient.getLeagueCompletedMatchesBetween` method used by results ingestion.
+Shared-file changes are additive only: `SportmonksClient.getLeagueCompletedMatchesBetween` (paginated league results with score provenance), plus an optional `onResponse` quota hook and `getAccountStatus()` on `ApiFootballClient`. Existing production parsers and call sites are unchanged.
 
 ## Architecture
 
@@ -33,6 +33,10 @@ Modules live in `lib/evaluation/`; the operator entry point is `npm run eval:sha
 
 | Command | Effect |
 | --- | --- |
+| `dry-run [--round <id>] [--probe-market]` | read-only readiness report; Supabase writes and non-GET requests are blocked |
+| `report [--round <id>]` | read-only operator report (below) |
+| `cycle [--round <id>]` | one scheduled pass, same code as the cron route |
+| `backfill-results [--years 3] [--league <id>] [--dry-run]` | league results for every supported league, oldest first |
 | `record --round <id>` | forward B1–B4 at now − 60 s |
 | `replay --round <id> [--lead-minutes N]` | deterministic B1–B4 at kickoff − 15 min − N |
 | `project-kapiloto --round <id>` | B5 rows from immutable publications |
@@ -63,10 +67,13 @@ An arm that cannot be computed is stored as `valid = false` with a reason (`insu
 - **Safety margin:** `D = (actual kickoff, else scheduled kickoff) − 15 minutes`, the same window used by research and sync.
 - **Result availability:** a historical result is usable only if `kickoff + 150 minutes ≤ cutoff`, and only for the same competition. Future and in-play matches never enter B2/B3.
 - **Market availability:** a quote is usable only if `captured_at ≤ cutoff` and its provider `source_updated_at` (if present) is `≤ cutoff`.
-- **Recorded issue time:** for B1–B4 the database sets `issued_at = recorded_at = now()` on insert; writer-supplied values are overwritten. Forward jobs set the information cutoff 60 seconds behind the app clock so app/DB clock skew cannot trip the trigger.
-- **Publication issue time:** for B5, `issued_at` is the `published_at` of the referenced immutable `kapiloto_fixture_publications` row, and that publication must belong to the same fixture.
+- **Recorded issue time:** for B1–B4 the database sets `issued_at = recorded_at = now()` on insert and copies `kickoff_at_snapshot` from the fixture; writer-supplied values are overwritten. Rows whose home/away teams differ from the fixture are rejected (`kapiloto_eval_orientation_mismatch`).
+- **Forward cutoff:** `max(now − 60 s, latest DB-stamped quote captured_at for the fixture)`, capped at `D`. The 60 seconds absorb app/DB clock skew; the quote floor lets a prediction see quotes captured moments earlier in the same run, using a timestamp the database itself wrote.
+- **Publication issue time:** for B5, `issued_at` is the `published_at` of the referenced immutable `kapiloto_fixture_publications` row, and that publication must belong to the same fixture. A valid projection must carry exactly the analysis's published basis points (`kapiloto_eval_publication_probability_mismatch`), and `kickoff_at_snapshot` is taken from the analysis. Only `kapiloto_published`/`kapiloto_sol` may use a publication source, and they may use nothing else. Publications made after `D` are not projected.
 - **No information after issue:** in forward mode the database rejects `information_cutoff_at > issued_at`.
-- **No backdated quotes:** `fixture_market_quotes.captured_at` must be within 600 seconds of the row's `created_at`.
+- **No backdated rows:** `fixture_market_quotes.captured_at`, `football_match_results.observed_at`, `fixture_market_capture_attempts.attempted_at`, `kapiloto_eval_scores.scored_at` and every `created_at` are set by insert triggers; writer values are ignored. A result row additionally requires `observed_at ≥ kickoff_at + 150 minutes`.
+- **Score integrity:** the score trigger requires a finished fixture whose stored 90-minute goals and outcome match the row. It also mirrors the selection rule: the referenced prediction must be eligible at `D`, no strictly later eligible prediction of the same arm/version/mode may exist (`kapiloto_eval_score_not_latest_prediction`), and `no_eligible_prediction` is refused while an eligible one exists.
+- **Append-only:** update, delete and truncate are rejected by triggers on all five tables.
 - **Replay restriction:** replay rows must be `deterministic` (DB check), so LLM arms can only ever be forward-evaluated. Finished matches are never re-researched.
 - **Orientation:** predictions whose home/away team IDs differ from the canonical fixture are rejected at selection (`orientation_mismatch`). B5 additionally requires `orientation_verified`.
 - **Postponement:** if the scheduled kickoff moved more than 360 minutes from the prediction's `kickoff_at_snapshot`, the prediction is rejected (`kickoff_rescheduled`).
@@ -150,7 +157,7 @@ Raw quotes are appended by `capture-market` to `fixture_market_quotes`. This is 
 Eligibility at a cutoff:
 1. Same fixture, `captured_at ≤ cutoff`, `source_updated_at ≤ cutoff` when present.
 2. Latest quote per `provider:bookmaker`; older ones are `superseded_by_newer_quote`.
-3. Quote age ≤ 1,440 minutes (`stale` otherwise). The current market cron runs once a day, so a 24-hour bound is the tightest that the existing schedule can satisfy.
+3. Quote age ≤ 1,440 minutes (`stale` otherwise), matching the slowest (`far`) capture interval of the shadow cadence below.
 4. All three odds > 1 and overround within [0, 0.25].
 5. At least **2** distinct bookmakers, otherwise no prediction (`insufficient_bookmakers`, or `stale_market` if staleness removed them). One bookmaker is never a market.
 
@@ -176,6 +183,74 @@ Both remove more margin from longshots than proportional de-vig (`devig-proporti
 
 Projection reads immutable `kapiloto_fixture_publications ⨝ kapiloto_analyses` and converts basis points to probabilities without modification. `kapiloto_published` takes `p_final`; `kapiloto_sol` takes raw `p_sol`. A projection is valid only for outcome `analyzed`/`carried_forward` with verified orientation. `basis` records the derivation, blend, reliability and calibration versions and the prior type.
 
+## Production shadow activation (D-042)
+
+Nothing here is enabled. Activation is an operator decision, taken in this order.
+
+### Scheduled cycle
+
+`GET /api/internal/cron/shadow-evaluation` (Bearer `CRON_SECRET`) runs `runShadowEvaluationCycle` for the current round. It does the following, each step isolated (a failure is reported with HTTP 207, and later dependent steps are skipped):
+
+1. **Market capture** for fixtures that are due under the cadence (only when market capture is enabled and `API_FOOTBALL_API_KEY` is set).
+2. **Forward B1–B4** for fixtures that are cadence-due or that captured quotes in this run.
+3. **Kapiloto projection** of pre-deadline publications for the round and for fixtures finished in the last 21 days. Only `p_final`/`p_sol` already published are recorded; nothing is reconstructed after the match.
+4. **Scoring** (persisted) of fixtures that finished 3 hours to 21 days ago. This step is skipped if projection failed, so a Kapiloto arm is never scored before its projection had the chance to be recorded.
+
+Re-running is safe: cadence gates captures and predictions, and projections and scores are de-duplicated by unique keys.
+
+Proposed schedule, not added to `vercel.json`: hourly at `7 * * * *`. The route picks only due fixtures internally. Vercel Hobby limits cron jobs to once a day, which would make the hourly cadence impossible there. An external scheduler calling the route with `CRON_SECRET` is an alternative.
+
+### Switches and budgets (environment)
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `KAPILOTO_SHADOW_EVALUATION_ENABLED` | off | `true` enables the route at all |
+| `KAPILOTO_SHADOW_MARKET_CAPTURE_ENABLED` | off | `true` (with the above) allows API-Football requests |
+| `KAPILOTO_SHADOW_MARKET_MAX_REQUESTS_PER_RUN` | 30 | provider requests per cycle |
+| `KAPILOTO_SHADOW_MARKET_MAX_REQUESTS_PER_DAY` | 200 | rolling 24 h, summed from recorded attempts |
+| `KAPILOTO_SHADOW_MARKET_PROVIDER_RESERVE` | 100 | stop when the provider's own daily remaining falls below this, leaving room for the production market sync |
+
+### Market cadence (`kapiloto-shadow-cadence-v1`)
+
+| Window (time to kickoff) | Capture interval |
+| --- | --- |
+| more than 168 h | none |
+| 48–168 h (`far`) | 24 h |
+| 6–48 h (`mid`) | 3 h |
+| under 6 h (`near`) | 1 h |
+| last 75 min before `D` (`final`) | one forced capture, then hourly |
+
+Intervals have 10 minutes of slack so an hourly scheduler does not drift by a whole run. After an `error`, a retry is allowed after 60 minutes. When the budget does not cover every due fixture, `final` comes first, then `near`, `mid` and `far`, then earlier kickoff. Fixtures left out are recorded as `skipped_budget` attempts and stay due.
+
+Every attempt is stored in `fixture_market_capture_attempts`, including `no_quotes`, `not_found`, `orientation_mismatch`, `error` and `skipped_budget`, together with provider requests used and the provider's remaining daily quota. Unavailable market state is therefore recorded, not inferred from missing rows.
+
+Estimated volume (the `dry-run` simulation, at 2 requests per capture plus 1 fixture-resolution request per kickoff date per run): one fixture costs 25 captures over its last week. A full 16-fixture round costs about 400 captures and about 550 requests, peaking at about 165 requests on the busiest day. Free API-Football plans (100 requests/day, about 10/minute) cannot sustain this. With the default reserve of 100, capture stops before touching such a plan's quota.
+
+### Historical backfill
+
+`backfill-results` fetches finished league fixtures from Sportmonks in 90-day windows, from 3 years before today up to yesterday, for every supported (confirmed, Sportmonks-mapped) competition. Rows are de-duplicated by provider fixture ID, sorted oldest first, and inserted with `ignoreDuplicates`, so reruns add nothing. Only 90-minute scores are stored: `2ND_HALF`, or `CURRENT` for plain `FT`. Matches decided after extra time without a `2ND_HALF` row are dropped. Each row keeps `provider_state` and `score_source`. Run with `--dry-run` first: it fetches and reports per-league counts, seasons and date ranges without writing. The coverage actually returned by the subscription is what gets reported; nothing is padded.
+
+The backfill feeds B2/B3 only. Historical predictions are not persisted (they need a canonical fixture); the `backtest` command evaluates B1–B3 in memory. No historical LLM or Kapiloto predictions are ever created.
+
+### Operator report
+
+`report` (read-only) lists, for the round:
+- fixtures, and fixtures with league history and with a valid `p_stat`;
+- market coverage (standard/thin), bookmakers per latest snapshot and snapshot age;
+- frozen Kapiloto `p_final`/`p_sol` projections;
+- stored forward predictions and evaluated fixtures;
+- unavailable arms with reasons.
+
+It is a CLI output only; there is no public UI or API.
+
+### Activation order
+
+1. Apply the migration.
+2. Run `backfill-results --dry-run`, review per-league coverage, then run it for real.
+3. Verify API-Football plan and coverage with `dry-run --probe-market`.
+4. Set `KAPILOTO_SHADOW_EVALUATION_ENABLED=true`, then add the schedule.
+5. Enable market capture only once the plan's daily quota covers the estimate above plus the production sync.
+
 ## Version identifiers
 
 | Component | Version |
@@ -190,13 +265,14 @@ Projection reads immutable `kapiloto_fixture_publications ⨝ kapiloto_analyses`
 | scoring | `kapiloto-eval-scoring-v1` |
 | results ingest | `football-results-ingest-v1` |
 | quote capture | `kapiloto-market-quotes-capture-v1` |
+| capture cadence | `kapiloto-shadow-cadence-v1` |
 
 Changing any formula or threshold requires a new version string. Scores are unique per `(fixture, arm, arm_version, mode, selection_rule_version, scoring_version)`, so old and new versions coexist.
 
 ## Limitations
 
-- **No data yet.** B2/B3 return `insufficient_league_history` until the migration is applied and `ingest-results` backfills each mapped league (Sportmonks 8, 82, 372, 384, 564). B4 returns no prediction until `capture-market` runs; there are currently 0 market snapshots in production.
-- **No scheduling.** No cron or worker invokes any shadow job. Scheduling capture more often than daily, so that `standard` quality is reachable, is a separate decision.
+- **No data yet.** B2/B3 return `insufficient_league_history` until the migration is applied and `backfill-results` runs for each mapped league (Sportmonks 8, 82, 372, 384, 564). B4 returns no prediction until market capture runs. Production has never stored a market snapshot (`fixture_market_snapshots` is empty) and has no API-Football team or fixture mappings, so capture relies on name matching, and real bookmaker coverage is unverified.
+- **No scheduling.** The cron route exists but is disabled by default and not scheduled.
 - **Elo limits:**
   - promoted and newly mapped teams start at 1,500 and stay unavailable for their first 5 matches;
   - there is no cross-league or cup information;

@@ -8,6 +8,7 @@ import { SHADOW_EVALUATION_WRITE_TABLES } from "./supabase-store";
 const ROOT = process.cwd();
 const EVALUATION_DIR = join(ROOT, "lib", "evaluation");
 const SHADOW_CLI = join(ROOT, "scripts", "evaluation-shadow.ts");
+const SHADOW_ROUTE = join(ROOT, "app", "api", "internal", "cron", "shadow-evaluation", "route.ts");
 
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory).flatMap((entry) => {
@@ -21,7 +22,10 @@ function sourceFiles(directory: string): string[] {
 
 const productionFiles = ["app", "components", "lib", "scripts"]
   .flatMap((directory) => sourceFiles(join(ROOT, directory)))
-  .filter((path) => !path.startsWith(EVALUATION_DIR + sep) && path !== SHADOW_CLI);
+  .filter(
+    (path) =>
+      !path.startsWith(EVALUATION_DIR + sep) && path !== SHADOW_CLI && path !== SHADOW_ROUTE,
+  );
 
 const evaluationFiles = sourceFiles(EVALUATION_DIR).filter(
   (path) => !path.endsWith(".test.ts"),
@@ -71,9 +75,25 @@ test("shadow evaluation code writes only to shadow tables and calls no RPCs", ()
 });
 
 test("shadow evaluation code never calls OpenAI or web research", () => {
-  for (const path of [...evaluationFiles, SHADOW_CLI]) {
+  for (const path of [...evaluationFiles, SHADOW_CLI, SHADOW_ROUTE]) {
     const source = readFileSync(path, "utf8");
     assert.doesNotMatch(source, /openai|web_search|OPENAI_API_KEY/i, relative(ROOT, path));
-    assert.doesNotMatch(source, /@\/lib\/kapiloto\/(?!snapshot)/, relative(ROOT, path));
+    for (const match of source.matchAll(/from\s+["'](?:@\/|(?:\.\.\/)+)lib\/kapiloto\/([a-z-]+)["']/g)) {
+      assert.ok(
+        ["snapshot", "research-config"].includes(match[1]),
+        `${relative(ROOT, path)} imports lib/kapiloto/${match[1]}`,
+      );
+    }
   }
+});
+
+test("the shadow cron route is secret-protected, off by default and not scheduled", () => {
+  const source = readFileSync(SHADOW_ROUTE, "utf8");
+  assert.match(source, /process\.env\.CRON_SECRET/);
+  assert.match(source, /status: 401/);
+  assert.match(source, /shadowEvaluationFlags\(process\.env\)/);
+  assert.match(source, /if \(!flags\.enabled\)/);
+  assert.doesNotMatch(source, /round_sync_control|\.from\(/);
+  const vercel = readFileSync(join(ROOT, "vercel.json"), "utf8");
+  assert.doesNotMatch(vercel, /shadow-evaluation/);
 });

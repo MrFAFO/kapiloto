@@ -6,6 +6,7 @@ import {
   type DeterministicArmConfig,
   type EvalPredictionDraft,
   type EvaluationMode,
+  type ShadowFixtureContext,
 } from "./arms";
 import { projectKapilotoPublication } from "./kapiloto-projection";
 import { evaluateFixtures, summarizeByArm } from "./scoring";
@@ -28,7 +29,7 @@ async function recordAtCutoff(
   store: ShadowEvaluationStore,
   fixtureIds: string[],
   mode: EvaluationMode,
-  cutoffFor: (kickoffAt: string) => string,
+  cutoffFor: (context: ShadowFixtureContext) => string,
   isPastDeadline: (kickoffAt: string) => boolean,
   config: DeterministicArmConfig,
 ): Promise<RecordedFixture[]> {
@@ -45,7 +46,7 @@ async function recordAtCutoff(
       });
       continue;
     }
-    const cutoffAt = cutoffFor(context.kickoffAt);
+    const cutoffAt = cutoffFor(context);
     const [history, quotes] = await Promise.all([
       context.competitionKey
         ? store.loadHistory(context.competitionKey, cutoffAt, lookbackDays)
@@ -75,20 +76,38 @@ async function recordAtCutoff(
 /**
  * Forward recording of B1-B4 at the current moment. Fixtures already inside
  * the kickoff safety window are skipped; the database stamps the issue time.
+ *
+ * `informationFloors` may raise a fixture's cutoff to a database-stamped
+ * instant (e.g. the latest quote capture), which by construction is not later
+ * than the database's insert time.
  */
 export function recordForwardDeterministicArms(
   store: ShadowEvaluationStore,
-  options: { fixtureIds: string[]; now?: Date; config?: DeterministicArmConfig },
+  options: {
+    fixtureIds: string[];
+    now?: Date;
+    config?: DeterministicArmConfig;
+    informationFloors?: ReadonlyMap<string, string>;
+  },
 ): Promise<RecordedFixture[]> {
   const nowMs = (options.now ?? new Date()).getTime();
-  const cutoffAt = new Date(nowMs - FORWARD_CUTOFF_CLOCK_SKEW_SECONDS * 1000).toISOString();
+  const deadlineMs = (kickoffAt: string) =>
+    Date.parse(kickoffAt) - EVAL_SAFETY_MARGIN_MINUTES * 60_000;
+  const baseCutoffMs = nowMs - FORWARD_CUTOFF_CLOCK_SKEW_SECONDS * 1000;
   return recordAtCutoff(
     store,
     options.fixtureIds,
     "forward",
-    () => cutoffAt,
-    (kickoffAt) =>
-      nowMs > Date.parse(kickoffAt) - EVAL_SAFETY_MARGIN_MINUTES * 60_000,
+    (context) => {
+      const floor = options.informationFloors?.get(context.fixtureId);
+      const floorMs = floor ? Date.parse(floor) : Number.NEGATIVE_INFINITY;
+      const cutoffMs = Math.min(
+        Math.max(baseCutoffMs, Number.isFinite(floorMs) ? floorMs : baseCutoffMs),
+        deadlineMs(context.kickoffAt),
+      );
+      return new Date(cutoffMs).toISOString();
+    },
+    (kickoffAt) => nowMs > deadlineMs(kickoffAt),
     options.config ?? DEFAULT_DETERMINISTIC_ARM_CONFIG,
   );
 }
@@ -107,24 +126,38 @@ export function recordReplayDeterministicArms(
     store,
     options.fixtureIds,
     "replay",
-    (kickoffAt) =>
+    (context) =>
       new Date(
-        Date.parse(kickoffAt) - EVAL_SAFETY_MARGIN_MINUTES * 60_000 - leadMs,
+        Date.parse(context.kickoffAt) - EVAL_SAFETY_MARGIN_MINUTES * 60_000 - leadMs,
       ).toISOString(),
     () => false,
     options.config ?? DEFAULT_DETERMINISTIC_ARM_CONFIG,
   );
 }
 
-/** B5: append projections of every immutable Kapiloto publication. */
+/**
+ * B5: append projections of immutable Kapiloto publications. Values are
+ * copied from the publication, never recomputed, and the database takes the
+ * issue time from the publication row; publications made after the
+ * evaluation deadline are not recorded because they can never be selected.
+ */
 export async function projectKapilotoPublications(
   store: ShadowEvaluationStore,
   options: { fixtureIds: string[] },
-): Promise<{ publications: number; inserted: number; duplicates: number }> {
+): Promise<{ publications: number; afterDeadline: number; inserted: number; duplicates: number }> {
   const publications = await store.loadPublishedKapiloto(options.fixtureIds);
-  const drafts: EvalPredictionDraft[] = publications.flatMap(projectKapilotoPublication);
+  const eligible = publications.filter(
+    (publication) =>
+      Date.parse(publication.publishedAt) <=
+      Date.parse(publication.kickoffAtSnapshot) - EVAL_SAFETY_MARGIN_MINUTES * 60_000,
+  );
+  const drafts: EvalPredictionDraft[] = eligible.flatMap(projectKapilotoPublication);
   const written = await store.insertPredictions(drafts);
-  return { publications: publications.length, ...written };
+  return {
+    publications: publications.length,
+    afterDeadline: publications.length - eligible.length,
+    ...written,
+  };
 }
 
 export async function scoreShadowFixtures(

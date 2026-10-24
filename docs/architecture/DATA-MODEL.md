@@ -657,7 +657,7 @@ Freshness is computed at read time from deterministic TTL, input versions and si
 
 
 ## Shadow evaluation (server-only)
-These tables back the Research v2 shadow evaluation (`docs/ai/KAPILOTO-SHADOW-EVALUATION-V1.md`, D-041). All four are append-only (update/delete triggers raise), have RLS enabled with no policies and no `anon`/`authenticated` grants, and are never read by research, derivation, finalization, publication or the UI.
+These tables back the Research v2 shadow evaluation (`docs/ai/KAPILOTO-SHADOW-EVALUATION-V1.md`, D-041, D-042). All five are append-only (update/delete/truncate triggers raise), have RLS enabled with no policies and no `anon`/`authenticated` grants, and are never read by research, derivation, finalization, publication or the UI. Every time column that a leakage rule depends on is set by an insert trigger.
 
 ### football_match_results
 League-wide regular-time results for deterministic baselines, identified by provider IDs (not canonical teams).
@@ -668,8 +668,9 @@ League-wide regular-time results for deterministic baselines, identified by prov
 - provider_home_team_id/name, provider_away_team_id/name
 - home_goals_90, away_goals_90
 - result_basis: regular_time
+- provider_state (e.g. FT, AET), score_source: 2ND_HALF/CURRENT
 - neutral_venue
-- observed_at (≥ kickoff_at)
+- observed_at (DB insert time; must be ≥ kickoff_at + 150 minutes)
 - ingest_version
 
 ### fixture_market_quotes
@@ -682,8 +683,19 @@ Raw per-bookmaker 1X2 prices captured for the shadow market arm. Separate from `
 - odds_home/draw/away (> 1), overround
 - implied_home/draw/away (de-vigged, sum to 1), devig_method_version
 - source_updated_at
-- captured_at (server time; must be within 10 minutes of created_at)
+- captured_at (DB insert time; writer value ignored)
 - capture_version
+
+### fixture_market_capture_attempts
+One row per shadow quote-capture attempt, so unavailable market state is explicit.
+
+- fixture_id, provider
+- attempted_at (DB insert time)
+- status: saved/no_quotes/not_found/orientation_mismatch/error/skipped_budget
+- cadence_window: far/mid/near/final
+- provider_fixture_id, quotes_saved (> 0 exactly when saved)
+- provider_requests (0 when skipped_budget), provider_daily_remaining
+- error, capture_version
 
 ### kapiloto_eval_predictions
 One row per fixture/arm/arm_version/mode/information cutoff (and source analysis for Kapiloto projections).
@@ -693,9 +705,9 @@ One row per fixture/arm/arm_version/mode/information cutoff (and source analysis
 - evaluation_mode: forward/replay (replay requires deterministic)
 - deterministic
 - information_cutoff_at
-- issued_at (DB-stamped: insert time, or the immutable publication time for Kapiloto projections), issued_at_source
-- source_analysis_id
-- recorded_at, kickoff_at_snapshot
+- issued_at (DB-stamped: insert time, or the immutable publication time for Kapiloto projections), issued_at_source (publication source exactly for the Kapiloto arms)
+- source_analysis_id (Kapiloto projections must carry that analysis's published probabilities)
+- recorded_at, kickoff_at_snapshot (DB-copied from the fixture or the analysis)
 - home_team_id, away_team_id
 - valid, invalid_reason, p_home/p_draw/p_away
 - basis, input_sha256
@@ -707,9 +719,11 @@ One scored selection per fixture/arm/arm_version/mode/selection rule/scoring ver
 - selection_rule_version, scoring_version
 - status: scored/prediction_unavailable/no_eligible_prediction
 - prediction_id
-- outcome (90-minute field result), home_goals_90, away_goals_90, outcome_source
+- outcome (90-minute field result; must match the finished fixture), home_goals_90, away_goals_90, outcome_source
 - brier, rps, log_loss, top_pick, top_pick_score
-- details
+- details, scored_at (DB insert time)
+
+The insert trigger rejects a score whose prediction is not the latest one eligible under selection rule v1.
 
 ## AI personas
 ### Kapiloto

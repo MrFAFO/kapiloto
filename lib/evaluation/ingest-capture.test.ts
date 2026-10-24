@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ApiFootballRoundGame } from "@/lib/providers/api-football-sync";
-import type {
-  BookmakerThreeWayQuote,
-  ProviderCompletedMatch,
-  ProviderFixture,
-} from "@/lib/providers/types";
+import type { SportmonksLeagueResult } from "@/lib/providers/sportmonks";
+import type { BookmakerThreeWayQuote, ProviderFixture } from "@/lib/providers/types";
 
 import { backtestDeterministicArms } from "./backtest";
 import {
@@ -15,6 +12,7 @@ import {
   type MarketQuoteSource,
 } from "./market-capture";
 import {
+  backfillRange,
   dateWindows,
   ingestLeagueResults,
   toMatchResultRow,
@@ -22,8 +20,10 @@ import {
 } from "./results-ingest";
 import { syntheticLeague } from "./test-fixtures";
 
-function completed(overrides: Partial<ProviderCompletedMatch> = {}): ProviderCompletedMatch {
+function completed(overrides: Partial<SportmonksLeagueResult> = {}): SportmonksLeagueResult {
   return {
+    providerState: "FT",
+    scoreSource: "2ND_HALF",
     provider: "sportmonks",
     providerFixtureId: "19000001",
     kickoffAt: "2026-05-01T18:00:00Z",
@@ -83,8 +83,66 @@ test("results ingest reports fetched, eligible and saved counts", async () => {
     { leagueId: "8", startDate: "2026-05-01", endDate: "2026-05-02", now: new Date("2026-05-03T00:00:00Z") },
   );
   assert.deepEqual(requested, ["8:2026-05-01:2026-05-02"]);
-  assert.deepEqual(summary, { windows: 1, fetched: 2, eligible: 1, saved: 1 });
+  assert.equal(summary.windows, 1);
+  assert.equal(summary.fetched, 2);
+  assert.equal(summary.eligible, 1);
+  assert.equal(summary.saved, 1);
+  assert.deepEqual(summary.rejected, { not_yet_final: 1 });
   assert.equal(saved[0].provider_fixture_id, "19000001");
+  assert.equal(saved[0].score_source, "2ND_HALF");
+  assert.equal(saved[0].provider_state, "FT");
+});
+
+test("backfill is chronological, de-duplicated, idempotent and writes nothing in dry-run", async () => {
+  const windowsAsked: string[] = [];
+  const source = {
+    async getLeagueCompletedMatchesBetween(_league: string, start: string) {
+      windowsAsked.push(start);
+      return [
+        completed({ providerFixtureId: `${start}-b`, kickoffAt: `${start}T20:00:00Z` }),
+        completed({ providerFixtureId: `${start}-a`, kickoffAt: `${start}T15:00:00Z` }),
+        completed({ providerFixtureId: `${start}-a`, kickoffAt: `${start}T15:00:00Z` }),
+      ];
+    },
+  };
+  const store = new Map<string, MatchResultRow>();
+  const order: string[] = [];
+  const sink = {
+    async saveResults(rows: MatchResultRow[]) {
+      let inserted = 0;
+      for (const row of rows) {
+        order.push(row.provider_fixture_id);
+        if (!store.has(row.provider_fixture_id)) {
+          store.set(row.provider_fixture_id, row);
+          inserted += 1;
+        }
+      }
+      return inserted;
+    },
+  };
+  const options = { leagueId: "8", startDate: "2025-01-01", endDate: "2025-06-29", now: new Date("2026-01-01T00:00:00Z") };
+
+  const dry = await ingestLeagueResults(source, sink, { ...options, dryRun: true });
+  assert.equal(dry.saved, 0);
+  assert.equal(store.size, 0);
+  assert.equal(dry.eligible, 4);
+  assert.equal(dry.duplicatesInFetch, 2);
+
+  const first = await ingestLeagueResults(source, sink, options);
+  const second = await ingestLeagueResults(source, sink, options);
+  assert.equal(first.saved, 4);
+  assert.equal(second.saved, 0);
+  assert.deepEqual(windowsAsked.slice(0, 2), ["2025-01-01", "2025-04-01"]);
+  assert.deepEqual(order.slice(0, 4), ["2025-01-01-a", "2025-01-01-b", "2025-04-01-a", "2025-04-01-b"]);
+  assert.equal(first.firstKickoffAt, "2025-01-01T15:00:00.000Z");
+  assert.deepEqual(first.scoreSources, { "2ND_HALF": 4 });
+});
+
+test("backfill range covers whole days up to yesterday", () => {
+  assert.deepEqual(backfillRange(new Date("2026-10-24T09:00:00Z"), 3), {
+    startDate: "2023-10-24",
+    endDate: "2026-10-23",
+  });
 });
 
 function roundGame(overrides: Partial<ApiFootballRoundGame> = {}): ApiFootballRoundGame {

@@ -14,10 +14,27 @@ const DEFAULT_BASE_URL = "https://v3.football.api-sports.io";
 const DEFAULT_MIN_REQUEST_INTERVAL_MS = 6_500;
 const MATCH_WINNER_BET_ID = 1;
 
+export type ApiFootballResponseInfo = {
+  path: string;
+  status: number;
+  dailyLimit: number | null;
+  dailyRemaining: number | null;
+  minuteRemaining: number | null;
+};
+
 export type ApiFootballClientOptions = {
   baseUrl?: string;
   minRequestIntervalMs?: number;
+  /** Called once per HTTP response, including errors. */
+  onResponse?: (info: ApiFootballResponseInfo) => void;
 };
+
+function headerNumber(headers: Headers, name: string): number | null {
+  const raw = headers.get(name);
+  if (raw == null || raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
 
 type ApiFootballEnvelope<T> = {
   errors?: Record<string, string> | string[];
@@ -340,6 +357,7 @@ export class ApiFootballClient {
   private nextRequestAt = 0;
   private readonly baseUrl: string;
   private readonly minRequestIntervalMs: number;
+  private readonly onResponse: ApiFootballClientOptions["onResponse"];
 
   constructor(
     private readonly apiKey: string,
@@ -347,6 +365,7 @@ export class ApiFootballClient {
   ) {
     if (!apiKey) throw new Error("API_FOOTBALL_API_KEY is required.");
 
+    this.onResponse = options.onResponse;
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
     this.minRequestIntervalMs =
       options.minRequestIntervalMs ?? DEFAULT_MIN_REQUEST_INTERVAL_MS;
@@ -389,6 +408,14 @@ export class ApiFootballClient {
       cache: "no-store",
     });
 
+    this.onResponse?.({
+      path: url.pathname,
+      status: response.status,
+      dailyLimit: headerNumber(response.headers, "x-ratelimit-requests-limit"),
+      dailyRemaining: headerNumber(response.headers, "x-ratelimit-requests-remaining"),
+      minuteRemaining: headerNumber(response.headers, "x-ratelimit-remaining"),
+    });
+
     if (!response.ok) {
       const remainingMinute = response.headers.get("x-ratelimit-remaining");
       const remainingDaily = response.headers.get("x-ratelimit-requests-remaining");
@@ -400,6 +427,30 @@ export class ApiFootballClient {
     }
 
     return (await response.json()) as ApiFootballEnvelope<T>;
+  }
+
+  /** Account plan and daily usage; API-Football does not count this call. */
+  async getAccountStatus(): Promise<{
+    plan: string | null;
+    active: boolean | null;
+    subscriptionEnd: string | null;
+    requestsToday: number | null;
+    dailyLimit: number | null;
+  }> {
+    const envelope = (await this.request<unknown>("/status", {})) as unknown as {
+      response?: {
+        subscription?: { plan?: string; end?: string; active?: boolean };
+        requests?: { current?: number; limit_day?: number };
+      };
+    };
+    const status = Array.isArray(envelope.response) ? undefined : envelope.response;
+    return {
+      plan: status?.subscription?.plan ?? null,
+      active: status?.subscription?.active ?? null,
+      subscriptionEnd: status?.subscription?.end ?? null,
+      requestsToday: status?.requests?.current ?? null,
+      dailyLimit: status?.requests?.limit_day ?? null,
+    };
   }
 
   async getFixtureById(fixtureId: number): Promise<ProviderFixture | null> {

@@ -194,3 +194,12 @@ Decision: before changing the Kapiloto research pipeline, add a shadow evaluatio
 `p_stat` v1 is Elo, not Dixon–Coles, because production holds only team-scoped history (about 340 matches) and no league-wide results. A league results store and ingestion are added so that richer models can later be compared on the same forward data. The market arm uses per-bookmaker power de-vig and a median, requires at least two bookmakers no older than 24 hours, and returns no prediction otherwise.
 
 Reason: the Run 5/6 audit showed the current pipeline cannot be judged without baselines and leakage-safe scoring. No arm is presumed better; production prior, research and recommendation changes wait for forward evidence. Details: `docs/ai/KAPILOTO-SHADOW-EVALUATION-V1.md`.
+
+## D-042 — Shadow evaluation activates through one gated, budgeted cron cycle
+Decision: production shadow evaluation runs as a single internal cron route (`/api/internal/cron/shadow-evaluation`), protected by `CRON_SECRET`, off unless `KAPILOTO_SHADOW_EVALUATION_ENABLED=true`, with market capture separately gated by `KAPILOTO_SHADOW_MARKET_CAPTURE_ENABLED=true`. The route is the only production module allowed to import evaluation code, and it writes only the shadow tables.
+
+API-Football quotes are captured on an adaptive cadence: daily from 7 days out, every 3 hours inside 48 hours, hourly inside 6 hours, and one forced final capture in the 75 minutes before the evaluation deadline. An hourly scheduler selects only due fixtures. The provider is protected by per-run and per-day request budgets and a reserve on its own reported quota. Every attempt, including budget skips and failures, is recorded.
+
+The database, not the writer, stamps every leakage-relevant time. It also enforces the selection rule on score insert (no post-deadline prediction, no fallback to an older one) and requires Kapiloto projections to carry exactly the published probabilities.
+
+Reason: forward evidence must accumulate without any path back into recommendations, and without exhausting the provider quota the production market sync depends on. A full round costs roughly 550 provider requests per week under this cadence, so capture stays off until the plan's quota is verified.
