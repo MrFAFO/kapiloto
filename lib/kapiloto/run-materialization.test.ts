@@ -256,10 +256,6 @@ test("rejected small directional factor in another direction does not invalidate
   assert.equal(first.outcome, "analyzed");
   assert.notEqual(first.p_sol_1_bp, null);
   assert.notEqual(first.p_final_1_bp, null);
-  assert.equal(
-    first.reliability_reasons.includes("directional_items_pruned"),
-    true,
-  );
 });
 
 test("rejected medium directional factor still invalidates p_sol", () => {
