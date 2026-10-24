@@ -78,21 +78,27 @@ test("shadow evaluation code never calls OpenAI or web research", () => {
   for (const path of [...evaluationFiles, SHADOW_CLI, SHADOW_ROUTE]) {
     const source = readFileSync(path, "utf8");
     assert.doesNotMatch(source, /openai|web_search|OPENAI_API_KEY/i, relative(ROOT, path));
+    // Only the route may use the shared worker-secret check (pure auth, no research).
+    const allowed = path === SHADOW_ROUTE
+      ? ["snapshot", "research-config", "worker-auth"]
+      : ["snapshot", "research-config"];
     for (const match of source.matchAll(/from\s+["'](?:@\/|(?:\.\.\/)+)lib\/kapiloto\/([a-z-]+)["']/g)) {
       assert.ok(
-        ["snapshot", "research-config"].includes(match[1]),
+        allowed.includes(match[1]),
         `${relative(ROOT, path)} imports lib/kapiloto/${match[1]}`,
       );
     }
   }
 });
 
-test("the shadow cron route is secret-protected, off by default and not scheduled", () => {
+test("the shadow cron route is worker-secret protected, POST-only, deferred and not scheduled", () => {
   const source = readFileSync(SHADOW_ROUTE, "utf8");
-  assert.match(source, /process\.env\.CRON_SECRET/);
-  assert.match(source, /status: 401/);
-  assert.match(source, /shadowEvaluationFlags\(process\.env\)/);
-  assert.match(source, /if \(!flags\.enabled\)/);
+  assert.match(source, /verifyKapilotoWorkerAuthorization\(\s*request\.headers\.get\("authorization"\),\s*process\.env\.KAPILOTO_WORKER_SECRET_SHA256,?\s*\)/);
+  assert.match(source, /handleShadowEvaluationRequest\(/);
+  assert.match(source, /defer: after/);
+  assert.match(source, /export async function POST\(/);
+  assert.doesNotMatch(source, /export async function (GET|PUT|PATCH|DELETE)\(/);
+  assert.doesNotMatch(source, /CRON_SECRET/);
   assert.doesNotMatch(source, /round_sync_control|\.from\(/);
   const vercel = readFileSync(join(ROOT, "vercel.json"), "utf8");
   assert.doesNotMatch(vercel, /shadow-evaluation/);

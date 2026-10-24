@@ -198,7 +198,9 @@ Nothing here is enabled. Activation is an operator decision, taken in this order
 
 Re-running is safe: cadence gates captures and predictions, and projections and scores are de-duplicated by unique keys.
 
-Proposed schedule, not added to `vercel.json`: hourly at `7 * * * *`. The route picks only due fixtures internally. Vercel Hobby limits cron jobs to once a day, which would make the hourly cadence impossible there. An external scheduler calling the route with `CRON_SECRET` is an alternative.
+Invocation: `POST /api/internal/cron/shadow-evaluation` with `Authorization: Bearer <research worker secret>`, checked against `KAPILOTO_WORKER_SECRET_SHA256` exactly like `/api/internal/kapiloto/worker`. The route answers `202` and runs the cycle after the response (Next.js `after`), so the caller's HTTP timeout never cuts the work; a disabled route answers `200 enabled:false` and runs nothing. `{"preflight": true}` returns the active switches, cadence and budget without doing any work. There is no `GET` and no `CRON_SECRET` path.
+
+Proposed schedule (not created): Supabase `pg_cron` hourly at `7 * * * *`, calling the route through `pg_net` with the Vault-stored worker secret, as the research worker schedule does. Not Vercel Cron, which Hobby limits to once a day. The route picks only due fixtures internally.
 
 ### Switches and budgets (environment)
 
@@ -209,8 +211,11 @@ Proposed schedule, not added to `vercel.json`: hourly at `7 * * * *`. The route 
 | `KAPILOTO_SHADOW_MARKET_MAX_REQUESTS_PER_RUN` | 30 | provider requests per cycle |
 | `KAPILOTO_SHADOW_MARKET_MAX_REQUESTS_PER_DAY` | 200 | rolling 24 h, summed from recorded attempts |
 | `KAPILOTO_SHADOW_MARKET_PROVIDER_RESERVE` | 100 | stop when the provider's own daily remaining falls below this, leaving room for the production market sync |
+| `KAPILOTO_SHADOW_MARKET_CADENCE` | `free_plan` | `adaptive` opts into the 7-day cadence (paid plan); any other value, unset or misspelled, keeps the Free-plan cadence |
 
 ### Market cadence (`kapiloto-shadow-cadence-v1`)
+
+Default profile `free_plan` (API-Football Free: 100 requests/day, dates limited to today ±1): one capture once a fixture is inside 24 h, one once it is inside 6 h, and the forced final capture in the last 75 minutes before `D`. Nothing further out is attempted. The `adaptive` profile in the table below applies only when explicitly selected.
 
 | Window (time to kickoff) | Capture interval |
 | --- | --- |

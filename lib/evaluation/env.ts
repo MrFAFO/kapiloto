@@ -1,3 +1,8 @@
+import {
+  DEFAULT_CADENCE_CONFIG,
+  FREE_PLAN_CADENCE_CONFIG,
+  type CadenceConfig,
+} from "./market-cadence";
 import { DEFAULT_SHADOW_CYCLE_CONFIG, type ShadowCycleConfig } from "./shadow-cycle";
 
 type Env = Record<string, string | undefined>;
@@ -13,6 +18,24 @@ export function shadowEvaluationFlags(env: Env): { enabled: boolean; marketCaptu
   return { enabled, marketCapture: enabled && on("KAPILOTO_SHADOW_MARKET_CAPTURE_ENABLED") };
 }
 
+export type ShadowCadenceProfile = "free_plan" | "adaptive";
+
+/**
+ * `KAPILOTO_SHADOW_MARKET_CADENCE=adaptive` opts into the 7-day adaptive
+ * cadence, which needs a paid API-Football plan. Anything else, including an
+ * unset or misspelled value, selects the low-cost Free-plan cadence.
+ */
+export function shadowCadenceProfile(env: Env): ShadowCadenceProfile {
+  return env.KAPILOTO_SHADOW_MARKET_CADENCE?.trim().toLowerCase() === "adaptive"
+    ? "adaptive"
+    : "free_plan";
+}
+
+const CADENCES: Record<ShadowCadenceProfile, CadenceConfig> = {
+  free_plan: FREE_PLAN_CADENCE_CONFIG,
+  adaptive: DEFAULT_CADENCE_CONFIG,
+};
+
 function boundedInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
   if (raw == null || raw.trim() === "") return fallback;
   const value = Number(raw);
@@ -24,6 +47,7 @@ export function shadowCycleConfigFromEnv(env: Env): ShadowCycleConfig {
   const defaults = DEFAULT_SHADOW_CYCLE_CONFIG.budget;
   return {
     ...DEFAULT_SHADOW_CYCLE_CONFIG,
+    cadence: CADENCES[shadowCadenceProfile(env)],
     budget: {
       ...defaults,
       maxRequestsPerRun: boundedInteger(

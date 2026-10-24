@@ -212,3 +212,10 @@ Persistence: a market sync writes `confirmed` only for mappings backed by provid
 Verified mappings from the 2026-10-24 probe of round 264201 (30 teams, 5 competitions, and the provider alias `Hapoel Katamon` for Hapoel Jerusalem) are prepared as an additive, idempotent data migration that never overwrites an existing mapping.
 
 Reason: Kapiloto's team names and aliases are Hebrew, while API-Football names are English, so the previous weighted fuzzy score resolved 0/16 fixtures of a real round and production had never stored a market prior. English names from the existing Sportmonks mappings resolved 15/16 (the 16th was outside the Free plan's date window); one club needed a provider-specific alias. Provider ids make the match deterministic and remove repeated fuzzy matching.
+
+## D-044 — Shadow route uses the worker convention and a Free-plan cadence by default
+Decision: `/api/internal/cron/shadow-evaluation` is `POST`-only, authorized with the research worker's secret (`KAPILOTO_WORKER_SECRET_SHA256`, timing-safe hash check), and acknowledges with `202` before running the cycle through Next.js `after`, so a `pg_net` caller's timeout never cuts the work. The `GET`/`CRON_SECRET` path is removed. It is scheduled by Supabase `pg_cron` (not created yet), not Vercel Cron. `{"preflight": true}` reports switches, cadence and budget without doing work.
+
+The market cadence defaults to the API-Football Free profile: T-24h, T-6h and the forced final capture before the deadline; the 7-day adaptive cadence (D-042) runs only with `KAPILOTO_SHADOW_MARKET_CADENCE=adaptive`, and any other value keeps the cheap profile. A known API-Football fixture id is now found in the day list already fetched for the run, so known fixtures share one request per date instead of one by-id request each.
+
+Reason: the Free plan (100 requests/day, today ±1) cannot serve captures beyond 24 hours, and the forward evaluation scores the latest pre-deadline prediction, so earlier snapshots add cost without changing the scored forecast. Reusing the worker authentication and deferred-work pattern keeps one internal-auth convention for every scheduled route.

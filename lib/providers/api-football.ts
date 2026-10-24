@@ -439,14 +439,29 @@ export class ApiFootballClient {
     fixture: ProviderFixture | null;
     resolution: ProviderFixtureCoverage["fixtureResolution"];
   }> {
+    const [kickoffDate, ...adjacentDates] = kickoffWindowDates(input.kickoffAt);
+
     if (input.apiFootballFixtureId != null) {
+      // A known fixture is looked up in the day lists this client already
+      // fetched (one request per date, shared by every fixture that day) and
+      // fetched by id only when it is not listed there.
+      const knownId = String(input.apiFootballFixtureId);
+      for (const date of kickoffDate ? [kickoffDate, ...adjacentDates] : []) {
+        try {
+          const listed = (await this.fixturesOnDate(date)).find(
+            (fixture) => fixture.providerFixtureId === knownId,
+          );
+          if (listed) return { fixture: listed, resolution: "provided_id" };
+        } catch {
+          // An unreadable day falls through to the by-id lookup.
+        }
+      }
       return {
         fixture: await this.getFixtureById(input.apiFootballFixtureId),
         resolution: "provided_id",
       };
     }
 
-    const [kickoffDate, ...adjacentDates] = kickoffWindowDates(input.kickoffAt);
     if (!kickoffDate) return { fixture: null, resolution: "not_found" };
 
     const candidates = new Map<string, ProviderFixture>();

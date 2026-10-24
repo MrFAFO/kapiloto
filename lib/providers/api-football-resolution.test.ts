@@ -272,9 +272,12 @@ async function withProvider<T>(days: Record<string, DayListing>, run: (client: A
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    const id = url.searchParams.get("id");
     const date = url.searchParams.get("date") ?? "";
-    requested.push(date);
-    const listing = days[date] ?? [];
+    requested.push(id ? `id:${id}` : date);
+    const listing = id
+      ? Object.values(days).flatMap((day) => (day === "refused" ? [] : day)).filter((item) => item.providerFixtureId === id)
+      : (days[date] ?? []);
     const body = listing === "refused"
       ? { errors: { plan: "Free plans do not have access to this date." }, response: [] }
       : { errors: [], response: listing.map(rowFor) };
@@ -350,5 +353,36 @@ test("an unreadable adjacent date allows only provider-id matches, and the refus
 test("a refused kickoff date is still an explicit error", async () => {
   await withProvider({ "2026-10-25": "refused" }, async (client) => {
     await assert.rejects(client.resolveFixture(LATE), /Free plans do not have access/);
+  });
+});
+
+test("known fixture ids are found in the shared day list instead of one by-id request each", async () => {
+  const sameDay = [KATAMON, SHMONA, fixture("1555530", ["4489", "Hapoel Ramat Gan"], ["4495", "Maccabi Petah Tikva"], { kickoffAt: "2026-10-24T16:00:00+00:00" })];
+  await withProvider({ "2026-10-24": sameDay }, async (client, requested) => {
+    for (const item of sameDay) {
+      const selection = await client.resolveFixture({
+        ...hapoelJerusalemInput(),
+        kickoffAt: item.kickoffAt,
+        apiFootballFixtureId: Number(item.providerFixtureId),
+      });
+      assert.equal(selection.resolution, "provided_id");
+      assert.equal(selection.fixture?.providerFixtureId, item.providerFixtureId);
+    }
+    assert.deepEqual(requested, ["2026-10-24"], "three known fixtures cost one request");
+  });
+});
+
+test("a known fixture id missing from the day list, or on a refused day, falls back to a by-id lookup", async () => {
+  const moved = fixture("1555999", ["4486", "Hapoel Katamon"], ["4501", "Hapoel Tel Aviv"], { kickoffAt: "2026-10-28T18:00:00+00:00" });
+  await withProvider({ "2026-10-24": [SHMONA], "2026-10-28": [moved] }, async (client, requested) => {
+    const selection = await client.resolveFixture({ ...hapoelJerusalemInput(), apiFootballFixtureId: 1555999 });
+    assert.equal(selection.resolution, "provided_id");
+    assert.equal(selection.fixture?.providerFixtureId, "1555999");
+    assert.deepEqual(requested, ["2026-10-24", "id:1555999"]);
+  });
+  await withProvider({ "2026-10-24": "refused", "2026-10-28": [moved] }, async (client, requested) => {
+    const selection = await client.resolveFixture({ ...hapoelJerusalemInput(), apiFootballFixtureId: 1555999 });
+    assert.equal(selection.fixture?.providerFixtureId, "1555999");
+    assert.deepEqual(requested, ["2026-10-24", "id:1555999"]);
   });
 });

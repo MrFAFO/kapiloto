@@ -37,6 +37,19 @@ export const DEFAULT_CADENCE_CONFIG: CadenceConfig = {
   retryAfterErrorMinutes: 60,
 };
 
+/**
+ * API-Football Free plan (100 requests/day, dates limited to today ±1):
+ * one capture at T-24h, one at T-6h and the forced final capture before the
+ * deadline. Nothing is attempted further out than the plan can see.
+ */
+export const FREE_PLAN_CADENCE_CONFIG: CadenceConfig = {
+  ...DEFAULT_CADENCE_CONFIG,
+  lookaheadHours: 24,
+  midStartHours: 24,
+  midIntervalMinutes: 1440,
+  nearIntervalMinutes: 300,
+};
+
 const MINUTE_MS = 60_000;
 
 export function evaluationDeadlineMs(kickoffAt: string): number {
