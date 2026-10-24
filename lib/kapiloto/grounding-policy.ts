@@ -4,7 +4,7 @@ import type { GroundedEvidence, GroundingResult } from "./source-grounding";
 import { verifyStructuredFactor } from "./structured-refs";
 
 export const KAPILOTO_GROUNDING_POLICY_VERSION =
-  "kapiloto-grounding-policy-v6" as const;
+  "kapiloto-grounding-policy-v7" as const;
 
 type ResearchFactor = SolFixtureResearchOutput["factors"][number];
 
@@ -208,13 +208,13 @@ export function applyGroundingPolicy(
     (factor) => factor.favors !== "none",
   );
 
-  const survivingDirections = new Set(
-    survivingDirectional.map((factor) => factor.favors),
-  );
+  // Small directional claims are deliberately advisory. If one is removed
+  // by grounding policy, reduce reliability but do not invalidate the entire
+  // Sol distribution while another grounded directional signal survives.
+  // Medium/large removed directional claims can materially change the model
+  // distribution and therefore still fail closed.
   const unsafeRemovedDirectional = removedDirectionalFactors.filter(
-    (factor) =>
-      factor.magnitude !== "small" ||
-      !survivingDirections.has(factor.favors),
+    (factor) => factor.magnitude !== "small",
   );
 
   const invalidationReasons = [
