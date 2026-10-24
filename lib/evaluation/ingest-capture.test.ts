@@ -221,6 +221,25 @@ test("market capture skips kicked-off games, mismatched orientation and empty bo
   assert.equal((await captureRoundMarketQuotes([roundGame()], source(null, []), never, { clock: later }))[0].status, "not_found");
 });
 
+test("market capture resolves through mapped provider ids and reports resolver orientation rejections", async () => {
+  const never = { async saveQuotes(): Promise<number> { throw new Error("should not save"); } };
+  const later = () => new Date("2026-10-24T10:00:00Z");
+  const seen: unknown[] = [];
+  const rejecting: MarketQuoteSource = {
+    async resolveFixture(input) {
+      seen.push({ teamIds: input.providerTeamIds, competitionId: input.providerCompetitionId });
+      return { fixture: null, resolution: "orientation_mismatch" };
+    },
+    async getThreeWayQuotes() {
+      throw new Error("should not fetch odds");
+    },
+  };
+  const game = roundGame({ providerFixtureId: null, providerCompetitionId: "39" });
+  const [result] = await captureRoundMarketQuotes([game], rejecting, never, { clock: later });
+  assert.equal(result.status, "orientation_mismatch");
+  assert.deepEqual(seen, [{ teamIds: { home: "33", away: "34" }, competitionId: "39" }]);
+});
+
 test("deterministic backtest predicts each match from strictly earlier results", () => {
   const league = syntheticLeague({ teams: 10, seasons: 3 });
   const fromAt = league[180].kickoffAt;

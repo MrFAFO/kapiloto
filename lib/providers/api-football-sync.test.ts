@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  mappingEvidence,
   syncApiFootballRoundMarket,
   type ApiFootballResolvedSnapshot,
   type ApiFootballRoundGame,
@@ -212,4 +213,115 @@ test("skips fixtures that are already inside the kickoff safety window", async (
   assert.equal(result.summary.skippedKickoff, 1);
   assert.equal(resolveCalls, 15);
   assert.equal(store.saved.length, 15);
+});
+
+test("confirmed provider team and competition ids are passed into resolution and recorded", async () => {
+  const store = new MemoryStore();
+  const mapped = games();
+  mapped[0].home.providerTeamId = "20001";
+  mapped[0].away.providerTeamId = "30001";
+  mapped[0].providerCompetitionId = "100";
+  store.loadRoundGames = async () => mapped;
+
+  const inputs: Array<{ teamIds: unknown; competitionId: unknown }> = [];
+  const client: ApiFootballSyncClient = {
+    async resolveFixture(input) {
+      inputs.push({ teamIds: input.providerTeamIds, competitionId: input.providerCompetitionId });
+      return {
+        fixture: providerFixture(input.gameNumber),
+        resolution: input.providerTeamIds?.home ? "provider_team_ids" : "name_match",
+      };
+    },
+    async getThreeWayQuotes(fixture) {
+      return quotes(fixture);
+    },
+  };
+
+  await syncApiFootballRoundMarket(store, client, "round-1", () => new Date("2026-10-18T12:00:00Z"));
+
+  assert.deepEqual(inputs[0], { teamIds: { home: "20001", away: "30001" }, competitionId: "100" });
+  assert.deepEqual(inputs[1], { teamIds: { home: null, away: null }, competitionId: null });
+  assert.equal(store.saved[0].resolution, "provider_team_ids");
+  assert.equal(store.saved[1].resolution, "name_match");
+});
+
+test("a provider fixture with home and away reversed is an explicit error and is not persisted", async () => {
+  const store = new MemoryStore();
+  const client: ApiFootballSyncClient = {
+    async resolveFixture(input) {
+      return input.gameNumber === 1
+        ? { fixture: null, resolution: "orientation_mismatch" }
+        : { fixture: providerFixture(input.gameNumber), resolution: "name_match" };
+    },
+    async getThreeWayQuotes(fixture) {
+      return quotes(fixture);
+    },
+  };
+
+  const result = await syncApiFootballRoundMarket(store, client, "round-1", () => new Date("2026-10-18T12:00:00Z"));
+
+  assert.equal(result.fixtures[0].status, "error");
+  assert.match(result.fixtures[0].error ?? "", /home and away reversed/);
+  assert.ok(store.saved.every((snapshot) => snapshot.game.gameNumber !== 1));
+  assert.equal(result.summary.saved, 15);
+});
+
+function snapshotFor(
+  game: ApiFootballRoundGame,
+  resolution: ApiFootballResolvedSnapshot["resolution"],
+): ApiFootballResolvedSnapshot {
+  const fixture = providerFixture(game.gameNumber);
+  return {
+    game,
+    fixture,
+    marketPrior: { probabilitiesBp: { home: 4000, draw: 3000, away: 3000 }, bookmakerCount: 2, method: "median-devig-v1", degraded: false },
+    capturedAt: "2026-10-18T12:00:00Z",
+    resolution,
+  };
+}
+
+test("a name-bootstrapped match confirms nothing", () => {
+  assert.deepEqual(mappingEvidence(snapshotFor(games()[0], "name_match")), {
+    fixture: "unverified",
+    home: "unverified",
+    away: "unverified",
+    competition: "unverified",
+  });
+});
+
+test("matching both trusted team ids confirms the fixture, both teams and its competition", () => {
+  const game = games()[0];
+  game.home.providerTeamId = "20001";
+  game.away.providerTeamId = "30001";
+  assert.deepEqual(mappingEvidence(snapshotFor(game, "provider_team_ids")), {
+    fixture: "confirmed",
+    home: "confirmed",
+    away: "confirmed",
+    competition: "confirmed",
+  });
+});
+
+test("with one trusted id only that side is confirmed; the name-matched side stays unverified", () => {
+  const game = games()[0];
+  game.home.providerTeamId = "20001";
+  assert.deepEqual(mappingEvidence(snapshotFor(game, "provider_team_ids")), {
+    fixture: "unverified",
+    home: "confirmed",
+    away: "unverified",
+    competition: "unverified",
+  });
+});
+
+test("a trusted competition mapping is re-confirmed but does not confirm name-matched teams", () => {
+  const game = games()[0];
+  game.providerCompetitionId = "100";
+  const evidence = mappingEvidence(snapshotFor(game, "name_match"));
+  assert.equal(evidence.competition, "confirmed");
+  assert.equal(evidence.home, "unverified");
+  assert.equal(evidence.fixture, "unverified");
+});
+
+test("a trusted fixture mapping (provided id) confirms its teams", () => {
+  const evidence = mappingEvidence(snapshotFor(games()[0], "provided_id"));
+  assert.deepEqual(evidence, { fixture: "confirmed", home: "confirmed", away: "confirmed", competition: "confirmed" });
 });

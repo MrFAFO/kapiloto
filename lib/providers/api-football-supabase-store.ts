@@ -1,9 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type {
-  ApiFootballResolvedSnapshot,
-  ApiFootballRoundGame,
-  ApiFootballSyncStore,
+import {
+  mappingEvidence,
+  type ApiFootballResolvedSnapshot,
+  type ApiFootballRoundGame,
+  type ApiFootballSyncStore,
+  type MappingEvidence,
 } from "./api-football-sync";
 
 type GameRow = {
@@ -28,10 +30,19 @@ type AliasRow = {
 };
 
 type TeamMappingRow = {
+  provider: string;
   team_id: string;
   provider_team_id: string;
   provider_name: string | null;
 };
+
+type CompetitionMappingRow = {
+  competition_id: string;
+  provider_competition_id: string;
+};
+
+/** Mapping states trusted for resolution; `unverified` rows are ignored. */
+const TRUSTED_MAPPING_STATUSES = ["confirmed", "manual_override"];
 
 type FixtureMappingRow = {
   fixture_id: string;
@@ -79,28 +90,47 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
       ...new Set(games.flatMap((game) => [game.home_team_id, game.away_team_id])),
     ];
     const fixtureIds = games.map((game) => game.fixture_id);
+    const competitionIds = [
+      ...new Set(
+        games
+          .map((game) => game.competition_id)
+          .filter((id): id is string => id != null),
+      ),
+    ];
 
     const [
       { data: teamsData, error: teamsError },
       { data: aliasesData, error: aliasesError },
       { data: teamMappingsData, error: teamMappingsError },
       { data: fixtureMappingsData, error: fixtureMappingsError },
+      { data: competitionMappingsData, error: competitionMappingsError },
     ] = await Promise.all([
       this.client.from("teams").select("id,canonical_name").in("id", teamIds),
       this.client
         .from("team_aliases")
         .select("team_id,alias")
         .in("team_id", teamIds),
+      // Every provider's trusted mapping: API-Football ids drive resolution;
+      // other providers' names give an English identity for name bootstrap.
       this.client
         .from("provider_team_mappings")
-        .select("team_id,provider_team_id,provider_name")
-        .eq("provider", "api-football")
+        .select("provider,team_id,provider_team_id,provider_name")
+        .in("mapping_status", TRUSTED_MAPPING_STATUSES)
         .in("team_id", teamIds),
       this.client
         .from("provider_fixture_mappings")
         .select("fixture_id,provider_fixture_id")
         .eq("provider", "api-football")
+        .in("mapping_status", TRUSTED_MAPPING_STATUSES)
         .in("fixture_id", fixtureIds),
+      competitionIds.length > 0
+        ? this.client
+            .from("provider_competition_mappings")
+            .select("competition_id,provider_competition_id")
+            .eq("provider", "api-football")
+            .in("mapping_status", TRUSTED_MAPPING_STATUSES)
+            .in("competition_id", competitionIds)
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
     if (teamsError) {
@@ -119,16 +149,34 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
         `Failed to load API-Football fixture mappings: ${fixtureMappingsError.message}`,
       );
     }
+    if (competitionMappingsError) {
+      throw new Error(
+        `Failed to load API-Football competition mappings: ${competitionMappingsError.message}`,
+      );
+    }
 
     const teams = new Map(
       ((teamsData ?? []) as TeamRow[]).map((team) => [team.id, team]),
     );
-    const aliases = groupAliases((aliasesData ?? []) as AliasRow[]);
+    const mappingRows = (teamMappingsData ?? []) as TeamMappingRow[];
+    const aliases = groupAliases([
+      ...((aliasesData ?? []) as AliasRow[]),
+      ...mappingRows
+        .filter((mapping) => mapping.provider_name)
+        .map((mapping) => ({
+          team_id: mapping.team_id,
+          alias: mapping.provider_name as string,
+        })),
+    ]);
     const teamMappings = new Map(
-      ((teamMappingsData ?? []) as TeamMappingRow[]).map((mapping) => [
-        mapping.team_id,
-        mapping,
-      ]),
+      mappingRows
+        .filter((mapping) => mapping.provider === "api-football")
+        .map((mapping) => [mapping.team_id, mapping]),
+    );
+    const competitionMappings = new Map(
+      ((competitionMappingsData ?? []) as CompetitionMappingRow[]).map(
+        (mapping) => [mapping.competition_id, mapping.provider_competition_id],
+      ),
     );
     const fixtureMappings = new Map(
       ((fixtureMappingsData ?? []) as FixtureMappingRow[]).map((mapping) => [
@@ -151,8 +199,6 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
 
       const homeAliases = aliases.get(game.home_team_id) ?? [];
       const awayAliases = aliases.get(game.away_team_id) ?? [];
-      if (homeMapping?.provider_name) homeAliases.push(homeMapping.provider_name);
-      if (awayMapping?.provider_name) awayAliases.push(awayMapping.provider_name);
 
       const providerFixtureIdRaw = fixtureMappings.get(game.fixture_id);
       const providerFixtureId =
@@ -180,6 +226,10 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
           providerTeamId: awayMapping?.provider_team_id ?? null,
         },
         providerFixtureId,
+        providerCompetitionId:
+          game.competition_id != null
+            ? (competitionMappings.get(game.competition_id) ?? null)
+            : null,
       };
     });
   }
@@ -187,8 +237,14 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
   async saveResolvedSnapshot(
     snapshot: ApiFootballResolvedSnapshot,
   ): Promise<void> {
-    const mappingConfidence =
-      snapshot.resolution === "provided_id" ? 1 : 0.9;
+    const evidence = mappingEvidence(snapshot);
+    // Confirmed evidence refreshes (and may promote) a row; unverified evidence
+    // only fills a gap and never overwrites or downgrades an existing row.
+    const write = (level: MappingEvidence, onConflict: string) => ({
+      onConflict,
+      ignoreDuplicates: level === "unverified",
+    });
+    const confidence = (level: MappingEvidence) => (level === "confirmed" ? 1 : 0.9);
 
     const mappingWrites = [
       this.client.from("provider_fixture_mappings").upsert(
@@ -197,11 +253,11 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
           round_game_id: snapshot.game.roundGameId,
           provider: "api-football",
           provider_fixture_id: snapshot.fixture.providerFixtureId,
-          mapping_status: "confirmed",
-          mapping_confidence: mappingConfidence,
+          mapping_status: evidence.fixture,
+          mapping_confidence: confidence(evidence.fixture),
           mapped_at: snapshot.capturedAt,
         },
-        { onConflict: "fixture_id,provider" },
+        write(evidence.fixture, "fixture_id,provider"),
       ),
       this.client.from("provider_team_mappings").upsert(
         {
@@ -209,11 +265,11 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
           provider_team_id: snapshot.fixture.home.id,
           team_id: snapshot.game.home.teamId,
           provider_name: snapshot.fixture.home.name,
-          mapping_status: "confirmed",
-          mapping_confidence: mappingConfidence,
+          mapping_status: evidence.home,
+          mapping_confidence: confidence(evidence.home),
           last_verified_at: snapshot.capturedAt,
         },
-        { onConflict: "provider,provider_team_id" },
+        write(evidence.home, "provider,provider_team_id"),
       ),
       this.client.from("provider_team_mappings").upsert(
         {
@@ -221,11 +277,11 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
           provider_team_id: snapshot.fixture.away.id,
           team_id: snapshot.game.away.teamId,
           provider_name: snapshot.fixture.away.name,
-          mapping_status: "confirmed",
-          mapping_confidence: mappingConfidence,
+          mapping_status: evidence.away,
+          mapping_confidence: confidence(evidence.away),
           last_verified_at: snapshot.capturedAt,
         },
-        { onConflict: "provider,provider_team_id" },
+        write(evidence.away, "provider,provider_team_id"),
       ),
     ];
 
@@ -237,10 +293,10 @@ export class SupabaseApiFootballSyncStore implements ApiFootballSyncStore {
             provider_competition_id: snapshot.fixture.competition.id,
             competition_id: snapshot.game.competitionId,
             provider_name: snapshot.fixture.competition.name,
-            mapping_status: "confirmed",
+            mapping_status: evidence.competition,
             last_verified_at: snapshot.capturedAt,
           },
-          { onConflict: "provider,provider_competition_id" },
+          write(evidence.competition, "provider,provider_competition_id"),
         ),
       );
     }

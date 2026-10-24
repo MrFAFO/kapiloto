@@ -132,11 +132,13 @@ export async function captureGameQuotes(
       competition: game.competitionName,
       aliases: { home: game.home.aliases, away: game.away.aliases },
       apiFootballFixtureId: game.providerFixtureId ?? undefined,
+      providerTeamIds: { home: game.home.providerTeamId, away: game.away.providerTeamId },
+      providerCompetitionId: game.providerCompetitionId ?? null,
     });
     const fixture = resolved.fixture;
     if (!fixture) {
       return {
-        status: "not_found",
+        status: resolved.resolution === "orientation_mismatch" ? "orientation_mismatch" : "not_found",
         quotes: 0,
         bookmakers: 0,
         providerFixtureId,

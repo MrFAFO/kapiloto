@@ -1,5 +1,6 @@
 import { aggregateMarketPrior } from "./market";
-import { bestAliasSimilarity, normalizeTeamName } from "./match";
+import { kickoffWindowDates, selectApiFootballFixture } from "./api-football-resolution";
+import { normalizeTeamName } from "./match";
 import type {
   BookmakerThreeWayQuote,
   ProviderFixture,
@@ -317,43 +318,9 @@ export function parseApiFootballThreeWayQuotes(
   return quotes;
 }
 
-function fixtureMatchScore(
-  input: ProviderSpikeFixtureInput,
-  fixture: ProviderFixture,
-): number {
-  const home = bestAliasSimilarity(
-    fixture.home.name,
-    input.homeTeam,
-    input.aliases?.home,
-  );
-  const away = bestAliasSimilarity(
-    fixture.away.name,
-    input.awayTeam,
-    input.aliases?.away,
-  );
-
-  if (home < 0.6 || away < 0.6) return 0;
-
-  const targetTime = Date.parse(input.kickoffAt);
-  const candidateTime = Date.parse(fixture.kickoffAt);
-  const kickoffDiffHours =
-    Number.isFinite(targetTime) && Number.isFinite(candidateTime)
-      ? Math.abs(candidateTime - targetTime) / 3_600_000
-      : 24;
-  const kickoffScore = Math.max(0, 1 - kickoffDiffHours / 12);
-
-  const competitionScore =
-    input.competition &&
-    normalizeTeamName(fixture.competition.name) ===
-      normalizeTeamName(input.competition)
-      ? 1
-      : 0;
-
-  return home * 0.4 + away * 0.4 + kickoffScore * 0.15 + competitionScore * 0.05;
-}
-
 export class ApiFootballClient {
   private readonly fixturesByDateCache = new Map<string, ProviderFixture[]>();
+  private readonly refusedDates = new Map<string, string>();
   private nextRequestAt = 0;
   private readonly baseUrl: string;
   private readonly minRequestIntervalMs: number;
@@ -479,37 +446,56 @@ export class ApiFootballClient {
       };
     }
 
-    const date = new Date(input.kickoffAt).toISOString().slice(0, 10);
-    let dateFixtures = this.fixturesByDateCache.get(date);
+    const [kickoffDate, ...adjacentDates] = kickoffWindowDates(input.kickoffAt);
+    if (!kickoffDate) return { fixture: null, resolution: "not_found" };
 
-    if (!dateFixtures) {
-      const envelope = await this.request<ApiFootballFixtureRow>("/fixtures", {
-        date,
-        timezone: "UTC",
-      });
-      dateFixtures = requireResponse(envelope, "fixture resolution")
-        .map(toProviderFixture)
-        .filter((fixture): fixture is ProviderFixture => fixture != null);
-      this.fixturesByDateCache.set(date, dateFixtures);
+    const candidates = new Map<string, ProviderFixture>();
+    for (const fixture of await this.fixturesOnDate(kickoffDate)) {
+      candidates.set(fixture.providerFixtureId, fixture);
+    }
+    let complete = true;
+    for (const date of adjacentDates) {
+      try {
+        for (const fixture of await this.fixturesOnDate(date)) {
+          candidates.set(fixture.providerFixtureId, fixture);
+        }
+      } catch {
+        complete = false;
+      }
     }
 
-    const candidates = dateFixtures
-      .map((fixture) => ({ fixture, score: fixtureMatchScore(input, fixture) }))
-      .filter(({ score }) => score >= 0.72)
-      .sort((a, b) => b.score - a.score);
-
-    if (candidates.length === 0) {
-      return { fixture: null, resolution: "not_found" };
-    }
-
-    if (
-      candidates.length > 1 &&
-      Math.abs(candidates[0].score - candidates[1].score) < 0.04
-    ) {
+    const selection = selectApiFootballFixture(input, [...candidates.values()]);
+    // An unreadable adjacent date may hide a second candidate: provider ids can
+    // still decide, but a name-only match cannot be shown to be unique.
+    if (!complete && selection.resolution === "name_match") {
       return { fixture: null, resolution: "ambiguous" };
     }
+    return selection;
+  }
 
-    return { fixture: candidates[0].fixture, resolution: "name_match" };
+  /** One provider day of fixtures, cached per client; plan refusals are cached too. */
+  private async fixturesOnDate(date: string): Promise<ProviderFixture[]> {
+    const cached = this.fixturesByDateCache.get(date);
+    if (cached) return cached;
+    const refused = this.refusedDates.get(date);
+    if (refused) throw new Error(refused);
+
+    const envelope = await this.request<ApiFootballFixtureRow>("/fixtures", {
+      date,
+      timezone: "UTC",
+    });
+    let rows: ApiFootballFixtureRow[];
+    try {
+      rows = requireResponse(envelope, "fixture resolution");
+    } catch (error) {
+      this.refusedDates.set(date, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    const fixtures = rows
+      .map(toProviderFixture)
+      .filter((fixture): fixture is ProviderFixture => fixture != null);
+    this.fixturesByDateCache.set(date, fixtures);
+    return fixtures;
   }
 
   async getTeamCompletedMatches(

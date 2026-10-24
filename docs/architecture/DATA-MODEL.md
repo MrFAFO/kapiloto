@@ -84,6 +84,8 @@ Unique: (team_id, normalized_alias).
 
 Purpose: preserve stable multilingual/transliterated names independently of any one data provider. Provider discovery/matching may use these aliases before a provider-specific id mapping exists.
 
+`source` names whose naming an alias reflects. A provider-named alias (for example `Hapoel Katamon` with source `api-football` for Hapoel Jerusalem) records how that provider spells the club; it is a bootstrap aid only and never replaces the Hebrew canonical name.
+
 ### provider_team_mappings
 - provider
 - provider_team_id
@@ -96,6 +98,8 @@ Purpose: preserve stable multilingual/transliterated names independently of any 
 Unique: (provider, provider_team_id).
 
 This prevents supplier naming differences from leaking into product logic.
+
+Only `confirmed` and `manual_override` rows are trusted. API-Football fixture resolution (D-043) uses a trusted API-Football team id before any name, and uses other providers' trusted `provider_name` values (for example Sportmonks) as an English identity when no API-Football id exists yet. A successful API-Football market sync writes `confirmed` only for mappings backed by provider-id evidence (a trusted fixture mapping, or the mapped team or competition id itself matching). Mappings that rest on a name bootstrap are inserted as `unverified`, never overwrite an existing row, and are ignored by resolution until an operator or a verified seed confirms them.
 
 ## Competitions
 ### competitions
