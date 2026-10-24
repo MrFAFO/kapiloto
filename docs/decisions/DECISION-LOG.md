@@ -188,3 +188,9 @@ A discovered round may enter the canonical import transaction only when all 16 k
 
 Reason: public Winner 16 pages are useful for fast weekly discovery but can expose incomplete kickoff fields and do not establish the official betting lock. Separating discovery from import gives Kapiloto automation without contaminating historical round snapshots with guessed values.
 
+## D-041 — Research v2 measurement runs as an isolated shadow evaluation
+Decision: before changing the Kapiloto research pipeline, add a shadow evaluation layer that scores, on the 90-minute field result, five arm families under one deterministic selection rule: uniform, league base rate, a deterministic Elo `p_stat`, a de-vigged multi-bookmaker market prior, and the published Kapiloto `p_final`/`p_sol`. Predictions and scores are append-only, server-only tables (RLS, no client grants). Issue times are stamped by the database, and LLM arms are forward-only. The arms never feed `p_final`, picks, doubles, grounding, finalization or the UI.
+
+`p_stat` v1 is Elo, not Dixon–Coles, because production holds only team-scoped history (about 340 matches) and no league-wide results. A league results store and ingestion are added so that richer models can later be compared on the same forward data. The market arm uses per-bookmaker power de-vig and a median, requires at least two bookmakers no older than 24 hours, and returns no prediction otherwise.
+
+Reason: the Run 5/6 audit showed the current pipeline cannot be judged without baselines and leakage-safe scoring. No arm is presumed better; production prior, research and recommendation changes wait for forward evidence. Details: `docs/ai/KAPILOTO-SHADOW-EVALUATION-V1.md`.

@@ -656,6 +656,61 @@ Non-AI ingestion signals used to compute freshness.
 Freshness is computed at read time from deterministic TTL, input versions and signals. Signals never trigger AI by themselves.
 
 
+## Shadow evaluation (server-only)
+These tables back the Research v2 shadow evaluation (`docs/ai/KAPILOTO-SHADOW-EVALUATION-V1.md`, D-041). All four are append-only (update/delete triggers raise), have RLS enabled with no policies and no `anon`/`authenticated` grants, and are never read by research, derivation, finalization, publication or the UI.
+
+### football_match_results
+League-wide regular-time results for deterministic baselines, identified by provider IDs (not canonical teams).
+
+- provider, provider_fixture_id (unique together)
+- provider_competition_id, competition_name, provider_season_id
+- kickoff_at
+- provider_home_team_id/name, provider_away_team_id/name
+- home_goals_90, away_goals_90
+- result_basis: regular_time
+- neutral_venue
+- observed_at (≥ kickoff_at)
+- ingest_version
+
+### fixture_market_quotes
+Raw per-bookmaker 1X2 prices captured for the shadow market arm. Separate from `fixture_market_snapshots`, which remains the production prior source.
+
+- fixture_id
+- provider, provider_fixture_id, provider_home/away_team_id
+- bookmaker_id, bookmaker_name
+- market_type: 1x2_90m
+- odds_home/draw/away (> 1), overround
+- implied_home/draw/away (de-vigged, sum to 1), devig_method_version
+- source_updated_at
+- captured_at (server time; must be within 10 minutes of created_at)
+- capture_version
+
+### kapiloto_eval_predictions
+One row per fixture/arm/arm_version/mode/information cutoff (and source analysis for Kapiloto projections).
+
+- fixture_id, round_game_id
+- arm (free-form identifier), arm_version
+- evaluation_mode: forward/replay (replay requires deterministic)
+- deterministic
+- information_cutoff_at
+- issued_at (DB-stamped: insert time, or the immutable publication time for Kapiloto projections), issued_at_source
+- source_analysis_id
+- recorded_at, kickoff_at_snapshot
+- home_team_id, away_team_id
+- valid, invalid_reason, p_home/p_draw/p_away
+- basis, input_sha256
+
+### kapiloto_eval_scores
+One scored selection per fixture/arm/arm_version/mode/selection rule/scoring version.
+
+- fixture_id, arm, arm_version, evaluation_mode
+- selection_rule_version, scoring_version
+- status: scored/prediction_unavailable/no_eligible_prediction
+- prediction_id
+- outcome (90-minute field result), home_goals_90, away_goals_90, outcome_source
+- brier, rps, log_loss, top_pick, top_pick_score
+- details
+
 ## AI personas
 ### Kapiloto
 Fixture research only, including round-relative double value for that fixture.

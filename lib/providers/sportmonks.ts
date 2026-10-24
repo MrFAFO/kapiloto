@@ -632,6 +632,40 @@ export class SportmonksClient {
     return parseSportmonksCompletedMatches(rows);
   }
 
+  /** League-wide finished matches (regular-time score) in a date range. */
+  async getLeagueCompletedMatchesBetween(
+    leagueId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<ProviderCompletedMatch[]> {
+    if (!/^\d+$/.test(leagueId)) {
+      throw new Error("Sportmonks league id must be numeric.");
+    }
+
+    const rows: SportmonksFixtureRow[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const envelope = await this.request<SportmonksFixtureRow[]>(
+        `/fixtures/between/${startDate}/${endDate}`,
+        {
+          include: "participants;league;round;state;scores",
+          filters: `fixtureLeagues:${leagueId}`,
+          page,
+        },
+      );
+      rows.push(...requireData(envelope, "league fixture history"));
+      hasMore = envelope.pagination?.has_more === true;
+      page = envelope.pagination?.next_page ?? page + 1;
+      if (page > 100) {
+        throw new Error("Sportmonks league fixture pagination exceeded safety limit.");
+      }
+    }
+
+    return parseSportmonksCompletedMatches(rows);
+  }
+
   async getStandings(seasonId: number): Promise<ProviderStanding[]> {
     if (!Number.isInteger(seasonId) || seasonId <= 0) {
       throw new Error("Sportmonks standings require a positive season id.");
