@@ -38,7 +38,15 @@ type TeamAliasRow = {
 type TeamMappingRow = {
   team_id: string;
   provider_name: string | null;
+  mapping_status: string | null;
 };
+
+/**
+ * Only trusted provider mappings may lend their provider name to research
+ * aliases; `unverified` rows (for example an API-Football name bootstrap) and
+ * rows without a status are ignored.
+ */
+const TRUSTED_MAPPING_STATUSES = new Set(["confirmed", "manual_override"]);
 
 type MarketSnapshotRow = {
   id: string;
@@ -113,7 +121,11 @@ function aliasesByTeam(
   };
 
   for (const row of aliasRows) add(row.team_id, row.alias);
-  for (const row of mappingRows) add(row.team_id, row.provider_name);
+  for (const row of mappingRows) {
+    if (row.mapping_status != null && TRUSTED_MAPPING_STATUSES.has(row.mapping_status)) {
+      add(row.team_id, row.provider_name);
+    }
+  }
 
   return map;
 }
@@ -257,7 +269,7 @@ export async function loadRoundFixtureCardInputs(
       .in("team_id", teamIds),
     client
       .from("provider_team_mappings")
-      .select("team_id,provider_name")
+      .select("team_id,provider_name,mapping_status")
       .eq("provider", provider)
       .in("team_id", teamIds),
     client

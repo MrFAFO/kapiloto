@@ -99,7 +99,7 @@ Unique: (provider, provider_team_id).
 
 This prevents supplier naming differences from leaking into product logic.
 
-Only `confirmed` and `manual_override` rows are trusted. API-Football fixture resolution (D-043) uses a trusted API-Football team id before any name, and uses other providers' trusted `provider_name` values (for example Sportmonks) as an English identity when no API-Football id exists yet. A successful API-Football market sync writes `confirmed` only for mappings backed by provider-id evidence (a trusted fixture mapping, or the mapped team or competition id itself matching). Mappings that rest on a name bootstrap are inserted as `unverified`, never overwrite an existing row, and are ignored by resolution until an operator or a verified seed confirms them.
+Only `confirmed` and `manual_override` rows are trusted, both for provider matching and for the provider names that Kapiloto research fixture inputs carry as team aliases. API-Football fixture resolution (D-043) uses a trusted API-Football team id before any name, and uses other providers' trusted `provider_name` values (for example Sportmonks) as an English identity when no API-Football id exists yet. A successful API-Football market sync writes `confirmed` only for mappings backed by provider-id evidence (a trusted fixture mapping, or the mapped team or competition id itself matching). Mappings that rest on a name bootstrap are inserted as `unverified`, never overwrite an existing row, and are ignored by resolution until an operator or a verified seed confirms them.
 
 ## Competitions
 ### competitions
