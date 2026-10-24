@@ -175,7 +175,7 @@ test("materializes 16 grounded fixtures and assigns a unique deterministic doubl
   assert.equal(first.orientation_verified, true);
 });
 
-test("directional factor with rejected evidence invalidates p_sol and falls back to market only", () => {
+test("rejected secondary evidence is pruned without discarding a still-grounded directional factor", () => {
   const fixtures = round();
   fixtures[0].output.evidence.push({
     evidence_id: "e2",
@@ -214,16 +214,16 @@ test("directional factor with rejected evidence invalidates p_sol and falls back
   const first = result.analyses[0];
 
   assert.equal(first.outcome, "analyzed");
-  assert.equal(first.blend_weight, 0);
-  assert.equal(first.p_sol_1_bp, null);
-  assert.equal(first.p_final_1_bp, first.p_prior_1_bp);
-  assert.deepEqual(first.factors, []);
+  assert.notEqual(first.blend_weight, 0);
+  assert.notEqual(first.p_sol_1_bp, null);
+  assert.notEqual(first.p_final_1_bp, null);
+  assert.deepEqual(first.factors[0].evidence_model_ids, ["e1"]);
   assert.deepEqual(first.availability, []);
   assert.deepEqual(first.conflicts, []);
-  assert.equal(first.double_priority_rank, null);
+  assert.notEqual(first.double_priority_rank, null);
   assert.equal(
-    first.reliability_reasons.includes("p_sol_invalidated:baseline_form"),
-    true,
+    first.reliability_reasons.includes("secondary_items_removed"),
+    false,
   );
 });
 
