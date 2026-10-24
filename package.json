@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run test:kapiloto && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:providers && npm run test:features && npm run test:kapiloto && npm run test:ui && npm run test:auth && npm run test:rounds && npm run test:tickets && npm run test:groups",
