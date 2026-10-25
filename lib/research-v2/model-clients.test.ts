@@ -9,7 +9,7 @@ import { buildDiscoveryInput, buildDiscoveryRequest, discoveryInputProblems, obs
 import { buildDiscoveryPlan } from "./discovery-plan";
 import { ENTAILMENT_OUTPUT_SCHEMA, runEntailmentCall, type EntailmentItem } from "./entailment-client";
 import { buildEvidenceWindow, locateQuote } from "./evidence-window";
-import type { ResponsesClient } from "./model-call";
+import { classifyCallError, redactSecrets, type ResponsesClient } from "./model-call";
 import { forbiddenModelFields } from "./model-output-guards";
 import { CANDIDATE_SPEND_GUARD, checkSpend, projectCallMicros } from "./spend-guard";
 import { assignTriage, CANDIDATE_TRIAGE_CONFIG, type TriageContext, type TriageFeatures } from "./triage";
@@ -196,6 +196,41 @@ test("unsafe input, API errors and timeouts never reach a parse; timeouts are ch
   assert.match(apiError.detail ?? "", /BadRequestError 400/);
 });
 
+test("key-like fragments in provider error text are redacted before they reach the call record", async () => {
+  const FULL_KEY = `sk-proj-${"Ab3dEf7hIj".repeat(5)}Wxyz`;
+  const SPORTMONKS_TOKEN = "Q7m2Lk9pX4vB8nR1tY6uZ3wE5aS0dF2gH4jK7lP9oI1uY3tR5eW7qA9sD2fG4h";
+  const APISPORTS_KEY = "3f9a1c7e5b2d4f6a8c0e1b3d5f7a9c2e";
+  const cases: Array<[string, string[]]> = [
+    // OpenAI's 401 message, masked and unmasked.
+    ["Incorrect API key provided: sk-proj-Ab3d********************************Wxyz. You can find your API key at https://platform.openai.com/account/api-keys.", ["sk-proj", "Ab3d", "Wxyz"]],
+    [`Incorrect API key provided: ${FULL_KEY}.`, [FULL_KEY, "Wxyz"]],
+    [`Authorization failed for header Bearer ${FULL_KEY}`, [FULL_KEY]],
+    [`GET https://api.sportmonks.com/v3/football/fixtures?api_token=${SPORTMONKS_TOKEN}&page=2 failed`, [SPORTMONKS_TOKEN]],
+    [`header x-apisports-key: ${APISPORTS_KEY} rejected`, [APISPORTS_KEY]],
+    [`{"error":{"message":"bad","apiKey":"${APISPORTS_KEY}"}}`, [APISPORTS_KEY]],
+    [`opaque credential ${SPORTMONKS_TOKEN} in text`, [SPORTMONKS_TOKEN]],
+    // A key straddling the 300-character limit leaves no fragment behind.
+    [`${"x ".repeat(130)}${FULL_KEY}`, ["sk-proj", "Ab3dEf7h"]], // starts at character 285 of the detail
+  ];
+  for (const [message, secrets] of cases) {
+    const error = Object.assign(new Error(message), { name: "AuthenticationError", status: 401 });
+    const classified = classifyCallError(error);
+    for (const secret of secrets) assert.ok(!classified.detail.includes(secret), `${secret.slice(0, 12)}… leaked from: ${message.slice(0, 60)}`);
+    assert.match(classified.detail, /^AuthenticationError 401: /);
+    assert.match(classified.detail, /\[redacted/);
+    assert.deepEqual([classified.failure, classified.possiblyBilled, classified.status], ["api_error", false, 401]);
+  }
+  // Useful, non-secret detail survives: status, model names, URLs without credentials, fixture UUIDs.
+  const kept = redactSecrets("Model gpt-6.1-sol not found for fixture 35097a2f-7cf8-4282-af3e-651229800099 at https://api.openai.com/v1/responses (task-force risk-free)");
+  assert.equal(kept, "Model gpt-6.1-sol not found for fixture 35097a2f-7cf8-4282-af3e-651229800099 at https://api.openai.com/v1/responses (task-force risk-free)");
+
+  // End to end: the stored discovery and Luna failure details carry no key fragment.
+  const authError = () => Object.assign(new Error(`Incorrect API key provided: ${FULL_KEY}.`), { name: "AuthenticationError", status: 401 });
+  const discovery = await runDiscoveryCall({ client: fakeClient(authError()), discoveryInput: INPUT, plan: PLAN, ledger: new CostLedger() });
+  assert.equal(discovery.failure, "api_error");
+  assert.ok(!JSON.stringify(discovery).includes(FULL_KEY) && !JSON.stringify(discovery).includes("Wxyz"));
+});
+
 test("missing or partial usage is recorded as uncertain and charged at the projection", async () => {
   const ledger = new CostLedger();
   const missing = await runDiscoveryCall({ client: fakeClient(payload([search("ws_1", ["q"], ["https://a.example"]), message(discoveryText())], { usage: null })), discoveryInput: INPUT, plan: PLAN, ledger });
@@ -301,6 +336,15 @@ test("contradicted, not-enough-info, invalid spans, missing and unknown items ar
   assert.deepEqual([byId["C3#0"].input.verdict, byId["C3#0"].failure, byId["C3#0"].spanValid], ["error", "support_span_invalid", false]);
   assert.deepEqual([byId["C4#0"].input.verdict, byId["C4#0"].failure], ["error", "item_missing"]);
   assert.deepEqual(result.unknownItemIds, ["C9#9"]);
+});
+
+test("a rejected Luna key leaves no key fragment in the stored judge record", async () => {
+  const key = `sk-proj-${"Zq8wLm2xVb".repeat(5)}Kt4n`;
+  const authError = Object.assign(new Error(`Incorrect API key provided: ${key}.`), { name: "AuthenticationError", status: 401 });
+  const result = await runEntailmentCall({ client: fakeClient(authError), fixtureRef: "fx-7", items: ITEMS, maxJudgeItems: 6, ledger: new CostLedger() });
+  assert.ok(result.items.every((item) => item.input.verdict === "error"), "every item stays non-passing");
+  assert.ok(!JSON.stringify(result).includes(key) && !JSON.stringify(result).includes("Kt4n"));
+  assert.match(JSON.stringify(result), /\[redacted-key\]/);
 });
 
 test("items beyond maxJudgeItems are not sent and stay non-passing", async () => {

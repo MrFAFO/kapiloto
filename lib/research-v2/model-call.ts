@@ -124,10 +124,27 @@ export function webSearchCalls(response: unknown): WebSearchCallRecord[] {
     });
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Removes key-like fragments from provider error text before it is stored:
+ * OpenAI-style keys (also masked ones such as `sk-proj-****abcd`), bearer and
+ * basic credentials, key/token/secret assignments in URLs, headers or JSON,
+ * and long opaque tokens (canonical UUIDs are kept).
+ */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(/\b(?:sk|rk|pk)-[A-Za-z0-9_*.-]{3,}/g, "[redacted-key]")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=*-]+/gi, "$1 [redacted]")
+    .replace(/((?:api[_-]?key|api[_-]?token|access[_-]?token|apikey|token|secret|password|authorization|x-apisports-key)["']?\s*[=:]\s*["']?)[^\s&"',;}]+/gi, "$1[redacted]")
+    .replace(/\b[A-Za-z0-9][A-Za-z0-9_-]{31,}\b/g, (token) => (UUID.test(token) || !/\d/.test(token) ? token : "[redacted-token]"));
+}
+
 /**
  * Maps a thrown SDK/network error to an explicit failure. A timeout, a server
  * error or an error without a status may still have been processed and billed,
  * so its cost is unknown (charged at the projection); a 4xx rejection was not.
+ * The detail is redacted before truncation, so no key fragment reaches the artifact.
  */
 export function classifyCallError(error: unknown): { failure: "timeout" | "api_error"; detail: string; possiblyBilled: boolean; status: number | null } {
   const name = error instanceof Error ? error.name : "";
@@ -135,7 +152,7 @@ export function classifyCallError(error: unknown): { failure: "timeout" | "api_e
   const timeout = name === "APIConnectionTimeoutError" || error instanceof OpenAI.APIConnectionTimeoutError || /timed? ?out/i.test(message);
   const status = asNumber(asRecord(error)?.status);
   const possiblyBilled = timeout || status == null || status >= 500;
-  return { status, possiblyBilled, failure: timeout ? "timeout" : "api_error", detail: `${name || "Error"}${status != null ? ` ${status}` : ""}: ${message}`.slice(0, 300) };
+  return { status, possiblyBilled, failure: timeout ? "timeout" : "api_error", detail: redactSecrets(`${name || "Error"}${status != null ? ` ${status}` : ""}: ${message}`).slice(0, 300) };
 }
 
 /** Parses the structured-output text; malformed JSON is a failure, never partially parsed. */
