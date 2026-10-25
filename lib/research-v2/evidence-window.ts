@@ -142,3 +142,12 @@ export function checkEvidenceWindow(window: EvidenceWindow, input: { quote: stri
     spanInWindow: containsNormalized(input.supportSpan),
   };
 }
+
+export type CitationEvidence = { quoteFound: boolean; occurrences: number; window: EvidenceWindow | null };
+
+/** Capture-time step: locate a citation's quote in the full extracted text and keep only its window. */
+export function buildCitationEvidence(documentText: string, quote: string, config: EvidenceWindowConfig = EVIDENCE_WINDOW_CONFIG): CitationEvidence {
+  const location = locateQuote(documentText, quote);
+  if (!location) return { quoteFound: false, occurrences: 0, window: null };
+  return { quoteFound: true, occurrences: location.occurrences, window: buildEvidenceWindow(documentText, location, config) };
+}

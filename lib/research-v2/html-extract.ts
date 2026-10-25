@@ -116,3 +116,29 @@ export function extractHtml(html: string): ExtractedHtml {
 
   return { title, canonicalUrl, text: visibleText(document), jsonLd, metas, times };
 }
+
+/**
+ * The page's byline, from article JSON-LD `author.name` first, then the
+ * `author` meta tag. Never taken from the model.
+ */
+export function extractByline(extracted: ExtractedHtml): string | null {
+  const names: string[] = [];
+  const authorName = (author: unknown): string | null => {
+    if (typeof author === "string") return author;
+    if (Array.isArray(author)) return authorName(author[0]);
+    if (author && typeof author === "object" && typeof (author as { name?: unknown }).name === "string") return (author as { name: string }).name;
+    return null;
+  };
+  const walk = (node: unknown) => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!node || typeof node !== "object") return;
+    const record = node as Record<string, unknown>;
+    const name = authorName(record.author);
+    if (name) names.push(name);
+    for (const child of Object.values(record)) if (child && typeof child === "object") walk(child);
+  };
+  for (const block of extracted.jsonLd) if (!block.parseError) walk(block.value);
+  const meta = extracted.metas.find((item) => item.key === "author")?.content ?? null;
+  const chosen = names[0] ?? meta;
+  return chosen ? chosen.replace(/\s+/g, " ").trim() || null : null;
+}

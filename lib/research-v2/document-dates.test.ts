@@ -6,10 +6,11 @@ import {
   candidateVsKnowledgeCutoff,
   earliestPossibleInstantMs,
   extractDocumentDates,
+  latestPossibleInstantMs,
   parseDateValue,
   type DateCandidate,
 } from "./document-dates";
-import { extractHtml } from "./html-extract";
+import { extractByline, extractHtml } from "./html-extract";
 
 const CUTOFF = "2026-10-25T01:35:00.000Z"; // 2026-10-24 13:35 in UTC−12
 
@@ -118,4 +119,16 @@ test("HTML text extraction is deterministic, skips scripts and hidden content, a
   assert.deepEqual(extractHtml("<p>a</p>").text, extractHtml("<p>a</p>").text);
   const broken = extractHtml(`<script type="application/ld+json">{broken</script>`);
   assert.deepEqual(broken.jsonLd, [{ index: 0, value: null, parseError: true }]);
+});
+
+test("the latest possible instant mirrors the earliest one across timezones", () => {
+  assert.equal(latestPossibleInstantMs(item("2026-10-24")), Date.parse("2026-10-25T11:59:59.999Z"));
+  assert.equal(latestPossibleInstantMs(item("2026-10-24T18:00:00")), Date.parse("2026-10-25T06:00:00Z"));
+  assert.equal(latestPossibleInstantMs(item("2026-10-24T18:00:00Z")), Date.parse("2026-10-24T18:00:00Z"));
+});
+
+test("the byline comes from article JSON-LD author, then the author meta tag, never the model", () => {
+  assert.equal(extractByline(page(`<script type="application/ld+json">{"@type":"NewsArticle","author":[{"@type":"Person","name":"Dom  Smith"}]}</script><meta name="author" content="Desk">`)), "Dom Smith");
+  assert.equal(extractByline(page(`<meta name="author" content="Jane Writer">`)), "Jane Writer");
+  assert.equal(extractByline(page("")), null);
 });

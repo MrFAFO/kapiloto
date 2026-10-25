@@ -181,6 +181,14 @@ export function earliestPossibleInstantMs(item: DateCandidate, config: DocumentD
   return asUtcMs(local) - config.earliestZoneOffsetHours * HOUR;
 }
 
+/** Latest instant a candidate could denote (date at 24:00 in UTC−12; no-timezone at value + 12 h). */
+export function latestPossibleInstantMs(item: DateCandidate, config: DocumentDatesConfig = DOCUMENT_DATES_CONFIG): number {
+  if (item.precision == null || item.normalized == null) return Number.NaN;
+  if (item.precision === "datetime_tz") return Date.parse(item.normalized);
+  const local = item.precision === "date" ? `${item.normalized}T23:59:59.999` : item.normalized;
+  return asUtcMs(local) - config.latestZoneOffsetHours * HOUR;
+}
+
 export type DateRejection =
   | "undated"
   | "published_after_knowledge_cutoff"

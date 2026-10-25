@@ -274,6 +274,26 @@ function marketState(inputs: DeterministicBaseInputs, config: DeterministicBaseC
 }
 
 /**
+ * Research-time market state (D-047): market-state-v2 re-evaluated at the
+ * research knowledge cutoff from the base's stored quotes and provider
+ * timestamps. Only the market state is recomputed; the base, its arms and its
+ * hashes are untouched (inputs are not mutated). A market that was standard at
+ * the base cutoff becomes non-fresh here once its oldest price is too old.
+ */
+export function revalidateMarketState(
+  baseInputs: DeterministicBaseInputs,
+  config: DeterministicBaseConfig,
+  knowledgeCutoffAt: string,
+): MarketState & { evaluatedAt: string; baseCutoffAt: string } {
+  const knowledgeMs = parseInstant(knowledgeCutoffAt, "knowledgeCutoffAt");
+  if (knowledgeMs < parseInstant(baseInputs.informationCutoffAt, "informationCutoffAt")) {
+    throw new Error("revalidateMarketState: knowledgeCutoffAt precedes the base cutoff");
+  }
+  const { state } = marketState({ ...baseInputs, informationCutoffAt: knowledgeCutoffAt }, config);
+  return { ...state, evaluatedAt: new Date(knowledgeMs).toISOString(), baseCutoffAt: baseInputs.informationCutoffAt };
+}
+
+/**
  * Stage 1: versioned deterministic probabilities for one fixture. A pure
  * function of the stored inputs and config; replaying the same inputs gives
  * bit-identical output.
