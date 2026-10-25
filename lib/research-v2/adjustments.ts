@@ -1,19 +1,18 @@
 import type { MarketState } from "./base";
-import { IMPACT_CLASSES, type ImpactClass } from "./evidence";
+import type { ImpactClass } from "./evidence";
 import { shiftHomeAwayStrength, type ThreeWayProbabilities } from "./probability";
 import { configProvenance, type ConfigProvenance, type VersionedConfig } from "./provenance";
 import { corroboration, type CorroborationDecision, type SourcePolicyConfig } from "./sources";
 import { subjectKey, type VerifiedEvidence } from "./verification";
 
-export const IMPACT_CONTRACT_VERSION = "kapiloto-research-v2-impact-v1" as const;
-
 export const ADJUSTMENT_KINDS = ["availability", "rotation", "manager_change", "congestion", "context"] as const;
 export type AdjustmentKind = (typeof ADJUSTMENT_KINDS)[number];
 
 /**
- * Stage 5 output: Sol interprets VERIFIED evidence in a closed vocabulary.
- * There is no probability, odds or pick field; the server alone maps impact
- * classes to bounded, versioned effects.
+ * A bounded adjustment candidate in a closed vocabulary. Built only by the
+ * server from verified claims (impact-rules-v1, D-047); no model proposes it,
+ * and it carries no probability, odds or pick. The Sol impact stage and its
+ * output schema are retired.
  */
 export type ImpactProposal = {
   proposal_id: string;
@@ -25,43 +24,6 @@ export type ImpactProposal = {
   evidence_ids: string[];
   rationale: string;
 };
-
-export type ImpactOutput = {
-  contract_version: typeof IMPACT_CONTRACT_VERSION;
-  fixture_id: string;
-  proposals: ImpactProposal[];
-};
-
-const enumOf = (values: readonly string[]) => ({ type: "string", enum: [...values] });
-
-export const IMPACT_OUTPUT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["contract_version", "fixture_id", "proposals"],
-  properties: {
-    contract_version: { type: "string", enum: [IMPACT_CONTRACT_VERSION] },
-    fixture_id: { type: "string", minLength: 1, maxLength: 80 },
-    proposals: {
-      type: "array",
-      maxItems: 12,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["proposal_id", "kind", "team", "effect", "impact_class", "uncertainty", "evidence_ids", "rationale"],
-        properties: {
-          proposal_id: { type: "string", minLength: 1, maxLength: 40 },
-          kind: enumOf(ADJUSTMENT_KINDS),
-          team: enumOf(["home", "away"]),
-          effect: enumOf(["weakens", "strengthens"]),
-          impact_class: enumOf(IMPACT_CLASSES),
-          uncertainty: enumOf(["low", "medium", "high"]),
-          evidence_ids: { type: "array", minItems: 1, maxItems: 8, items: { type: "string", minLength: 1, maxLength: 40 } },
-          rationale: { type: "string", minLength: 1, maxLength: 200 },
-        },
-      },
-    },
-  },
-} as const;
 
 /**
  * How an admitted adjustment may affect probabilities (adjustment-policy-v2,

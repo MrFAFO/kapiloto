@@ -7,9 +7,10 @@ import { KAPILOTO_PSTAT_VERSION } from "@/lib/evaluation/elo";
 import { KAPILOTO_LEAGUE_BASELINE_VERSION } from "@/lib/evaluation/league-baseline";
 import { KAPILOTO_MARKET_PRIOR_VERSION } from "@/lib/evaluation/market-prior";
 
-import { IMPACT_OUTPUT_SCHEMA } from "./adjustments";
 import { assertNoResultLeakage, buildDeterministicBase } from "./base";
+import { CLAIM_KINDS_V2, DISCOVERY_V2_OUTPUT_SCHEMA } from "./discovery-contract";
 import { assertNoForecastKeys, DISCOVERY_OUTPUT_SCHEMA, EVIDENCE_CLAIM_KINDS, forbiddenForecastFields } from "./evidence";
+import { forbiddenModelFields } from "./model-output-guards";
 import { computeResearchV2Forecast } from "./forecast";
 import { RESEARCH_V2_ENGINE_VERSION, sha256Canonical } from "./provenance";
 import { INFORMATION_NEED_KINDS } from "./triage";
@@ -17,7 +18,7 @@ import { baseInputs, CONFIGS, HISTORY, item, KICKOFF_AT, proposal, verified } fr
 
 test("no Research v2 Sol contract contains a probability, odds, pick or double field", () => {
   assert.deepEqual(forbiddenForecastFields(DISCOVERY_OUTPUT_SCHEMA), []);
-  assert.deepEqual(forbiddenForecastFields(IMPACT_OUTPUT_SCHEMA), []);
+  assert.deepEqual(forbiddenModelFields(DISCOVERY_V2_OUTPUT_SCHEMA), [], "discovery-v2 passes the stricter model guard");
 });
 
 test("the forecast-field detector catches the fields a model could use to forecast", () => {
@@ -45,6 +46,7 @@ test("the forecast-field detector catches the fields a model could use to foreca
 test("generic topics are neither claim kinds nor information needs", () => {
   const generic = /h2h|head|tactic|derby|weather|set_?piece|motivation|form|table|rest/i;
   assert.deepEqual(EVIDENCE_CLAIM_KINDS.filter((kind) => generic.test(kind)), []);
+  assert.deepEqual(CLAIM_KINDS_V2.filter((kind) => generic.test(kind)), []);
   assert.deepEqual(INFORMATION_NEED_KINDS.filter((kind) => generic.test(kind)), []);
 });
 

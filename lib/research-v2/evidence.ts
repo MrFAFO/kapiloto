@@ -147,7 +147,7 @@ export const DISCOVERY_OUTPUT_SCHEMA = {
  * Field names that would let a model express a forecast, a price or a ticket
  * decision. No Research v2 model contract may contain one.
  */
-const FORBIDDEN_FIELD = /(^p_|_p$|prob|_bp$|^bp_|basis_?point|odds|price|percent|likelihood|chance|expected_goals|^xg|pick|double|1x2|home_win|away_win|draw_bp|forecast|prediction)/i;
+export const FORBIDDEN_FIELD = /(^p_|_p$|prob|_bp$|^bp_|basis_?point|odds|price|percent|likelihood|chance|expected_goals|^xg|pick|double|1x2|home_win|away_win|draw_bp|forecast|prediction)/i;
 
 /** All property names anywhere in a JSON schema that look like forecast fields. */
 export function forbiddenForecastFields(schema: unknown): string[] {
