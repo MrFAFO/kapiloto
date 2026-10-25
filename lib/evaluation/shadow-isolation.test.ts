@@ -117,10 +117,18 @@ test("no production module imports Research v2, and Research v2 calls no model o
     /from\s+["'](?:@\/lib\/research-v2|(?:\.\.?\/)+(?:lib\/)?research-v2)(?:\/|["'])/.test(readFileSync(path, "utf8")),
   );
   assert.deepEqual(offenders.map((path) => relative(ROOT, path)), []);
-  // Tests may name the forbidden strings to assert they are blocked.
+  // Tests may name the forbidden strings to assert they are blocked. Only the
+  // Research v2 model-client files may reach OpenAI (D-047, step 5).
+  const MODEL_CLIENT_FILES = new Set(["model-call.ts", "discovery-client.ts", "entailment-client.ts"]);
   for (const path of sourceFiles(RESEARCH_V2_DIR).filter((file) => !file.endsWith(".test.ts"))) {
     const source = readFileSync(path, "utf8");
-    assert.doesNotMatch(source, /openai|web_search|OPENAI_API_KEY|responses\.create/i, relative(ROOT, path));
+    const name = relative(RESEARCH_V2_DIR, path).replace(/\\/g, "/");
+    if (!MODEL_CLIENT_FILES.has(name)) {
+      // Code-level use is forbidden; naming the vendor in a pricing provenance note is not.
+      assert.doesNotMatch(source, /from\s+["']openai["']|require\(\s*["']openai["']\s*\)|import\(\s*["']openai["']\s*\)|web_search|OPENAI_API_KEY|responses\.create/, relative(ROOT, path));
+    } else {
+      assert.doesNotMatch(source, /OPENAI_API_KEY|process\.env/, `${name} takes its key as a parameter, never from the environment`);
+    }
     assert.doesNotMatch(source, /from\s+["'](?:@\/|(?:\.\.\/)+)lib\/kapiloto\//, relative(ROOT, path));
   }
 });

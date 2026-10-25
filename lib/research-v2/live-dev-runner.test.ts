@@ -298,9 +298,11 @@ test("no Sol, OpenAI or web-search code is reachable from the runner", () => {
   assert.ok(seen.size > 5);
   // The only Kapiloto module allowed is the pure SHA-256 helper (node:crypto only).
   const ALLOWED_KAPILOTO = new Set(["lib/kapiloto/snapshot.ts"]);
+  const MODEL_CLIENTS = ["lib/research-v2/model-call.ts", "lib/research-v2/discovery-client.ts", "lib/research-v2/entailment-client.ts"];
   for (const file of seen) {
     const rel = file.slice(root.length + 1).replace(/\\/g, "/");
     assert.ok(!rel.startsWith("lib/kapiloto/") || ALLOWED_KAPILOTO.has(rel), `${rel} is a Kapiloto research module`);
+    assert.ok(!MODEL_CLIENTS.includes(rel), `${rel} is a model client and must stay out of the base runner`);
     assert.doesNotMatch(readFileSync(file, "utf8"), /openai|web_search|responses\.create/i, rel);
   }
 });
