@@ -93,6 +93,20 @@ export type FetchFailure =
 
 export type FetchDecision = { url: string; host: string | null; addresses: string[]; allowed: boolean; reason: FetchFailure | null };
 
+export type ResponseCheck = "passed" | "failed" | "not_reached";
+/** Acceptance checks on the final (non-redirect) response, in the order they run. */
+export type ResponseChecks = {
+  httpStatus: number | null;
+  status: ResponseCheck;
+  mediaType: string | null;
+  contentType: ResponseCheck;
+  encoding: ResponseCheck;
+  size: ResponseCheck;
+  bytes: number | null;
+};
+
+const notReached = (): ResponseChecks => ({ httpStatus: null, status: "not_reached", mediaType: null, contentType: "not_reached", encoding: "not_reached", size: "not_reached", bytes: null });
+
 export type ResolvedAddress = { address: string; family: 4 | 6 };
 export type Resolver = (hostname: string) => Promise<ResolvedAddress[]>;
 
@@ -118,6 +132,7 @@ export type SafeFetchResult =
       body: string;
       redirects: Array<{ from: string; to: string; status: number }>;
       decisions: FetchDecision[];
+      responseChecks: ResponseChecks;
       retrievedAt: string;
     }
   | {
@@ -127,6 +142,7 @@ export type SafeFetchResult =
       detail: string | null;
       redirects: Array<{ from: string; to: string; status: number }>;
       decisions: FetchDecision[];
+      responseChecks: ResponseChecks;
     };
 
 const defaultResolver: Resolver = async (hostname) =>
@@ -261,7 +277,8 @@ export async function safeFetch(
   const deadline = Date.now() + config.timeoutMs;
   const decisions: FetchDecision[] = [];
   const redirects: Array<{ from: string; to: string; status: number }> = [];
-  const fail = (reason: FetchFailure, detail: string | null = null): SafeFetchResult => ({ ok: false, requestedUrl, reason, detail, redirects, decisions });
+  let checks = notReached();
+  const fail = (reason: FetchFailure, detail: string | null = null): SafeFetchResult => ({ ok: false, requestedUrl, reason, detail, redirects, decisions, responseChecks: checks });
   const headers = { "user-agent": config.userAgent, accept: "text/html,application/xhtml+xml,text/plain;q=0.9", "accept-encoding": "gzip, deflate, br" };
 
   let current = requestedUrl;
@@ -299,6 +316,7 @@ export async function safeFetch(
       return error instanceof FetchAbort ? fail(error.reason) : fail("transport_error", String(error).slice(0, 120));
     }
 
+    checks = { ...notReached(), httpStatus: response.status };
     try {
       if (response.status >= 300 && response.status < 400) {
         response.destroy();
@@ -317,25 +335,47 @@ export async function safeFetch(
       }
       if (response.status < 200 || response.status >= 300) {
         response.destroy();
+        checks.status = "failed";
         return fail("http_status", String(response.status));
       }
+      checks.status = "passed";
       const contentTypeHeader = header(response.headers, "content-type");
       if (!contentTypeHeader) {
         response.destroy();
+        checks.contentType = "failed";
         return fail("missing_content_type");
       }
       const [mediaType, ...params] = contentTypeHeader.split(";").map((part) => part.trim());
+      checks.mediaType = mediaType.toLowerCase();
       if (!config.allowedContentTypes.includes(mediaType.toLowerCase())) {
         response.destroy();
+        checks.contentType = "failed";
         return fail("unsupported_content_type", mediaType);
       }
+      checks.contentType = "passed";
       const declared = Number(header(response.headers, "content-length"));
       if (Number.isFinite(declared) && declared > config.maxBytes) {
         response.destroy();
+        checks.size = "failed";
         return fail("response_too_large", `content-length ${declared}`);
       }
-      const raw = await readBody(response, config, deadline);
-      const bytes = decompress(raw, header(response.headers, "content-encoding"), config);
+      let raw: Buffer;
+      try {
+        raw = await readBody(response, config, deadline);
+      } catch (error) {
+        if (error instanceof FetchAbort && error.reason === "response_too_large") checks.size = "failed";
+        throw error;
+      }
+      let bytes: Buffer;
+      try {
+        bytes = decompress(raw, header(response.headers, "content-encoding"), config);
+      } catch (error) {
+        if (error instanceof FetchAbort) checks[error.reason === "response_too_large" ? "size" : "encoding"] = "failed";
+        throw error;
+      }
+      checks.encoding = "passed";
+      checks.size = "passed";
+      checks.bytes = bytes.byteLength;
       const charsetParam = params.find((param) => /^charset=/i.test(param));
       const { text, charset } = decodeText(bytes, charsetParam ? charsetParam.slice(8).replace(/"/g, "").trim() : "utf-8");
       return {
@@ -350,6 +390,7 @@ export async function safeFetch(
         body: text,
         redirects,
         decisions,
+        responseChecks: checks,
         retrievedAt: now().toISOString(),
       };
     } catch (error) {

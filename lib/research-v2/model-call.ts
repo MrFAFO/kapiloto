@@ -129,13 +129,13 @@ export function webSearchCalls(response: unknown): WebSearchCallRecord[] {
  * error or an error without a status may still have been processed and billed,
  * so its cost is unknown (charged at the projection); a 4xx rejection was not.
  */
-export function classifyCallError(error: unknown): { failure: "timeout" | "api_error"; detail: string; possiblyBilled: boolean } {
+export function classifyCallError(error: unknown): { failure: "timeout" | "api_error"; detail: string; possiblyBilled: boolean; status: number | null } {
   const name = error instanceof Error ? error.name : "";
   const message = error instanceof Error ? error.message : String(error);
   const timeout = name === "APIConnectionTimeoutError" || error instanceof OpenAI.APIConnectionTimeoutError || /timed? ?out/i.test(message);
   const status = asNumber(asRecord(error)?.status);
   const possiblyBilled = timeout || status == null || status >= 500;
-  return { possiblyBilled, failure: timeout ? "timeout" : "api_error", detail: `${name || "Error"}${status != null ? ` ${status}` : ""}: ${message}`.slice(0, 300) };
+  return { status, possiblyBilled, failure: timeout ? "timeout" : "api_error", detail: `${name || "Error"}${status != null ? ` ${status}` : ""}: ${message}`.slice(0, 300) };
 }
 
 /** Parses the structured-output text; malformed JSON is a failure, never partially parsed. */

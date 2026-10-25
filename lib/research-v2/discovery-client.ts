@@ -185,6 +185,8 @@ export type DiscoveryCallResult = {
   status: "ok" | "failed";
   failure: ModelCallFailure | "no_needs" | null;
   detail: string | null;
+  /** HTTP status of a thrown API error (null otherwise). */
+  errorStatus: number | null;
   guard: GuardDecision | null;
   request: DiscoveryRequestRecord | null;
   response: { id: string | null; model: string | null; status: string | null; incompleteReason: string | null; latencyMs: number; usage: RecordedUsage | null; usageStatus: UsageStatus } | null;
@@ -234,7 +236,7 @@ export async function runDiscoveryCall(input: {
   const config = input.config ?? CANDIDATE_DISCOVERY_REQUEST;
   const guardConfig = input.guardConfig ?? CANDIDATE_SPEND_GUARD;
   const now = input.now ?? (() => Date.now());
-  const base = { guard: null, request: null, response: null, webSearch: EMPTY_SEARCH, citations: [], parse: null, cost: null };
+  const base = { guard: null, request: null, response: null, webSearch: EMPTY_SEARCH, citations: [], parse: null, cost: null, errorStatus: null };
   const fail = (failure: DiscoveryCallResult["failure"], detail: string | null, extra: Partial<DiscoveryCallResult> = {}): DiscoveryCallResult => ({
     ...base,
     status: "failed",
@@ -260,7 +262,7 @@ export async function runDiscoveryCall(input: {
   } catch (error) {
     const classified = classifyCallError(error);
     const cost = classified.possiblyBilled ? unknownOutcomeCost("discovery", input.plan.fixtureRef, config.model, startedAt, guard.projectedMicros, input.ledger) : null;
-    return fail(classified.failure, classified.detail, { guard, request: record, cost });
+    return fail(classified.failure, classified.detail, { guard, request: record, cost, errorStatus: classified.status });
   }
   const latencyMs = now() - startedAt;
 

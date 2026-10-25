@@ -36,6 +36,8 @@ export type ClaimReason =
   | "superseded_by_later_official"
   | "supersedes_earlier_claims"
   | "duplicate_subject"
+  /** Set by the runner when the fixture crossed the minimum lead at the evidence cutoff. */
+  | "crossed_min_lead"
   | `corroboration:${CorroborationV2["reason"]}`
   | `impact:${ImpactRuleResult["ruleId"]}`;
 

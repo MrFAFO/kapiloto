@@ -297,7 +297,8 @@ function historyFor(identity: LiveDevFixtureIdentity, league: LeagueHistoryInput
   );
 }
 
-function marketQuotes(identity: LiveDevFixtureIdentity, market: MarketInput | null): MarketQuoteRecord[] {
+/** The market-quote records the base built from one fixture's capture (also used for research-time revalidation). */
+export function marketQuotes(identity: LiveDevFixtureIdentity, market: MarketInput | null): MarketQuoteRecord[] {
   if (!market || market.status !== "ok") return [];
   return market.quotes.map((quote) => ({
     id: `${identity.fixtureId}:${quote.bookmakerId}`,

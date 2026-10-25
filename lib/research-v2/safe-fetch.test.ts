@@ -191,6 +191,24 @@ test("the size limit applies to declared length, streamed bytes and decompressed
   assert.equal(!unknown.ok && unknown.reason, "unsupported_encoding");
 });
 
+test("response acceptance checks record which check passed, failed or was not reached", async () => {
+  const config = { ...FETCHER_CONFIG, maxBytes: 1_000 };
+  const run = (route: () => TransportResponse) => safeFetch("https://news.example.com/a", { config, resolver: publicResolver, transport: scripted({ "https://news.example.com/a": route }) });
+  const checks = async (route: () => TransportResponse) => {
+    const { httpStatus, status, mediaType, contentType, encoding, size } = (await run(route)).responseChecks;
+    return [httpStatus, status, mediaType, contentType, encoding, size];
+  };
+  assert.deepEqual(await checks(() => response(200, { "content-type": "text/html" }, "<p>x</p>")), [200, "passed", "text/html", "passed", "passed", "passed"]);
+  assert.equal((await run(() => response(200, { "content-type": "text/html" }, "<p>x</p>"))).responseChecks.bytes, 8);
+  assert.deepEqual(await checks(() => response(404, { "content-type": "text/html" })), [404, "failed", null, "not_reached", "not_reached", "not_reached"]);
+  assert.deepEqual(await checks(() => response(200, { "content-type": "application/pdf" }, "x")), [200, "passed", "application/pdf", "failed", "not_reached", "not_reached"]);
+  assert.deepEqual(await checks(() => response(200, { "content-type": "text/html", "content-length": "5000" })), [200, "passed", "text/html", "passed", "not_reached", "failed"]);
+  assert.deepEqual(await checks(() => response(200, { "content-type": "text/html" }, "a".repeat(1_200))), [200, "passed", "text/html", "passed", "not_reached", "failed"]);
+  assert.deepEqual(await checks(() => response(200, { "content-type": "text/html", "content-encoding": "zstd" }, "x")), [200, "passed", "text/html", "passed", "failed", "not_reached"]);
+  const blocked = await safeFetch("https://news.example.com/a", { resolver: async () => [{ address: "10.0.0.1", family: 4 }], transport: scripted({}) });
+  assert.deepEqual(blocked.responseChecks.status, "not_reached", "nothing is checked when no connection is made");
+});
+
 test("a stalled response times out", async () => {
   const config = { ...FETCHER_CONFIG, timeoutMs: 50 };
   const stalled: Transport = async () => ({

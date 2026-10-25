@@ -23,6 +23,7 @@ function sourceFiles(directory: string): string[] {
 // Research v2 foundations are shadow-side until explicitly approved.
 const RESEARCH_V2_DIR = join(ROOT, "lib", "research-v2");
 const RESEARCH_V2_LIVE_DEV_CLI = join(ROOT, "scripts", "research-v2-live-dev.ts");
+const RESEARCH_V2_DISCOVERY_CLI = join(ROOT, "scripts", "research-v2-discovery.ts");
 
 const productionFiles = ["app", "components", "lib", "scripts"]
   .flatMap((directory) => sourceFiles(join(ROOT, directory)))
@@ -31,6 +32,7 @@ const productionFiles = ["app", "components", "lib", "scripts"]
       !path.startsWith(EVALUATION_DIR + sep) &&
       !path.startsWith(RESEARCH_V2_DIR + sep) &&
       path !== RESEARCH_V2_LIVE_DEV_CLI &&
+      path !== RESEARCH_V2_DISCOVERY_CLI &&
       path !== SHADOW_CLI &&
       path !== SHADOW_ROUTE,
   );
@@ -131,6 +133,16 @@ test("no production module imports Research v2, and Research v2 calls no model o
     }
     assert.doesNotMatch(source, /from\s+["'](?:@\/|(?:\.\.\/)+)lib\/kapiloto\//, relative(ROOT, path));
   }
+});
+
+test("the Research v2 discovery CLI is read-only, network-guarded for research and network-free for replay", () => {
+  const source = readFileSync(RESEARCH_V2_DISCOVERY_CLI, "utf8");
+  assert.match(source, /readOnlySupabaseClient\(/);
+  assert.match(source, /installResearchFetchGuard\(supabaseUrl\)/);
+  assert.match(source, /import \{ blockAllNetwork \} from "\.\.\/lib\/research-v2\/network-block";/);
+  assert.match(source, /blockAllNetwork\(\);\r?\n  const result = replayDiscoveryArtifact/);
+  assert.doesNotMatch(source, /from\s+["']openai["']|lib\/kapiloto\//);
+  assert.doesNotMatch(source, /\.rpc\(|\.insert\(|\.upsert\(|\.update\(|\.delete\(|\.storage\.|\.functions\./);
 });
 
 test("the Research v2 live-dev CLI is read-only, network-guarded and model-free", () => {
