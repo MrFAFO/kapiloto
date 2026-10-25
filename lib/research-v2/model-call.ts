@@ -66,18 +66,27 @@ export function messageContent(response: unknown): { text: string | null; refusa
   return { text: texts.length > 0 ? texts.join("") : null, refusal: refusals.length > 0 ? refusals.join(" ") : null, citations };
 }
 
-/** Usage exactly as reported; absent fields stay null (never zero). */
+/**
+ * Usage exactly as reported, including the cache-write TTL breakdown and the
+ * cache TTL the response says it applied; absent fields stay null (never zero).
+ * The deprecated `prompt_cache_retention` is not read.
+ */
 export function recordedUsage(response: unknown): RecordedUsage | null {
   const usage = asRecord(asRecord(response)?.usage);
   if (!usage) return null;
   const input = asRecord(usage.input_tokens_details);
   const output = asRecord(usage.output_tokens_details);
+  const writeDetails = asRecord(input?.cache_write_tokens_details);
   return {
     inputTokens: asNumber(usage.input_tokens),
     cachedInputTokens: asNumber(input?.cached_tokens),
     outputTokens: asNumber(usage.output_tokens),
     reasoningTokens: asNumber(output?.reasoning_tokens),
     cacheWriteTokens: asNumber(input?.cache_write_tokens),
+    cacheWriteDetailsReported: writeDetails != null,
+    cacheWriteTtl30mTokens: asNumber(writeDetails?.ttl_30m_tokens),
+    cacheWriteTtl12hTokens: asNumber(writeDetails?.ttl_12h_tokens),
+    responseCacheTtl: asString(asRecord(asRecord(response)?.prompt_cache_options)?.ttl),
   };
 }
 

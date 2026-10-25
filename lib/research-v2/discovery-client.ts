@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { findResultLikeKeys } from "./base";
-import { callCost, type CallCost, type CostLedger, type RecordedUsage, type UsageStatus, usageStatus } from "./cost-ledger";
+import { callCost, DEFAULT_CACHE_TTL, type CacheTtl, type CallCost, type CostLedger, type RecordedUsage, type UsageStatus, usageStatus } from "./cost-ledger";
 import { DISCOVERY_V2_OUTPUT_SCHEMA, parseDiscoveryOutputV2, type DiscoveryParseResult, type Side } from "./discovery-contract";
 import { planSummary, type DiscoveryPlan } from "./discovery-plan";
 import {
@@ -22,7 +22,7 @@ import { configProvenance, sha256Canonical, type ConfigProvenance, type Versione
 import { CANDIDATE_SPEND_GUARD, checkSpend, type GuardDecision, type SpendGuardConfig } from "./spend-guard";
 
 /**
- * Research v2 discovery client (discovery-request-v1, D-047): one Sol call
+ * Research v2 discovery client (discovery-request-v2, D-047, D-048): one Sol call
  * per fixture through the Responses API with only the built-in web_search
  * tool and strict Structured Outputs (discovery-v2). It records everything
  * the call did — web search actions, queries, sources, citations, usage — and
@@ -35,17 +35,24 @@ export type DiscoveryRequestConfig = VersionedConfig & {
   reasoningEffort: "low" | "medium" | "high";
   searchContextSize: "low" | "medium" | "high";
   timeoutMs: number;
+  /** Effective `prompt_cache_options.ttl`; sent only when it differs from the API default (30m). */
+  promptCacheTtl: CacheTtl;
 };
 
 export const CANDIDATE_DISCOVERY_REQUEST: DiscoveryRequestConfig = {
   id: "research-v2-discovery-request",
-  version: "discovery-request-v1",
+  version: "discovery-request-v2",
   status: "candidate",
   model: "gpt-6.1-sol",
   reasoningEffort: "medium",
   searchContextSize: "low",
   timeoutMs: 180_000,
+  promptCacheTtl: "30m",
 };
+
+/** The request's prompt-cache lifetime as configured, and whether it is sent (the default is not). */
+export type PromptCacheRecord = { effectiveTtl: CacheTtl; sentInRequest: boolean };
+export const promptCacheRecord = (ttl: CacheTtl): PromptCacheRecord => ({ effectiveTtl: ttl, sentInRequest: ttl !== DEFAULT_CACHE_TTL });
 
 export const DISCOVERY_INSTRUCTIONS_VERSION = "discovery-instructions-v1" as const;
 
@@ -140,6 +147,7 @@ export type DiscoveryRequestRecord = {
   schemaSha256: string;
   instructionsSha256: string;
   instructionsVersion: string;
+  promptCache: PromptCacheRecord;
   config: ConfigProvenance;
 };
 
@@ -165,6 +173,8 @@ export function buildDiscoveryRequest(input: DiscoveryInputV1, plan: DiscoveryPl
     },
     store: false,
   };
+  const promptCache = promptCacheRecord(config.promptCacheTtl);
+  if (promptCache.sentInRequest) body.prompt_cache_options = { ttl: promptCache.effectiveTtl };
   const record: DiscoveryRequestRecord = {
     model: config.model,
     toolChoice: "required",
@@ -176,6 +186,7 @@ export function buildDiscoveryRequest(input: DiscoveryInputV1, plan: DiscoveryPl
     schemaSha256: sha256Canonical(DISCOVERY_V2_OUTPUT_SCHEMA),
     instructionsSha256: sha256Text(DISCOVERY_INSTRUCTIONS),
     instructionsVersion: DISCOVERY_INSTRUCTIONS_VERSION,
+    promptCache,
     config: configProvenance(config),
   };
   return { body, record };
@@ -250,7 +261,7 @@ export async function runDiscoveryCall(input: {
   const problems = discoveryInputProblems(input.discoveryInput);
   if (problems.length > 0) return fail("unsafe_input", problems.join("; "));
 
-  const projection = { kind: "discovery" as const, fixtureRef: input.plan.fixtureRef, maxToolCalls: input.plan.budget.maxWebToolCalls, maxOutputTokens: input.plan.budget.maxOutputTokens };
+  const projection = { kind: "discovery" as const, fixtureRef: input.plan.fixtureRef, maxToolCalls: input.plan.budget.maxWebToolCalls, maxOutputTokens: input.plan.budget.maxOutputTokens, cacheTtl: config.promptCacheTtl };
   const guard = checkSpend(projection, input.ledger, guardConfig);
   if (!guard.allowed) return fail("spend_guard_blocked", guard.reason, { guard });
 
@@ -279,6 +290,7 @@ export async function runDiscoveryCall(input: {
     billableWebSearchCalls: webSearch.billableCalls,
     projectedMicros: guard.projectedMicros ?? 0,
     pricing: input.ledger.pricing,
+    cacheTtl: config.promptCacheTtl,
   });
   input.ledger.recordCall(cost);
   const recorded = {

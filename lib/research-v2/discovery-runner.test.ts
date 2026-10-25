@@ -16,6 +16,7 @@ import { CANDIDATE_COMBINATIONS } from "./combination";
 import { CANDIDATE_PRICING } from "./cost-ledger";
 import { replayDiscoveryArtifact, sealDiscoveryArtifact, type DiscoveryArtifact, type SearchNames } from "./discovery-artifact";
 import type { DiscoveryClaim } from "./discovery-contract";
+import { ENTAILMENT_CONTRACT_VERSION } from "./entailment-client";
 import { CANDIDATE_RESEARCH_CONFIGS, fetchPolicyRecord, retryDecision, runDiscoveryResearch, type ResearchDeps } from "./discovery-runner";
 import { CANDIDATE_LEAGUE_MEMBERSHIP_CONFIG } from "./league-membership";
 import { captureLiveDevArtifact, type LiveDevArtifact, type LiveDevFixtureIdentity, type LiveDevHistoryRow, type LiveDevProviders, type MarketInput } from "./live-dev-runner";
@@ -108,17 +109,20 @@ const judgedItem = (itemId: string, span: string, extra: Record<string, unknown>
 });
 const lunaReply = (items: unknown[], fixtureRef = "fx-8") => ({
   id: "resp_l", model: "gpt-6-luna-2026-09-15", status: "completed", usage: usage(3_000, 600),
-  output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ contract_version: "kapiloto-research-v2-entailment-v1", fixture_ref: fixtureRef, items }), annotations: [] }] }],
+  output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ contract_version: ENTAILMENT_CONTRACT_VERSION, fixture_ref: fixtureRef, items }), annotations: [] }] }],
 });
 
 /** Routes discovery requests (with tools) and judge requests (without) to their own reply queues. */
-function client(discovery: Array<unknown | Error>, luna: Array<unknown | Error> = []): ResponsesClient & { calls: { discovery: number; luna: number } } {
+function client(discovery: Array<unknown | Error>, luna: Array<unknown | Error> = []): ResponsesClient & { calls: { discovery: number; luna: number }; lunaInputs: unknown[] } {
   const calls = { discovery: 0, luna: 0 };
+  const lunaInputs: unknown[] = [];
   return {
     calls,
+    lunaInputs,
     responses: {
       async create(body) {
         const isDiscovery = Array.isArray(body.tools);
+        if (!isDiscovery) lunaInputs.push(JSON.parse(String(body.input)));
         const queue = isDiscovery ? discovery : luna;
         const index = isDiscovery ? calls.discovery++ : calls.luna++;
         const reply = queue[index];
@@ -197,6 +201,8 @@ test("one valid adjustment end to end: discovery, safe fetch, judge, claim decis
   const { outcome, record, client: c, deps: d, artifact } = await research({ discovery: [discoveryReply([claim()])], luna: [lunaReply([judgedItem("C1#0", "knee injury")])] });
   assert.equal(outcome.status, "researched");
   assert.deepEqual([c.calls.discovery, c.calls.luna], [1, 1]);
+  assert.deepEqual((c.lunaInputs[0] as { fixture_sides: unknown }).fixture_sides, { home: { name_en: "Home Eight", source_names: [] }, away: { name_en: "Away Eight", source_names: [] } }, "Luna resolves side against the run's search names");
+  assert.equal(record.entailment?.request?.config.version, "entailment-v2");
   assert.deepEqual(d.fetched, [ARTICLE]);
   assert.equal(record.timestamps.knowledgeCutoffAt, record.timestamps.researchStartedAt);
   assert.ok(Date.parse(record.timestamps.evidenceCutoffAt!) > Date.parse(record.timestamps.knowledgeCutoffAt!));
@@ -309,6 +315,36 @@ test("redirect hops are recorded with their own allow/block result; failure deta
   assert.equal(transport.reasonDetail, null, "raw transport error text stays in runtime");
 });
 
+test("artifacts captured under entailment-v1, pricing-v1 and cost-ledger-v1 still replay bit-identically", async () => {
+  const { artifact } = await research({ discovery: [discoveryReply([claim()])], luna: [lunaReply([judgedItem("C1#0", "knee injury")])] });
+  // Reshape the stored inputs as the first real run recorded them: older versions, no cache-write fields.
+  const inputs = structuredClone(artifact.deterministic.inputs) as unknown as Record<string, any>;
+  inputs.configs.entailmentRequest.version = "entailment-v1";
+  delete inputs.configs.entailmentRequest.promptCacheTtl;
+  inputs.configs.discoveryRequest.version = "discovery-request-v1";
+  delete inputs.configs.discoveryRequest.promptCacheTtl;
+  inputs.configs.spendGuard.version = "spend-guard-v1";
+  delete inputs.configs.spendGuard.assumedDiscoveryCacheWriteTokens;
+  inputs.ledger.version = "cost-ledger-v1";
+  inputs.ledger.pricing.version = "pricing-v1";
+  for (const call of inputs.ledger.calls) {
+    for (const key of ["cacheTtl", "cacheWrites", "costUncertain"]) delete call[key];
+    if (call.usage) for (const key of ["cacheWriteDetailsReported", "cacheWriteTtl30mTokens", "cacheWriteTtl12hTokens", "responseCacheTtl"]) delete call.usage[key];
+  }
+  for (const fixture of inputs.fixtures) {
+    for (const attempt of fixture.attempts) if (attempt.result.request) delete attempt.result.request.promptCache;
+    if (fixture.entailment?.request) delete fixture.entailment.request.promptCache;
+  }
+  for (const totals of [inputs.ledger.run, ...Object.values(inputs.ledger.fixtures) as Array<Record<string, unknown>>]) {
+    delete totals.solCacheWriteTokens;
+    delete totals.lunaCacheWriteTokens;
+  }
+  const old = sealDiscoveryArtifact(inputs as unknown as DiscoveryArtifact["deterministic"]["inputs"], artifact.runtime);
+  const replay = replayDiscoveryArtifact(JSON.parse(JSON.stringify(old)) as DiscoveryArtifact);
+  assert.deepEqual([replay.identical, replay.snapshotsVerified, replay.artifactSha256], [true, true, old.deterministic.artifactSha256]);
+  assert.deepEqual(replay.outputs.fixtures[0].candidates, artifact.deterministic.outputs.fixtures[0].candidates, "the deterministic forecast does not depend on the recorded versions");
+});
+
 test("several adjustments hit the existing effect cap", async () => {
   const names = ["John Keeper", "Second Keeper", "Third Keeper", "Fourth Keeper"];
   const sentences = names.map((name) => `${name} will miss Sunday's game with an injury`);
@@ -390,7 +426,7 @@ test("retry policy: transient failures retry once; 4xx, refusals and safety fail
   assert.equal(policy.maxRetries, 1);
 });
 
-/** Room for one retry of a standard-tier call ($0.446 projection): a timeout is charged its full projection. */
+/** Room for one retry of a standard-tier call ($0.452 projection): a timeout is charged its full projection. */
 const RETRY_ROOM = { ...CONFIGS, spendGuard: { ...CONFIGS.spendGuard, perFixtureCapUsd: 1.0 } };
 
 test("a timed-out discovery is retried once with the same input and cutoff, and the retry can succeed", async () => {
@@ -422,7 +458,7 @@ test("a retry blocked by the fixture cap never reaches the network (default caps
   assert.equal(c.calls.discovery, 1);
   assert.deepEqual(record.attempts.map((a) => a.result.failure), ["timeout", "spend_guard_blocked"]);
   assert.equal(record.attempts[1].result.detail, "fixture_cap_would_be_exceeded");
-  assert.equal(artifact.deterministic.inputs.ledger.fixtures["fx-8"].chargedMicros, 446_000, "the timed-out call is charged its full projection");
+  assert.equal(artifact.deterministic.inputs.ledger.fixtures["fx-8"].chargedMicros, 452_000, "the timed-out call is charged its full projection");
   assert.equal(artifact.deterministic.outputs.fixtures[0].status, "research_failed");
 });
 
@@ -438,7 +474,7 @@ test("a retry blocked by the run cap stops; one fixture cannot spend another fix
   assert.equal(eight.attempts[1].result.detail, "run_cap_would_be_exceeded");
   assert.equal(c.calls.discovery, 3);
   const ledger = artifact.deterministic.inputs.ledger;
-  assert.deepEqual([ledger.fixtures["fx-7"].chargedMicros, ledger.fixtures["fx-8"].chargedMicros, ledger.run.chargedMicros], [892_000, 446_000, 1_338_000], "each fixture is charged only for its own calls");
+  assert.deepEqual([ledger.fixtures["fx-7"].chargedMicros, ledger.fixtures["fx-8"].chargedMicros, ledger.run.chargedMicros], [904_000, 452_000, 1_356_000], "each fixture is charged only for its own calls");
 });
 
 // ---- evidence-stage failures ----------------------------------------------------------------

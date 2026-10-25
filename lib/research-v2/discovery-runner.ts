@@ -337,6 +337,8 @@ export async function researchFixture(input: {
       const judged = await runEntailmentCall({
         client: deps.responsesClient,
         fixtureRef,
+        // Side resolution only: the same allow-listed team names Sol received.
+        fixture: { home: discoveryInput.home, away: discoveryInput.away },
         items,
         maxJudgeItems: plan.budget.maxJudgeItems,
         ledger,
