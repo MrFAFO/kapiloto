@@ -69,6 +69,60 @@ export function liveDevEligibility(identity: LiveDevFixtureIdentity, atIso: stri
   return { eligible: true, reason: null, minutesToKickoff };
 }
 
+/**
+ * Earliest date the provider account actually serves history for. It only
+ * bounds which windows are requested (no rows exist before it for this
+ * account); it is not a model parameter and changes no statistic. When the
+ * provider exposes older history, change it here (new version), not in code.
+ */
+export type ProviderHistoryFloor = {
+  id: string;
+  version: string;
+  provider: "sportmonks";
+  earliestDate: string;
+  source: string;
+};
+
+/** Measured 2026-10-24: Sportmonks returned no rows before August 2024 for the five target leagues. */
+export const SPORTMONKS_HISTORY_FLOOR: ProviderHistoryFloor = {
+  id: "sportmonks-account-history-floor",
+  version: "history-floor-v1",
+  provider: "sportmonks",
+  earliestDate: "2024-08-01",
+  source: "2026-10-24 read-only coverage probe: earliest returned match 2024-08-15/16/17/23/24 per league",
+};
+
+/** The history window actually requested, recorded with the inputs for audit and replay. */
+export type HistoryRequestPlan = {
+  provider: "sportmonks";
+  /** Lookback the statistical arms can use (from their configs). */
+  lookbackDays: number;
+  lookbackStartDate: string;
+  floor: ProviderHistoryFloor | null;
+  /** max(lookbackStartDate, floor.earliestDate). */
+  requestedStartDate: string;
+  requestedEndDate: string;
+};
+
+export function planHistoryRequest(
+  guardCheckedAt: string,
+  lookbackDays: number,
+  floor: ProviderHistoryFloor | null,
+): HistoryRequestPlan {
+  const guardMs = Date.parse(guardCheckedAt);
+  const lookbackStartDate = isoDay(guardMs - lookbackDays * 86_400_000);
+  const requestedStartDate =
+    floor && floor.earliestDate > lookbackStartDate ? floor.earliestDate : lookbackStartDate;
+  return {
+    provider: "sportmonks",
+    lookbackDays,
+    lookbackStartDate,
+    floor,
+    requestedStartDate,
+    requestedEndDate: isoDay(guardMs),
+  };
+}
+
 export type LeagueHistoryInput =
   | { leagueId: string; window: { startDate: string; endDate: string }; status: "ok"; matches: HistoricalMatchResult[] }
   | { leagueId: string; window: { startDate: string; endDate: string }; status: "failed"; reason: string };
@@ -100,6 +154,7 @@ export type LiveDevDeterministicInputs = {
   executionCutoffAt: string;
   minLeadMinutes: number;
   configs: { base: DeterministicBaseConfig; combinations: CombinationCandidate[]; triage: TriageConfig };
+  historyPlan: HistoryRequestPlan;
   leagues: LeagueHistoryInput[];
   fixtures: LiveDevFixtureInputs[];
 };
@@ -459,6 +514,8 @@ export async function captureLiveDevArtifact(input: {
   configs: LiveDevDeterministicInputs["configs"];
   minLeadMinutes?: number;
   historyLookbackDays: number;
+  /** Provider-account history floor; null requests the full lookback. */
+  historyFloor: ProviderHistoryFloor | null;
 }): Promise<LiveDevArtifact> {
   const minLeadMinutes = input.minLeadMinutes ?? DEFAULT_LIVE_DEV_MIN_LEAD_MINUTES;
   const calls: LiveDevRetrievalCall[] = [];
@@ -482,11 +539,10 @@ export async function captureLiveDevArtifact(input: {
     .sort((a, b) => a.gameNumber - b.gameNumber);
   const eligible = identities.filter((identity) => guard.find((item) => item.fixtureId === identity.fixtureId)?.eligibility.eligible);
 
-  const windowEnd = isoDay(Date.parse(guardCheckedAt));
-  const windowStart = isoDay(Date.parse(guardCheckedAt) - input.historyLookbackDays * 86_400_000);
+  const historyPlan = planHistoryRequest(guardCheckedAt, input.historyLookbackDays, input.historyFloor);
   const leagues: LeagueHistoryInput[] = [];
   for (const leagueId of [...new Set(eligible.map((identity) => identity.sportmonks.leagueId).filter((id): id is string => id != null))].sort()) {
-    const window = { startDate: windowStart, endDate: windowEnd };
+    const window = { startDate: historyPlan.requestedStartDate, endDate: historyPlan.requestedEndDate };
     try {
       const matches = await timed("sportmonks", `league:${leagueId}`, () => input.providers.loadLeagueHistory(leagueId, window));
       leagues.push({ leagueId, window, status: "ok", matches });
@@ -529,6 +585,7 @@ export async function captureLiveDevArtifact(input: {
       executionCutoffAt,
       minLeadMinutes,
       configs: input.configs,
+      historyPlan,
       leagues,
       fixtures,
     },

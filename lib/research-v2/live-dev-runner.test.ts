@@ -15,8 +15,10 @@ import {
   captureLiveDevArtifact,
   computeLiveDevOutputs,
   liveDevEligibility,
+  planHistoryRequest,
   replayLiveDevArtifact,
   sealLiveDevArtifact,
+  SPORTMONKS_HISTORY_FLOOR,
   type LiveDevArtifact,
   type LiveDevFixtureIdentity,
   type LiveDevProviders,
@@ -106,8 +108,9 @@ function providers(options: {
   };
 }
 
+// The synthetic league predates the real account floor, so these tests request the full lookback.
 const capture = (p: LiveDevProviders) =>
-  captureLiveDevArtifact({ roundId: "round-1", providers: p, configs: CONFIGS, historyLookbackDays: 1460 });
+  captureLiveDevArtifact({ roundId: "round-1", providers: p, configs: CONFIGS, historyLookbackDays: 1460, historyFloor: null });
 const fixtureOut = (artifact: LiveDevArtifact, game: number) =>
   artifact.deterministic.outputs.fixtures.find((fixture) => fixture.gameNumber === game)!;
 
@@ -375,4 +378,55 @@ test("formal sampling stays disabled; outputs are live_dev with no adjustment, S
   const triaged = fixtureOut(artifact, 8).triage!;
   assert.ok(triaged.needs.some((need) => need.kind === "availability_rotation_check"));
   assert.ok(["minimal", "standard", "deep"].includes(triaged.tier));
+});
+
+test("the history request starts at the later of the lookback start and the provider floor", () => {
+  const floor = { ...SPORTMONKS_HISTORY_FLOOR, earliestDate: "2024-08-01" };
+  const later = planHistoryRequest("2026-10-25T09:00:00.000Z", 1460, floor);
+  assert.equal(later.lookbackStartDate, "2022-10-26");
+  assert.equal(later.requestedStartDate, "2024-08-01");
+  assert.equal(later.requestedEndDate, "2026-10-25");
+  const lookbackWins = planHistoryRequest("2026-10-25T09:00:00.000Z", 365, floor);
+  assert.equal(lookbackWins.requestedStartDate, lookbackWins.lookbackStartDate);
+  assert.equal(planHistoryRequest("2026-10-25T09:00:00.000Z", 1460, null).requestedStartDate, "2022-10-26");
+  assert.equal(SPORTMONKS_HISTORY_FLOOR.earliestDate, "2024-08-01");
+});
+
+test("the provider is asked only for floored windows, and the plan is recorded and replays", async () => {
+  const floorDate = PREMIER[0].kickoffAt.slice(0, 10);
+  const floor = { ...SPORTMONKS_HISTORY_FLOOR, version: "test-floor", earliestDate: floorDate };
+  const windows: string[] = [];
+  const base = providers();
+  const recording: LiveDevProviders = {
+    ...base,
+    async loadLeagueHistory(leagueId, window) {
+      windows.push(`${leagueId}:${window.startDate}..${window.endDate}`);
+      return base.loadLeagueHistory(leagueId, window);
+    },
+  };
+  const artifact = await captureLiveDevArtifact({ roundId: "round-1", providers: recording, configs: CONFIGS, historyLookbackDays: 1460, historyFloor: floor });
+  assert.ok(windows.length > 0 && windows.every((window) => window.includes(`:${floorDate}..`)));
+  assert.deepEqual(artifact.deterministic.inputs.historyPlan.floor, floor);
+  assert.equal(artifact.deterministic.inputs.historyPlan.requestedStartDate, floorDate);
+  assert.ok(artifact.deterministic.inputs.leagues.every((league) => league.window.startDate === floorDate));
+  assert.equal(replayLiveDevArtifact(JSON.parse(JSON.stringify(artifact))).identical, true);
+});
+
+test("a floor at or before the earliest available match changes no statistic, only the recorded plan", async () => {
+  const floorDate = [...PREMIER, ...LIGAT].map((match) => match.kickoffAt.slice(0, 10)).sort()[0];
+  const floored = await captureLiveDevArtifact({
+    roundId: "round-1", providers: providers(), configs: CONFIGS, historyLookbackDays: 1460,
+    historyFloor: { ...SPORTMONKS_HISTORY_FLOOR, earliestDate: floorDate },
+  });
+  const unbounded = await capture(providers());
+  const strip = (artifact: LiveDevArtifact) =>
+    artifact.deterministic.outputs.fixtures.map(({ sportmonks, ...fixture }) => ({ ...fixture, historyRowsUsed: sportmonks.historyRowsUsed }));
+  assert.equal(canonicalJson(strip(floored)), canonicalJson(strip(unbounded)));
+  assert.notEqual(floored.deterministic.inputSha256, unbounded.deterministic.inputSha256, "the plan is part of the recorded inputs");
+});
+
+test("the CLI defaults to the measured provider floor", () => {
+  const source = readFileSync(join(process.cwd(), "scripts", "research-v2-live-dev.ts"), "utf8");
+  assert.match(source, /if \(!override\) return SPORTMONKS_HISTORY_FLOOR;/);
+  assert.match(source, /historyFloor,\n/);
 });

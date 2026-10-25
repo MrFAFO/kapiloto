@@ -12,13 +12,16 @@ import {
   captureLiveDevArtifact,
   DEFAULT_LIVE_DEV_MIN_LEAD_MINUTES,
   replayLiveDevArtifact,
+  SPORTMONKS_HISTORY_FLOOR,
   type LiveDevArtifact,
+  type ProviderHistoryFloor,
 } from "../lib/research-v2/live-dev-runner";
 import { CANDIDATE_TRIAGE_CONFIG } from "../lib/research-v2/triage";
 
 const USAGE = `Research v2 live-dev deterministic-base runner (read-only, never published)
 
   capture --round <round id> [--min-lead-minutes 60] [--out <path>]
+          [--history-floor YYYY-MM-DD | --no-history-floor]
           rereads fixture status, excludes started or too-close fixtures, loads
           Sportmonks history and API-Football odds, writes one local artifact
   replay  --artifact <path>
@@ -50,6 +53,8 @@ async function capture(args: string[]) {
     throw new Error(`--min-lead-minutes must be at least ${DEFAULT_LIVE_DEV_MIN_LEAD_MINUTES}.`);
   }
 
+  const historyFloor = resolveHistoryFloor(args);
+
   const supabaseUrl = process.env.SUPABASE_URL?.trim() || requiredEnv("NEXT_PUBLIC_SUPABASE_URL");
   const restoreFetch = installLiveDevFetchGuard(supabaseUrl);
   try {
@@ -69,6 +74,7 @@ async function capture(args: string[]) {
       configs: { base: CANDIDATE_DETERMINISTIC_BASE_CONFIG, combinations: CANDIDATE_COMBINATIONS, triage: CANDIDATE_TRIAGE_CONFIG },
       minLeadMinutes,
       historyLookbackDays: requiredHistoryLookbackDays(),
+      historyFloor,
     });
     const out =
       flag(args, "out") ??
@@ -79,6 +85,25 @@ async function capture(args: string[]) {
   } finally {
     restoreFetch();
   }
+}
+
+/**
+ * Default: the measured account floor. --history-floor records an operator
+ * override as its own version; --no-history-floor requests the full lookback.
+ */
+function resolveHistoryFloor(args: string[]): ProviderHistoryFloor | null {
+  if (args.includes("--no-history-floor")) return null;
+  const override = flag(args, "history-floor");
+  if (!override) return SPORTMONKS_HISTORY_FLOOR;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(override) || !Number.isFinite(Date.parse(`${override}T00:00:00Z`))) {
+    throw new Error("--history-floor must be YYYY-MM-DD.");
+  }
+  return {
+    ...SPORTMONKS_HISTORY_FLOOR,
+    version: `${SPORTMONKS_HISTORY_FLOOR.version}+operator-${override}`,
+    earliestDate: override,
+    source: "operator override on the capture command line",
+  };
 }
 
 function replay(args: string[]) {
