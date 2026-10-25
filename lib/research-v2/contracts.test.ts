@@ -82,10 +82,18 @@ test("version identifiers reflect the code and the exact config used", () => {
 
 test("Research v2 modules never read result tables or outcome columns", () => {
   const dir = join(process.cwd(), "lib", "research-v2");
+  // The live-dev provider adapter is the single module allowed to read the
+  // database, and only through its read-only client wrapper.
+  const READ_ONLY_ADAPTER = "live-dev-providers.ts";
   for (const file of readdirSync(dir).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))) {
     const source = readFileSync(join(dir, file), "utf8");
+    assert.doesNotMatch(source, /home_score|away_score|field_outcome|pool_settlement|football_match_results/, file);
+    if (file === READ_ONLY_ADAPTER) {
+      assert.match(source, /const client = readOnlySupabaseClient\(options\.client\);/);
+      assert.doesNotMatch(source, /options\.client\.from\(|\.rpc\(/, `${file} must only use the read-only client`);
+      continue;
+    }
     assert.doesNotMatch(source, /\.from\(\s*["'`]/, `${file} must not query the database`);
     assert.doesNotMatch(source, /@supabase\/supabase-js|\.rpc\(/, `${file} must not use a database client`);
-    assert.doesNotMatch(source, /home_score|away_score|field_outcome|pool_settlement|football_match_results/, file);
   }
 });

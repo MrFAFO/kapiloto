@@ -102,6 +102,13 @@ export type DeterministicBase = {
 
 const FORBIDDEN_RESULT_KEY = /(score|goals|outcome|result|winner|settle|finished|full_?time|half_?time)/i;
 
+/** Paths of result-like keys anywhere in a value (empty when clean). */
+export function findResultLikeKeys(value: unknown, path = "$"): string[] {
+  const found: string[] = [];
+  scanForResultKeys(value, path, found);
+  return found;
+}
+
 function scanForResultKeys(value: unknown, path: string, found: string[]): void {
   if (Array.isArray(value)) {
     value.forEach((item, index) => scanForResultKeys(item, `${path}[${index}]`, found));

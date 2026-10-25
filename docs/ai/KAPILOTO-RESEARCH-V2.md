@@ -62,3 +62,15 @@ All values are `status: "candidate"`, versioned and hashed into every output. No
 ## Live development and sampling
 
 `FORMAL_SAMPLING_ENABLED = false`. Round 264201 games 1, 7, 8, 9 and 12 are tagged `live_dev` only; `classifyLiveDevFixture` excludes anything started or within 15 minutes of kickoff. Nothing is researched retrospectively.
+
+## Live-dev deterministic-base runner
+
+`scripts/research-v2-live-dev.ts` (core: `live-dev-runner.ts`, provider access: `live-dev-providers.ts`). Read-only, never published, never a formal sample.
+
+- `capture --round <id> [--min-lead-minutes 60] [--out <path>]`: rereads fixture status and kickoff (explicit safe columns only), excludes any fixture not `upcoming` or less than 60 minutes from kickoff (exactly 60 is eligible) before any provider call, loads Sportmonks league history once per league and API-Football odds per fixture through provider-id-first resolution, takes the execution cutoff after retrieval so every captured quote precedes it, rechecks eligibility at the cutoff, and writes one local artifact (default `artifacts/research-v2/`, never overwritten).
+- `replay --artifact <path>`: recomputes from the stored deterministic inputs with all network blocked; succeeds only if input, output and artifact hashes match.
+- Database access goes through a client that refuses every mutation, RPC, storage and function call; network access through a guard allowing only GET to Supabase and the two football-data hosts. No language model is reachable.
+- Provider failures are isolated and explicit: a date-window refusal or missing market leaves only that fixture's market arm unavailable (`provider_plan_date_window`, `fixture_not_found`, …); a failed league history marks league base and `p_stat` unavailable (`sportmonks_history_unavailable:*`); thin or stale captures are kept and classified. Nothing is replaced by uniform probabilities.
+- Zero research adjustments, zero Sol calls, no recommendation.
+
+Artifact: `deterministic.inputs` (cutoff, minimum lead, full configs, league histories, per-fixture identity, market capture, triage context), `deterministic.outputs` (eligibility, arms in probabilities and basis points, market provenance and quality, every candidate arm with config hash, triage features/score/tier/needs, degraded reasons), `inputSha256`, `outputSha256`, `artifactSha256`, and a separate `retrieval` block (guard decisions, call timings and errors) that is never hashed.

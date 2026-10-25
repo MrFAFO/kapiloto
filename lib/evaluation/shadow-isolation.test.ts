@@ -22,6 +22,7 @@ function sourceFiles(directory: string): string[] {
 
 // Research v2 foundations are shadow-side until explicitly approved.
 const RESEARCH_V2_DIR = join(ROOT, "lib", "research-v2");
+const RESEARCH_V2_LIVE_DEV_CLI = join(ROOT, "scripts", "research-v2-live-dev.ts");
 
 const productionFiles = ["app", "components", "lib", "scripts"]
   .flatMap((directory) => sourceFiles(join(ROOT, directory)))
@@ -29,6 +30,7 @@ const productionFiles = ["app", "components", "lib", "scripts"]
     (path) =>
       !path.startsWith(EVALUATION_DIR + sep) &&
       !path.startsWith(RESEARCH_V2_DIR + sep) &&
+      path !== RESEARCH_V2_LIVE_DEV_CLI &&
       path !== SHADOW_CLI &&
       path !== SHADOW_ROUTE,
   );
@@ -115,9 +117,19 @@ test("no production module imports Research v2, and Research v2 calls no model o
     /from\s+["'](?:@\/lib\/research-v2|(?:\.\.?\/)+(?:lib\/)?research-v2)(?:\/|["'])/.test(readFileSync(path, "utf8")),
   );
   assert.deepEqual(offenders.map((path) => relative(ROOT, path)), []);
-  for (const path of sourceFiles(RESEARCH_V2_DIR)) {
+  // Tests may name the forbidden strings to assert they are blocked.
+  for (const path of sourceFiles(RESEARCH_V2_DIR).filter((file) => !file.endsWith(".test.ts"))) {
     const source = readFileSync(path, "utf8");
     assert.doesNotMatch(source, /openai|web_search|OPENAI_API_KEY|responses\.create/i, relative(ROOT, path));
     assert.doesNotMatch(source, /from\s+["'](?:@\/|(?:\.\.\/)+)lib\/kapiloto\//, relative(ROOT, path));
   }
+});
+
+test("the Research v2 live-dev CLI is read-only, network-guarded and model-free", () => {
+  const source = readFileSync(RESEARCH_V2_LIVE_DEV_CLI, "utf8");
+  assert.match(source, /installLiveDevFetchGuard\(supabaseUrl\)/);
+  assert.match(source, /createLiveDevProviders\(/);
+  assert.match(source, /installNoNetworkGuard\(\)/);
+  assert.doesNotMatch(source, /openai|web_search|lib\/kapiloto\//i);
+  assert.doesNotMatch(source, /\.from\(\s*["'`]|\.rpc\(|\.insert\(|\.upsert\(|\.update\(|\.delete\(/);
 });
