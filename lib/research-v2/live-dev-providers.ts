@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { HistoricalMatchResult } from "@/lib/evaluation/history";
 import { ingestLeagueResults, type MatchResultRow } from "@/lib/evaluation/results-ingest";
 import { SupabaseFixtureStructuredSnapshotStore } from "@/lib/football-features/supabase-store";
 import { ApiFootballClient } from "@/lib/providers/api-football";
@@ -8,7 +7,7 @@ import { SupabaseApiFootballSyncStore } from "@/lib/providers/api-football-supab
 import type { ApiFootballRoundGame } from "@/lib/providers/api-football-sync";
 import { SportmonksClient } from "@/lib/providers/sportmonks";
 
-import type { LiveDevFixtureIdentity, LiveDevProviders, MarketInput } from "./live-dev-runner";
+import type { LiveDevFixtureIdentity, LiveDevHistoryRow, LiveDevProviders, MarketInput } from "./live-dev-runner";
 
 /**
  * Real provider access for the live-dev runner. Every database access goes
@@ -93,8 +92,9 @@ async function rows(query: PromiseLike<{ data: unknown; error: { message: string
 
 const str = (value: unknown) => (value == null ? null : String(value));
 
-function toHistory(row: MatchResultRow): HistoricalMatchResult {
+function toHistory(row: MatchResultRow): LiveDevHistoryRow {
   return {
+    providerSeasonId: row.provider_season_id ?? null,
     provider: row.provider,
     providerFixtureId: row.provider_fixture_id,
     competitionKey: `${row.provider}:${row.provider_competition_id}`,
@@ -238,12 +238,12 @@ export function createLiveDevProviders(options: {
       return {
         structuredSnapshotId: snapshot?.id ?? null,
         context: {
-          managerChangeDaysAgo: { home: null, away: null },
+          // No feed checks manager changes or key-player availability yet: both stay explicitly unknown.
+          managerChange: { home: { status: "unknown" }, away: { status: "unknown" } },
           restDays: { home: features?.home.rest?.rest_days ?? null, away: features?.away.rest?.rest_days ?? null },
           matchesLast14Days: { home: features?.home.rest?.matches_last_14d ?? null, away: features?.away.rest?.matches_last_14d ?? null },
           competition: { isCup: identity.competitionType === "cup", isSecondLeg: identity.legNumber === 2 },
-          promoted: { home: null, away: null },
-          unresolvedAvailability: 0,
+          unresolvedAvailability: null,
         },
       };
     },

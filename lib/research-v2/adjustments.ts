@@ -64,12 +64,14 @@ export const IMPACT_OUTPUT_SCHEMA = {
 } as const;
 
 /**
- * How an admitted adjustment may affect probabilities:
- *  - full:                       evidence postdates a fresh, standard market snapshot;
+ * How an admitted adjustment may affect probabilities (adjustment-policy-v2,
+ * on market-state-v2 information times):
+ *  - full:                       evidence postdates the newest price used by a fresh,
+ *                                standard market (freshness from the oldest price);
  *  - stat_path:                  market missing/stale/thin/old, so verified earlier evidence
  *                                may adjust only the stat input of a combination;
- *  - market_likely_incorporated: evidence was known before a fresh, standard market
- *                                snapshot; explanatory only, no probability shift;
+ *  - market_likely_incorporated: evidence published at or before the newest price of a
+ *                                fresh, standard market; explanatory only, no shift;
  *  - explanatory:                admissible but impact class "none".
  */
 export type AdjustmentPath = "full" | "stat_path" | "market_likely_incorporated" | "explanatory";
@@ -90,21 +92,27 @@ export type AdjustmentDecision = {
   subjectKeys: string[];
   syndicationClusters: string[];
   earliestEvidenceAt: string | null;
-  marketCapturedAt: string | null;
+  marketStateVersion: string;
+  /** Information time of the newest price used; `full` requires evidence published after it. */
+  marketInformationLatestAt: string | null;
+  marketInformationAgeMinutes: number | null;
   marketQuality: MarketState["quality"];
   corroboration: CorroborationDecision | null;
 };
 
 export type AdjustmentPolicyConfig = VersionedConfig & {
-  /** A standard market older than this at the cutoff is treated as not fresh. */
+  /** A standard market whose oldest price is older than this at the cutoff is treated as not fresh. */
   freshMarketMaxAgeMinutes: number;
+  /** Market-time semantics this policy is defined on; any other market state is refused. */
+  requiredMarketStateVersion: string;
 };
 
 export const CANDIDATE_ADJUSTMENT_POLICY: AdjustmentPolicyConfig = {
   id: "research-v2-adjustment-policy",
-  version: "adjustment-policy-v1",
+  version: "adjustment-policy-v2",
   status: "candidate",
   freshMarketMaxAgeMinutes: 360,
+  requiredMarketStateVersion: "market-state-v2",
 };
 
 /**
@@ -118,12 +126,18 @@ export function admitAdjustments(input: {
   sourcePolicy: SourcePolicyConfig;
   policy: AdjustmentPolicyConfig;
 }): { decisions: AdjustmentDecision[]; policy: ConfigProvenance } {
+  if (input.market.policy.version !== input.policy.requiredMarketStateVersion) {
+    throw new Error(
+      `research_v2_market_state_mismatch: ${input.policy.version} requires ${input.policy.requiredMarketStateVersion}, got ${input.market.policy.version}`,
+    );
+  }
   const byId = new Map(input.evidence.map((item) => [item.item.evidence_id, item]));
+  const newestPriceAt = input.market.informationLatestAt;
   const freshStandardMarket =
     input.market.quality === "standard" &&
-    input.market.capturedAt != null &&
-    input.market.ageMinutesAtCutoff != null &&
-    input.market.ageMinutesAtCutoff <= input.policy.freshMarketMaxAgeMinutes;
+    newestPriceAt != null &&
+    input.market.informationAgeMinutesAtCutoff != null &&
+    input.market.informationAgeMinutesAtCutoff <= input.policy.freshMarketMaxAgeMinutes;
   const claimedSubjects = new Set<string>();
   const claimedClusters = new Set<string>();
 
@@ -161,7 +175,7 @@ export function admitAdjustments(input: {
         clusters.forEach((cluster) => claimedClusters.add(cluster));
         if (proposal.impact_class === "none") path = "explanatory";
         else if (!freshStandardMarket) path = "stat_path";
-        else if (earliestEvidenceAt != null && earliestEvidenceAt > (input.market.capturedAt as string)) path = "full";
+        else if (earliestEvidenceAt != null && Date.parse(earliestEvidenceAt) > Date.parse(newestPriceAt as string)) path = "full";
         else path = "market_likely_incorporated";
       }
       return {
@@ -172,7 +186,9 @@ export function admitAdjustments(input: {
         subjectKeys: subjects,
         syndicationClusters: clusters,
         earliestEvidenceAt,
-        marketCapturedAt: input.market.capturedAt,
+        marketStateVersion: input.market.policy.version,
+        marketInformationLatestAt: newestPriceAt,
+        marketInformationAgeMinutes: input.market.informationAgeMinutesAtCutoff,
         marketQuality: input.market.quality,
         corroboration: decision,
       };

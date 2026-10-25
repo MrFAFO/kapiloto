@@ -31,7 +31,8 @@ test("deterministic base replay is bit-identical, including from serialized stor
 test("golden replay: stored reference inputs reproduce the frozen forecast exactly", () => {
   const inputs = { base: baseInputs(), research: { verification: verified([item()]), proposals: [proposal()] } };
   const forecast = computeResearchV2Forecast(JSON.parse(JSON.stringify(inputs)), CONFIGS);
-  assert.equal(forecast.inputSha256, "52478eb169c0f97318178b9c504c96cae56caf68d88088775b9776372beed036");
+  // Reference quotes carry provider update times since market-state-v2; every frozen probability below is unchanged.
+  assert.equal(forecast.inputSha256, "24a63f1f7ada598f8db16e3ee3f7de3b61bd06a87d5ca7c6d2a6643de0981b63");
   assert.deepEqual(bp(forecast.base.arms.p_league_base_v1), { home: 4726, draw: 2049, away: 3225 });
   assert.deepEqual(bp(forecast.base.arms.p_stat_elo_v1), { home: 6819, draw: 1522, away: 1659 });
   assert.deepEqual(bp(forecast.base.arms.p_market_v1), { home: 5004, draw: 2690, away: 2306 });

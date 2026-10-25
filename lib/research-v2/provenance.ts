@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 /** Engine (code) version of the Research v2 deterministic forecast. */
-export const RESEARCH_V2_ENGINE_VERSION = "kapiloto-research-v2-engine-v1" as const;
+export const RESEARCH_V2_ENGINE_VERSION = "kapiloto-research-v2-engine-v2" as const;
 
 /**
  * Lifecycle of a configuration value. Nothing in Research v2 foundations is

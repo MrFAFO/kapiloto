@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { requiredHistoryLookbackDays } from "../lib/evaluation/arms";
 import { CANDIDATE_DETERMINISTIC_BASE_CONFIG } from "../lib/research-v2/base";
 import { CANDIDATE_COMBINATIONS } from "../lib/research-v2/combination";
+import { CANDIDATE_LEAGUE_MEMBERSHIP_CONFIG } from "../lib/research-v2/league-membership";
 import { FORMAL_SAMPLING_ENABLED, ROUND_264201_LIVE_DEV_FIXTURES } from "../lib/research-v2/live-dev";
 import { createLiveDevProviders, installLiveDevFetchGuard, installNoNetworkGuard } from "../lib/research-v2/live-dev-providers";
 import {
@@ -71,7 +72,12 @@ async function capture(args: string[]) {
     const artifact = await captureLiveDevArtifact({
       roundId,
       providers,
-      configs: { base: CANDIDATE_DETERMINISTIC_BASE_CONFIG, combinations: CANDIDATE_COMBINATIONS, triage: CANDIDATE_TRIAGE_CONFIG },
+      configs: {
+        base: CANDIDATE_DETERMINISTIC_BASE_CONFIG,
+        combinations: CANDIDATE_COMBINATIONS,
+        triage: CANDIDATE_TRIAGE_CONFIG,
+        membership: CANDIDATE_LEAGUE_MEMBERSHIP_CONFIG,
+      },
       minLeadMinutes,
       historyLookbackDays: requiredHistoryLookbackDays(),
       historyFloor,

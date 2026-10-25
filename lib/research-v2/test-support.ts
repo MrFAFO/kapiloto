@@ -15,18 +15,33 @@ export const KICKOFF_AT = new Date(lastKickoffMs + 7 * 86_400_000).toISOString()
 export const CUTOFF_AT = new Date(Date.parse(KICKOFF_AT) - 24 * 3_600_000).toISOString();
 export const hoursBeforeCutoff = (hours: number) => new Date(Date.parse(CUTOFF_AT) - hours * 3_600_000).toISOString();
 
+/**
+ * Quotes retrieved at `capturedAt`. The provider's update time defaults to the
+ * retrieval time; pass `sourceUpdatedAt` (or null for none) to separate them.
+ */
 export function quotes(
-  options: { capturedAt?: string; bookmakers?: number; odds?: { home: number; draw: number; away: number } } = {},
+  options: {
+    capturedAt?: string;
+    sourceUpdatedAt?: string | null | ((index: number) => string | null);
+    bookmakers?: number;
+    odds?: { home: number; draw: number; away: number };
+  } = {},
 ): MarketQuoteRecord[] {
   const odds = options.odds ?? { home: 1.95, draw: 3.6, away: 4.2 };
+  const capturedAt = options.capturedAt ?? hoursBeforeCutoff(2);
   return Array.from({ length: options.bookmakers ?? 4 }, (_, index) => ({
     id: `q${index}`,
     fixtureId: "fixture-1",
     provider: "api-football",
     bookmakerId: `b${index}`,
     bookmakerName: `Book ${index}`,
-    capturedAt: options.capturedAt ?? hoursBeforeCutoff(2),
-    sourceUpdatedAt: null,
+    capturedAt,
+    sourceUpdatedAt:
+      typeof options.sourceUpdatedAt === "function"
+        ? options.sourceUpdatedAt(index)
+        : options.sourceUpdatedAt === undefined
+          ? capturedAt
+          : options.sourceUpdatedAt,
     odds: { home: odds.home + index * 0.01, draw: odds.draw, away: odds.away - index * 0.01 },
   }));
 }

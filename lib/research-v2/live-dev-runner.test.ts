@@ -9,6 +9,7 @@ import { syntheticLeague } from "@/lib/evaluation/test-fixtures";
 
 import { CANDIDATE_DETERMINISTIC_BASE_CONFIG, findResultLikeKeys } from "./base";
 import { CANDIDATE_COMBINATIONS, type CombinationCandidate } from "./combination";
+import { CANDIDATE_LEAGUE_MEMBERSHIP_CONFIG, segmentSeasons } from "./league-membership";
 import { FORMAL_SAMPLING_ENABLED } from "./live-dev";
 import { installLiveDevFetchGuard, installNoNetworkGuard, readOnlySupabaseClient } from "./live-dev-providers";
 import {
@@ -21,17 +22,24 @@ import {
   SPORTMONKS_HISTORY_FLOOR,
   type LiveDevArtifact,
   type LiveDevFixtureIdentity,
+  type LiveDevHistoryRow,
   type LiveDevProviders,
   type MarketInput,
 } from "./live-dev-runner";
 import { canonicalJson } from "./provenance";
 import { CANDIDATE_TRIAGE_CONFIG } from "./triage";
 
-const PREMIER = syntheticLeague({ teams: 10, seasons: 2, competitionKey: "sportmonks:8" });
-const LIGAT = syntheticLeague({ teams: 10, seasons: 2, competitionKey: "sportmonks:372", seed: 11 });
+const withoutSeasonIds = (rows: ReturnType<typeof syntheticLeague>): LiveDevHistoryRow[] => rows.map((row) => ({ ...row, providerSeasonId: null }));
+const PREMIER = withoutSeasonIds(syntheticLeague({ teams: 10, seasons: 2, competitionKey: "sportmonks:8" }));
+const LIGAT = withoutSeasonIds(syntheticLeague({ teams: 10, seasons: 2, competitionKey: "sportmonks:372", seed: 11 }));
 const NOW = new Date(Math.max(...PREMIER.map((m) => Date.parse(m.kickoffAt))) + 20 * 86_400_000);
 const at = (minutesFromNow: number) => new Date(NOW.getTime() + minutesFromNow * 60_000).toISOString();
-const CONFIGS = { base: CANDIDATE_DETERMINISTIC_BASE_CONFIG, combinations: CANDIDATE_COMBINATIONS, triage: CANDIDATE_TRIAGE_CONFIG };
+const CONFIGS = {
+  base: CANDIDATE_DETERMINISTIC_BASE_CONFIG,
+  combinations: CANDIDATE_COMBINATIONS,
+  triage: CANDIDATE_TRIAGE_CONFIG,
+  membership: CANDIDATE_LEAGUE_MEMBERSHIP_CONFIG,
+};
 
 function identity(gameNumber: number, overrides: Partial<LiveDevFixtureIdentity> = {}): LiveDevFixtureIdentity {
   const league = gameNumber === 1 ? "372" : "8";
@@ -74,7 +82,7 @@ function okMarket(bookmakers = 4): MarketInput {
 function providers(options: {
   identities?: LiveDevFixtureIdentity[];
   market?: (identity: LiveDevFixtureIdentity) => Promise<MarketInput>;
-  history?: (leagueId: string) => Promise<typeof PREMIER>;
+  history?: (leagueId: string) => Promise<LiveDevHistoryRow[]>;
   calls?: string[];
 } = {}): LiveDevProviders {
   return {
@@ -96,12 +104,11 @@ function providers(options: {
       return {
         structuredSnapshotId: "snap",
         context: {
-          managerChangeDaysAgo: { home: null, away: null },
+          managerChange: { home: { status: "unknown" }, away: { status: "unknown" } },
           restDays: { home: 6, away: 6 },
           matchesLast14Days: { home: 2, away: 2 },
           competition: { isCup: false, isSecondLeg: false },
-          promoted: { home: null, away: null },
-          unresolvedAvailability: 0,
+          unresolvedAvailability: null,
         },
       };
     },
@@ -420,13 +427,79 @@ test("a floor at or before the earliest available match changes no statistic, on
   });
   const unbounded = await capture(providers());
   const strip = (artifact: LiveDevArtifact) =>
-    artifact.deterministic.outputs.fixtures.map(({ sportmonks, ...fixture }) => ({ ...fixture, historyRowsUsed: sportmonks.historyRowsUsed }));
+    artifact.deterministic.outputs.fixtures.map(({ sportmonks, membership, triage, flags, ...fixture }) => ({
+      ...fixture,
+      historyRowsUsed: sportmonks.historyRowsUsed,
+    }));
   assert.equal(canonicalJson(strip(floored)), canonicalJson(strip(unbounded)));
   assert.notEqual(floored.deterministic.inputSha256, unbounded.deterministic.inputSha256, "the plan is part of the recorded inputs");
+  // What the floor does change is what membership can prove: a previous season
+  // starting at the window start may have begun before it.
+  assert.equal(fixtureOut(unbounded, 8).membership?.newToCompetitionThisSeason.home, false);
+  assert.equal(fixtureOut(floored, 8).membership?.unknownReason.home, "previous_season_possibly_truncated");
 });
 
 test("the CLI defaults to the measured provider floor", () => {
   const source = readFileSync(join(process.cwd(), "scripts", "research-v2-live-dev.ts"), "utf8");
   assert.match(source, /if \(!override\) return SPORTMONKS_HISTORY_FLOOR;/);
   assert.match(source, /historyFloor,\n/);
+});
+
+test("a v1 artifact is refused explicitly on replay; there is no legacy path", async () => {
+  const artifact = await capture(providers());
+  const v1 = structuredClone(artifact) as unknown as { schemaVersion: string; deterministic: { inputs: { schemaVersion: string } } };
+  v1.schemaVersion = "kapiloto-research-v2-live-dev-artifact-v1";
+  v1.deterministic.inputs.schemaVersion = "kapiloto-research-v2-live-dev-artifact-v1";
+  assert.throws(
+    () => replayLiveDevArtifact(v1 as unknown as LiveDevArtifact),
+    /artifact_schema_unsupported: kapiloto-research-v2-live-dev-artifact-v1; runner v2 requires artifact schema v2/,
+  );
+  const unknown = structuredClone(artifact) as unknown as { schemaVersion: string };
+  unknown.schemaVersion = "something-else";
+  assert.throws(() => replayLiveDevArtifact(unknown as unknown as LiveDevArtifact), /artifact_schema_unsupported: something-else; runner v2 requires artifact schema v2/);
+  assert.equal(artifact.schemaVersion, "kapiloto-research-v2-live-dev-artifact-v2");
+});
+
+test("market outputs carry market-state-v2 information times, separate from retrieval", async () => {
+  const out = fixtureOut(await capture(providers()), 8);
+  assert.equal(out.market.marketStateVersion, "market-state-v2");
+  assert.equal(out.market.retrievedAt, NOW.toISOString());
+  assert.equal(out.market.informationLatestAt, at(-30));
+  assert.equal(out.market.informationAgeMinutesAtCutoff, 30);
+  assert.equal(out.market.informationTimeSource, "provider_update");
+  assert.equal(out.market.quality, "standard");
+});
+
+test("provider season ids are carried through and decide seasons when complete", async () => {
+  const seasons = segmentSeasons(PREMIER, CANDIDATE_LEAGUE_MEMBERSHIP_CONFIG).seasons;
+  const seasonOf = (kickoffAt: string) => String(1000 + seasons.findIndex((season) => kickoffAt <= season.lastKickoffAt));
+  const seasoned = PREMIER.map((row) => ({ ...row, providerSeasonId: seasonOf(new Date(Date.parse(row.kickoffAt)).toISOString()) }));
+  const artifact = await capture(providers({ identities: [identity(8)], history: async (leagueId) => (leagueId === "8" ? seasoned : LIGAT) }));
+  const league8 = artifact.deterministic.inputs.leagues.find((league) => league.leagueId === "8");
+  assert.ok(league8?.status === "ok" && league8.matches.every((row) => row.providerSeasonId != null));
+  const membership = fixtureOut(artifact, 8).membership!;
+  assert.equal(membership.seasonSource, "provider_season_id");
+  assert.equal(membership.previousSeason?.key, "season:1000");
+  assert.equal(fixtureOut(await capture(providers({ identities: [identity(8)] })), 8).membership?.seasonSource, "inactivity_gap");
+  assert.equal(replayLiveDevArtifact(JSON.parse(JSON.stringify(artifact))).identical, true);
+});
+
+test("a side new to the competition is flagged cold-start and surfaced to discovery, Elo values untouched", async () => {
+  const lastSeason = segmentSeasons(PREMIER, CANDIDATE_LEAGUE_MEMBERSHIP_CONFIG).seasons.at(-1)!;
+  const renamed = PREMIER.map((row) => {
+    if (Date.parse(row.kickoffAt) < Date.parse(lastSeason.firstKickoffAt)) return row;
+    const swap = (key: string) => (key === "sportmonks:t9" ? "sportmonks:t99" : key);
+    return { ...row, homeTeamKey: swap(row.homeTeamKey), awayTeamKey: swap(row.awayTeamKey) };
+  });
+  const newcomer = identity(8, { sportmonks: { leagueId: "8", homeTeamId: "t99", awayTeamId: "t0", fixtureId: "sm-target-8" } });
+  const artifact = await capture(providers({ identities: [newcomer], history: async (leagueId) => (leagueId === "8" ? renamed : LIGAT) }));
+  const out = fixtureOut(artifact, 8);
+  assert.deepEqual(out.membership?.newToCompetitionThisSeason, { home: true, away: false });
+  assert.deepEqual(out.flags, ["p_stat_elo_v1:cold_start:home"]);
+  assert.equal(out.arms?.p_stat_elo_v1.status, "available");
+  assert.ok(out.triage!.needs.some((need) => need.needId === "stat_cold_start_context:home"));
+  assert.ok(!out.triage!.needs.some((need) => need.kind === "market_stat_gap"));
+  assert.ok(out.triage!.reasons.includes("new_to_competition_side"));
+  assert.ok(!out.triage!.needs.some((need) => need.kind === "manager_change_context"), "unknown manager status is a gap, not a need");
+  assert.deepEqual(out.degraded, [], "cold start is a flag, not a degradation");
 });

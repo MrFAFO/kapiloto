@@ -60,7 +60,9 @@ test("the market-timing decision is stored per adjustment", () => {
   const forecast = forecastWith({ marketCapturedAt: hoursBeforeCutoff(2), publishedAt: hoursBeforeCutoff(1) });
   const decision = forecast.adjustments[0];
   assert.equal(decision.marketQuality, "standard");
-  assert.equal(decision.marketCapturedAt, forecast.base.market.capturedAt);
+  assert.equal(decision.marketStateVersion, "market-state-v2");
+  assert.equal(decision.marketInformationLatestAt, forecast.base.market.informationLatestAt);
+  assert.equal(decision.marketInformationAgeMinutes, 120);
   assert.equal(decision.earliestEvidenceAt, new Date(hoursBeforeCutoff(1)).toISOString());
 });
 

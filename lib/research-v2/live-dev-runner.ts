@@ -9,6 +9,12 @@ import {
   type DeterministicBaseConfig,
 } from "./base";
 import { combineCandidate, type CombinationCandidate } from "./combination";
+import {
+  deriveCompetitionMembership,
+  type CompetitionMembership,
+  type LeagueMembershipConfig,
+  type SeasonedMatch,
+} from "./league-membership";
 import { FORMAL_SAMPLING_ENABLED } from "./live-dev";
 import { toBasisPoints, type BasisPoints, type ThreeWayProbabilities } from "./probability";
 import { RESEARCH_V2_ENGINE_VERSION, sha256Canonical } from "./provenance";
@@ -22,8 +28,8 @@ import { assignTriage, extractTriageFeatures, type TriageConfig, type TriageCont
  * stored artifact replays bit-for-bit without any network access.
  */
 
-export const LIVE_DEV_ARTIFACT_SCHEMA_VERSION = "kapiloto-research-v2-live-dev-artifact-v1" as const;
-export const LIVE_DEV_RUNNER_VERSION = "kapiloto-research-v2-live-dev-runner-v1" as const;
+export const LIVE_DEV_ARTIFACT_SCHEMA_VERSION = "kapiloto-research-v2-live-dev-artifact-v2" as const;
+export const LIVE_DEV_RUNNER_VERSION = "kapiloto-research-v2-live-dev-runner-v2" as const;
 /** A fixture is eligible only while kickoff is at least this far away (inclusive). */
 export const DEFAULT_LIVE_DEV_MIN_LEAD_MINUTES = 60;
 
@@ -123,8 +129,11 @@ export function planHistoryRequest(
   };
 }
 
+/** A provider history row with the provider's season id (null when the provider gave none). */
+export type LiveDevHistoryRow = HistoricalMatchResult & { providerSeasonId: string | null };
+
 export type LeagueHistoryInput =
-  | { leagueId: string; window: { startDate: string; endDate: string }; status: "ok"; matches: HistoricalMatchResult[] }
+  | { leagueId: string; window: { startDate: string; endDate: string }; status: "ok"; matches: LiveDevHistoryRow[] }
   | { leagueId: string; window: { startDate: string; endDate: string }; status: "failed"; reason: string };
 
 export type MarketInput =
@@ -153,7 +162,12 @@ export type LiveDevDeterministicInputs = {
   roundId: string;
   executionCutoffAt: string;
   minLeadMinutes: number;
-  configs: { base: DeterministicBaseConfig; combinations: CombinationCandidate[]; triage: TriageConfig };
+  configs: {
+    base: DeterministicBaseConfig;
+    combinations: CombinationCandidate[];
+    triage: TriageConfig;
+    membership: LeagueMembershipConfig;
+  };
   historyPlan: HistoryRequestPlan;
   leagues: LeagueHistoryInput[];
   fixtures: LiveDevFixtureInputs[];
@@ -197,13 +211,21 @@ export type LiveDevFixtureOutput = {
     reason: string | null;
     apiFootballFixtureId: string | null;
     resolution: string | null;
-    capturedAt: string | null;
+    marketStateVersion: string | null;
+    retrievedAt: string | null;
+    informationEarliestAt: string | null;
+    informationLatestAt: string | null;
+    informationAgeMinutesAtCutoff: number | null;
+    informationTimeSource: string | null;
     quality: string | null;
     bookmakersUsed: string[];
-    ageMinutesAtCutoff: number | null;
   };
+  /** History-derived competition membership (null when no league history was usable). */
+  membership: CompetitionMembership | null;
   candidates: LiveDevCandidateArm[];
   triage: TriageDecision | null;
+  /** Non-degrading warnings, e.g. `p_stat_elo_v1:cold_start:home` or `p_stat_elo_v1:cold_start_unknown:away`. */
+  flags: string[];
   researchAdjustmentsApplied: 0;
   solCalls: 0;
   recommendation: null;
@@ -264,7 +286,7 @@ function assertNoTargetResults(inputs: LiveDevDeterministicInputs): void {
   }
 }
 
-function historyFor(identity: LiveDevFixtureIdentity, league: LeagueHistoryInput | undefined, cutoffMs: number): HistoricalMatchResult[] {
+function historyFor(identity: LiveDevFixtureIdentity, league: LeagueHistoryInput | undefined, cutoffMs: number): LiveDevHistoryRow[] {
   if (!league || league.status !== "ok") return [];
   const kickoffMs = Date.parse(identity.kickoffAt);
   return league.matches.filter(
@@ -333,9 +355,24 @@ export function computeLiveDevOutputs(inputs: LiveDevDeterministicInputs): LiveD
           sportmonks: { ...identity.sportmonks, historyStatus: "not_retrieved", historyReason: null, historyWindow: null, historyRowsUsed: 0 },
           arms: null,
           armsBp: {},
-          market: { status: "not_retrieved", reason: null, apiFootballFixtureId: null, resolution: null, capturedAt: null, quality: null, bookmakersUsed: [], ageMinutesAtCutoff: null },
+          market: {
+            status: "not_retrieved",
+            reason: null,
+            apiFootballFixtureId: null,
+            resolution: null,
+            marketStateVersion: null,
+            retrievedAt: null,
+            informationEarliestAt: null,
+            informationLatestAt: null,
+            informationAgeMinutesAtCutoff: null,
+            informationTimeSource: null,
+            quality: null,
+            bookmakersUsed: [],
+          },
+          membership: null,
           candidates: [],
           triage: null,
+          flags: [],
           degraded: [`excluded:${eligibility.eligible ? "not_retrieved" : eligibility.reason}`],
           baseInputSha256: null,
         };
@@ -388,9 +425,35 @@ export function computeLiveDevOutputs(inputs: LiveDevDeterministicInputs): LiveD
           reason: result.status === "available" ? null : result.reason,
         };
       });
+      const competitionKey = leagueId ? `sportmonks:${leagueId}` : null;
+      const membership =
+        competitionKey && league?.status === "ok"
+          ? deriveCompetitionMembership(
+              {
+                history: history as SeasonedMatch[],
+                competitionKey,
+                homeTeamKey: identity.sportmonks.homeTeamId ? `sportmonks:${identity.sportmonks.homeTeamId}` : null,
+                awayTeamKey: identity.sportmonks.awayTeamId ? `sportmonks:${identity.sportmonks.awayTeamId}` : null,
+                targetKickoffAt: identity.kickoffAt,
+                coverageStartDate: league.window.startDate,
+              },
+              inputs.configs.membership,
+            )
+          : null;
       const triage = assignTriage(
-        extractTriageFeatures(base, fixture.triageContext, { statArm: inputs.configs.triage.statArm, neutralVenue: identity.neutralVenue }),
+        extractTriageFeatures(base, fixture.triageContext, {
+          statArm: inputs.configs.triage.statArm,
+          neutralVenue: identity.neutralVenue,
+          history: { newToCompetition: membership?.newToCompetitionThisSeason ?? { home: null, away: null } },
+        }),
         inputs.configs.triage,
+      );
+      const flags = (["home", "away"] as const).flatMap((side) =>
+        triage.statColdStart[side] === true
+          ? [`${inputs.configs.triage.statArm}:cold_start:${side}`]
+          : triage.statColdStart[side] === null
+            ? [`${inputs.configs.triage.statArm}:cold_start_unknown:${side}`]
+            : [],
       );
       const armsBp: Partial<Record<BaseArmId, BasisPoints>> = {};
       for (const arm of Object.values(base.arms)) if (arm.status === "available") armsBp[arm.arm] = toBasisPoints(arm.probabilities);
@@ -411,14 +474,20 @@ export function computeLiveDevOutputs(inputs: LiveDevDeterministicInputs): LiveD
           reason: fixture.market.status === "unavailable" ? fixture.market.reason : base.market.reason,
           apiFootballFixtureId: fixture.market.apiFootballFixtureId,
           resolution: fixture.market.resolution,
-          capturedAt: fixture.market.status === "ok" ? fixture.market.capturedAt : null,
+          marketStateVersion: base.market.policy.version,
+          retrievedAt: fixture.market.status === "ok" ? fixture.market.capturedAt : null,
+          informationEarliestAt: base.market.informationEarliestAt,
+          informationLatestAt: base.market.informationLatestAt,
+          informationAgeMinutesAtCutoff: base.market.informationAgeMinutesAtCutoff,
+          informationTimeSource: base.market.informationTimeSource,
           quality: base.market.quality,
           bookmakersUsed:
             fixture.market.status === "ok" ? [...new Set(fixture.market.quotes.map((quote) => quote.bookmakerName))].sort() : [],
-          ageMinutesAtCutoff: base.market.ageMinutesAtCutoff,
         },
+        membership,
         candidates,
         triage,
+        flags,
         degraded,
         baseInputSha256: base.inputSha256,
       };
@@ -458,6 +527,17 @@ export function sealLiveDevArtifact(
   };
 }
 
+/**
+ * Refuses any artifact this runner did not produce. There is deliberately no
+ * legacy path: an older schema may carry different market-time semantics.
+ */
+export function assertReplayableSchema(artifact: { schemaVersion?: unknown; deterministic?: { inputs?: { schemaVersion?: unknown } } }): void {
+  const versions = [artifact?.schemaVersion, artifact?.deterministic?.inputs?.schemaVersion];
+  if (versions.every((version) => version === LIVE_DEV_ARTIFACT_SCHEMA_VERSION)) return;
+  const found = String(versions.find((version) => version !== LIVE_DEV_ARTIFACT_SCHEMA_VERSION) ?? "missing");
+  throw new Error(`artifact_schema_unsupported: ${found}; runner v2 requires artifact schema v2 (${LIVE_DEV_ARTIFACT_SCHEMA_VERSION})`);
+}
+
 /** Replay mode: recompute from stored inputs only; no provider or network access. */
 export function replayLiveDevArtifact(artifact: LiveDevArtifact): {
   identical: boolean;
@@ -466,6 +546,7 @@ export function replayLiveDevArtifact(artifact: LiveDevArtifact): {
   artifactSha256: string;
   outputs: LiveDevDeterministicOutput;
 } {
+  assertReplayableSchema(artifact);
   const outputs = computeLiveDevOutputs(artifact.deterministic.inputs);
   const inputSha256 = sha256Canonical(artifact.deterministic.inputs);
   const outputSha256 = sha256Canonical(outputs);
@@ -486,18 +567,18 @@ export function replayLiveDevArtifact(artifact: LiveDevArtifact): {
 export interface LiveDevProviders {
   now(): Date;
   loadIdentities(): Promise<LiveDevFixtureIdentity[]>;
-  loadLeagueHistory(leagueId: string, window: { startDate: string; endDate: string }): Promise<HistoricalMatchResult[]>;
+  loadLeagueHistory(leagueId: string, window: { startDate: string; endDate: string }): Promise<LiveDevHistoryRow[]>;
   loadMarket(identity: LiveDevFixtureIdentity): Promise<MarketInput>;
   loadTriageContext(identity: LiveDevFixtureIdentity): Promise<{ context: TriageContext; structuredSnapshotId: string | null }>;
 }
 
-const NEUTRAL_CONTEXT: TriageContext = {
-  managerChangeDaysAgo: { home: null, away: null },
+/** Nothing known: every signal is explicitly unknown, never "checked, none". */
+const UNKNOWN_CONTEXT: TriageContext = {
+  managerChange: { home: { status: "unknown" }, away: { status: "unknown" } },
   restDays: { home: null, away: null },
   matchesLast14Days: { home: null, away: null },
   competition: { isCup: false, isSecondLeg: false },
-  promoted: { home: null, away: null },
-  unresolvedAvailability: 0,
+  unresolvedAvailability: null,
 };
 
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -554,7 +635,7 @@ export async function captureLiveDevArtifact(input: {
   const fixtures: LiveDevFixtureInputs[] = [];
   for (const identity of [...identities].sort((a, b) => a.gameNumber - b.gameNumber)) {
     if (!eligible.includes(identity)) {
-      fixtures.push({ identity, market: null, triageContext: NEUTRAL_CONTEXT, structuredSnapshotId: null });
+      fixtures.push({ identity, market: null, triageContext: UNKNOWN_CONTEXT, structuredSnapshotId: null });
       continue;
     }
     let market: MarketInput;
@@ -563,7 +644,7 @@ export async function captureLiveDevArtifact(input: {
     } catch (error) {
       market = { status: "unavailable", reason: classifyProviderError(error), resolution: null, apiFootballFixtureId: null };
     }
-    let context = NEUTRAL_CONTEXT;
+    let context = UNKNOWN_CONTEXT;
     let structuredSnapshotId: string | null = null;
     try {
       const loaded = await timed("supabase", `triage_context:${identity.fixtureId}`, () => input.providers.loadTriageContext(identity));

@@ -72,12 +72,42 @@ export type DeterministicBaseInputs = {
 
 export type MarketQuality = "standard" | "thin" | "stale" | "missing";
 
+export const MARKET_STATE_POLICY_VERSION = "market-state-v2" as const;
+
+/**
+ * How market time is defined. market-state-v2: a price's information time is
+ * the provider's own last update (or Kapiloto's retrieval when that is
+ * earlier), freshness is measured from the oldest price used, and a quote
+ * without a provider update time can never support the `standard` label.
+ * The fields restate the semantics as data; the engine refuses any other value.
+ */
+export type MarketStatePolicy = VersionedConfig & {
+  informationTime: "provider_update";
+  freshnessReference: "oldest_used_price";
+  standardRequiresProviderUpdateTime: true;
+};
+
+export const CANDIDATE_MARKET_STATE_POLICY: MarketStatePolicy = {
+  id: "research-v2-market-state",
+  version: MARKET_STATE_POLICY_VERSION,
+  status: "candidate",
+  informationTime: "provider_update",
+  freshnessReference: "oldest_used_price",
+  standardRequiresProviderUpdateTime: true,
+};
+
 export type MarketState = {
+  policy: { id: string; version: string };
   quality: MarketQuality;
   snapshotId: string | null;
-  /** Latest capture among quotes the market arm used (null when unavailable). */
-  capturedAt: string | null;
-  ageMinutesAtCutoff: number | null;
+  /** Latest Kapiloto retrieval among the quotes used (audit only; never a market time). */
+  retrievedAt: string | null;
+  /** Information time of the oldest and newest price used. */
+  informationEarliestAt: string | null;
+  informationLatestAt: string | null;
+  /** Minutes from the oldest price used to the cutoff. */
+  informationAgeMinutesAtCutoff: number | null;
+  informationTimeSource: "provider_update" | "capture_fallback" | "mixed" | null;
   bookmakers: number;
   reason: string | null;
 };
@@ -86,6 +116,7 @@ export type DeterministicBaseConfig = VersionedConfig & {
   leagueBaseline: LeagueBaselineConfig;
   elo: EloConfig;
   marketPrior: MarketPriorConfig;
+  marketState: MarketStatePolicy;
   /** Stat arms evaluated side by side; selection between them is deferred to forward evaluation. */
   statArms: StatArmId[];
 };
@@ -153,9 +184,39 @@ export function assertNoResultLeakage(inputs: DeterministicBaseInputs): void {
   }
 }
 
+export function assertMarketStatePolicy(policy: MarketStatePolicy): void {
+  if (
+    policy?.version !== MARKET_STATE_POLICY_VERSION ||
+    policy.informationTime !== "provider_update" ||
+    policy.freshnessReference !== "oldest_used_price" ||
+    policy.standardRequiresProviderUpdateTime !== true
+  ) {
+    throw new Error(`research_v2_market_state_policy_unsupported: ${policy?.id ?? "?"}@${policy?.version ?? "?"}`);
+  }
+}
+
+/** A price's information time: the provider's update, or Kapiloto's retrieval when earlier or when no update time exists. */
+function informationTime(quote: MarketQuoteRecord): { ms: number; source: "provider_update" | "capture_fallback" } {
+  const retrievedMs = parseInstant(quote.capturedAt, "capturedAt");
+  if (quote.sourceUpdatedAt == null) return { ms: retrievedMs, source: "capture_fallback" };
+  return { ms: Math.min(retrievedMs, parseInstant(quote.sourceUpdatedAt, "sourceUpdatedAt")), source: "provider_update" };
+}
+
+const iso = (ms: number) => new Date(ms).toISOString();
+
 function marketState(inputs: DeterministicBaseInputs, config: DeterministicBaseConfig) {
+  assertMarketStatePolicy(config.marketState);
+  const cutoffMs = parseInstant(inputs.informationCutoffAt, "informationCutoffAt");
+  const policy = { id: config.marketState.id, version: config.marketState.version };
+  const byId = new Map(inputs.marketQuotes.map((quote) => [quote.id, quote]));
+  // The shared market prior measures age from `capturedAt`; it receives each
+  // price's information time there. A quote retrieved after the cutoff keeps
+  // its retrieval time, so the prior still excludes it.
+  const timed = inputs.marketQuotes.map((quote) =>
+    parseInstant(quote.capturedAt, "capturedAt") > cutoffMs ? quote : { ...quote, capturedAt: iso(informationTime(quote).ms) },
+  );
   const prior = buildMarketPrior(
-    inputs.marketQuotes,
+    timed,
     { fixtureId: inputs.fixture.fixtureId, cutoffAt: inputs.informationCutoffAt },
     config.marketPrior,
   );
@@ -164,28 +225,50 @@ function marketState(inputs: DeterministicBaseInputs, config: DeterministicBaseC
     return {
       prior,
       state: {
+        policy,
         quality,
         snapshotId: inputs.marketSnapshotId,
-        capturedAt: null,
-        ageMinutesAtCutoff: null,
+        retrievedAt: null,
+        informationEarliestAt: null,
+        informationLatestAt: null,
+        informationAgeMinutesAtCutoff: null,
+        informationTimeSource: null,
         bookmakers: prior.usableBookmakers,
         reason: prior.reason,
       } satisfies MarketState,
     };
   }
-  const capturedAt = prior.bookmakers.map((quote) => quote.capturedAt).sort().at(-1) ?? null;
+
+  const used = prior.bookmakers.map((usedQuote) => {
+    const original = byId.get(usedQuote.quoteId) as MarketQuoteRecord;
+    return { ...informationTime(original), retrievedMs: Date.parse(original.capturedAt), ageMinutes: usedQuote.ageMinutes };
+  });
+  const earliestMs = Math.min(...used.map((quote) => quote.ms));
+  const latestMs = Math.max(...used.map((quote) => quote.ms));
+  const sources = new Set(used.map((quote) => quote.source));
+  const missingProviderTime = sources.has("capture_fallback");
+  const allFresh = used.every((quote) => quote.ageMinutes <= config.marketPrior.freshQuoteAgeMinutes);
+  const standard = prior.quality === "standard" && !missingProviderTime;
+  const reason = standard
+    ? null
+    : missingProviderTime
+      ? "provider_update_time_missing"
+      : !allFresh
+        ? "market_information_not_fresh"
+        : "fewer_bookmakers_than_standard";
   return {
     prior,
     state: {
-      quality: prior.quality === "standard" ? "standard" : "thin",
+      policy,
+      quality: standard ? "standard" : "thin",
       snapshotId: inputs.marketSnapshotId,
-      capturedAt,
-      ageMinutesAtCutoff:
-        capturedAt == null
-          ? null
-          : Math.round((Date.parse(inputs.informationCutoffAt) - Date.parse(capturedAt)) / 60_000),
+      retrievedAt: iso(Math.max(...used.map((quote) => quote.retrievedMs))),
+      informationEarliestAt: iso(earliestMs),
+      informationLatestAt: iso(latestMs),
+      informationAgeMinutesAtCutoff: (cutoffMs - earliestMs) / 60_000,
+      informationTimeSource: sources.size > 1 ? "mixed" : missingProviderTime ? "capture_fallback" : "provider_update",
       bookmakers: prior.bookmakers.length,
-      reason: prior.quality === "standard" ? null : "fewer_fresh_bookmakers_than_standard",
+      reason,
     } satisfies MarketState,
   };
 }
@@ -321,10 +404,11 @@ function unavailable(arm: BaseArmId, version: string, reason: string): ArmResult
 
 export const CANDIDATE_DETERMINISTIC_BASE_CONFIG: DeterministicBaseConfig = {
   id: "research-v2-deterministic-base",
-  version: "base-v1",
+  version: "base-v2",
   status: "candidate",
   leagueBaseline: DEFAULT_LEAGUE_BASELINE_CONFIG,
   elo: DEFAULT_ELO_CONFIG,
   marketPrior: DEFAULT_MARKET_PRIOR_CONFIG,
+  marketState: CANDIDATE_MARKET_STATE_POLICY,
   statArms: ["p_stat_elo_v1", "p_stat_goal_model_v1"],
 };
