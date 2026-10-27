@@ -447,7 +447,7 @@ export class SupabaseShadowEvaluationStore implements ShadowCycleStore {
 
     const analysisIds = publicationRows.map((row) => String(row.analysis_id));
     const runIds = [...new Set(publicationRows.map((row) => String(row.research_run_id)))];
-    const [analyses, runs] = await Promise.all([
+    const [analyses, runs, policies] = await Promise.all([
       this.client
         .from("kapiloto_analyses")
         .select(
@@ -457,12 +457,26 @@ export class SupabaseShadowEvaluationStore implements ShadowCycleStore {
       this.client
         .from("kapiloto_research_runs")
         .select(
-          "id,derivation_version,blend_policy_version,reliability_formula_version,calibration_version",
+          "id,derivation_version,blend_policy_version,reliability_formula_version,calibration_version,research_protocol_version",
         )
         .in("id", runIds),
+      this.client
+        .from("kapiloto_analysis_inputs")
+        .select("analysis_id,input_version")
+        .eq("input_type", "grounding_policy")
+        .in("analysis_id", analysisIds),
     ]);
     if (analyses.error) fail("Failed to load Kapiloto analyses", analyses.error);
     if (runs.error) fail("Failed to load Kapiloto runs", runs.error);
+    if (policies.error) {
+      fail("Failed to load Kapiloto grounding policy versions", policies.error);
+    }
+    const policyByAnalysis = new Map(
+      ((policies.data ?? []) as Row[]).map((row) => [
+        String(row.analysis_id),
+        (row.input_version as string | null) ?? null,
+      ]),
+    );
 
     const analysisRows = new Map(
       ((analyses.data ?? []) as Row[]).map((row) => [String(row.id), row]),
@@ -505,6 +519,10 @@ export class SupabaseShadowEvaluationStore implements ShadowCycleStore {
           reliabilityFormulaVersion:
             (run?.reliability_formula_version as string | null) ?? null,
           calibrationVersion: (run?.calibration_version as string | null) ?? null,
+          researchProtocolVersion:
+            (run?.research_protocol_version as string | null) ?? null,
+          groundingPolicyVersion:
+            policyByAnalysis.get(String(analysis.id)) ?? null,
         },
       ];
     });

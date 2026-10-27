@@ -32,7 +32,39 @@ export type PublishedKapilotoAnalysis = {
   blendPolicyVersion: string | null;
   reliabilityFormulaVersion: string | null;
   calibrationVersion: string | null;
+  /** Research protocol the run was frozen under (null for legacy rows). */
+  researchProtocolVersion?: string | null;
+  /** Grounding policy recorded on the analysis (null for legacy rows). */
+  groundingPolicyVersion?: string | null;
 };
+
+/**
+ * Arm version that segments scoring by research system. Research v3 and
+ * later are scored as their own arm version (protocol + grounding policy +
+ * reliability formula) so v2 and v3 outcomes are never pooled. Legacy rows
+ * keep the original version so already-recorded predictions stay comparable.
+ */
+export function kapilotoProjectionArmVersion(
+  row: Pick<
+    PublishedKapilotoAnalysis,
+    "researchProtocolVersion" | "groundingPolicyVersion" | "reliabilityFormulaVersion"
+  >,
+): string {
+  const protocol = row.researchProtocolVersion ?? null;
+  if (
+    protocol == null ||
+    protocol === "kapiloto-research-v1" ||
+    protocol === "kapiloto-research-v2"
+  ) {
+    return KAPILOTO_PUBLISHED_PROJECTION_VERSION;
+  }
+  return [
+    KAPILOTO_PUBLISHED_PROJECTION_VERSION,
+    protocol,
+    row.groundingPolicyVersion ?? "grounding-unknown",
+    row.reliabilityFormulaVersion ?? "reliability-unknown",
+  ].join("|");
+}
 
 const SCOREABLE_OUTCOMES = new Set(["analyzed", "carried_forward"]);
 
@@ -57,7 +89,7 @@ function projected(
     fixture_id: row.fixtureId,
     round_game_id: row.roundGameId,
     arm,
-    arm_version: KAPILOTO_PUBLISHED_PROJECTION_VERSION,
+    arm_version: kapilotoProjectionArmVersion(row),
     evaluation_mode: "forward",
     deterministic: false,
     information_cutoff_at: new Date(row.researchCutoffAt).toISOString(),
@@ -80,6 +112,8 @@ function projected(
       blend_policy_version: row.blendPolicyVersion,
       reliability_formula_version: row.reliabilityFormulaVersion,
       calibration_version: row.calibrationVersion,
+      research_protocol_version: row.researchProtocolVersion ?? null,
+      grounding_policy_version: row.groundingPolicyVersion ?? null,
     },
     input_sha256: sha256Hex({
       arm,
