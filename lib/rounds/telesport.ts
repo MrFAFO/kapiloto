@@ -7,7 +7,7 @@ import type {
   TotoRoundProvider,
 } from "./toto-source";
 
-const DEFAULT_URL = "https://www.telesport.co.il/toto.aspx";
+const DEFAULT_URL = "https://www.telesport.co.il/winner-16";
 const ISRAEL_TIME_ZONE = "Asia/Jerusalem";
 
 type FetchLike = (
@@ -261,6 +261,202 @@ function canonicalTelesportGameStatus(
   return hasScore ? "under_review" : "upcoming";
 }
 
+type ModernWinner16Row = {
+  gameNumber: number;
+  rawStatus: string;
+  homeTeam: string;
+  rawScore: string;
+  awayTeam: string;
+  outcome: "1" | "X" | "2" | null;
+  competition: DiscoveredCompetition;
+};
+
+function modernVisibleLines(html: string): string[] {
+  const withoutNonContent = html
+    .replace(/<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi, " ")
+    .replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style>/gi, " ")
+    .replace(/<noscript\\b[^>]*>[\\s\\S]*?<\\/noscript>/gi, " ");
+
+  const withBoundaries = withoutNonContent
+    .replace(/<br\\s*\\/?\\s*>/gi, "\\n")
+    .replace(
+      /<\\/(?:div|p|li|tr|td|th|h1|h2|h3|h4|section|article|header|footer|main|span|button)>/gi,
+      "\\n",
+    )
+    .replace(/<[^>]+>/g, " ");
+
+  return decodeHtml(withBoundaries)
+    .split(/\\r?\\n/)
+    .map((line) => line.replace(/\\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function modernRoundAnchor(lines: string[]): {
+  index: number;
+  externalRoundNumber: string;
+} | null {
+  const currentRoundIndex = lines.findIndex((line) => /^מחזור\\s+נוכחי$/i.test(line));
+  const start = currentRoundIndex >= 0 ? currentRoundIndex + 1 : 0;
+  const end =
+    currentRoundIndex >= 0
+      ? Math.min(lines.length, currentRoundIndex + 8)
+      : lines.length;
+
+  for (let index = start; index < end; index += 1) {
+    const match = lines[index].match(/^מחזור\\s*:\\s*(\\d+)$/);
+    if (match) {
+      return { index, externalRoundNumber: match[1] };
+    }
+  }
+
+  return null;
+}
+
+function parseModernWinner16Rows(html: string): {
+  externalRoundNumber: string;
+  rows: ModernWinner16Row[];
+} | null {
+  const lines = modernVisibleLines(html);
+  const anchor = modernRoundAnchor(lines);
+  if (!anchor) return null;
+
+  const rows: ModernWinner16Row[] = [];
+  let cursor = anchor.index + 1;
+  let competition: DiscoveredCompetition | null = null;
+
+  for (let expected = 1; expected <= 16; expected += 1) {
+    const expectedText = String(expected);
+    let gameIndex = -1;
+
+    while (cursor < lines.length) {
+      if (lines[cursor] === expectedText) {
+        gameIndex = cursor;
+        break;
+      }
+
+      const candidate = lines[cursor];
+      if (
+        candidate !== "?" &&
+        candidate !== "1" &&
+        candidate !== "X" &&
+        candidate !== "2" &&
+        !/^מחזור\\s*:/i.test(candidate)
+      ) {
+        competition = normalizeTelesportCompetition(candidate);
+      }
+      cursor += 1;
+    }
+
+    if (gameIndex < 0 || !competition) return null;
+    if (gameIndex + 4 >= lines.length) return null;
+
+    const rawStatus = lines[gameIndex + 1];
+    const homeTeam = lines[gameIndex + 2];
+    const rawScore = lines[gameIndex + 3];
+    const awayTeam = lines[gameIndex + 4];
+
+    if (
+      !rawStatus ||
+      !homeTeam ||
+      !awayTeam ||
+      /^\\d{1,2}$/.test(homeTeam) ||
+      /^\\d{1,2}$/.test(awayTeam)
+    ) {
+      return null;
+    }
+
+    cursor = gameIndex + 5;
+
+    let outcome: "1" | "X" | "2" | null = null;
+    const outcomeCandidate = lines[cursor];
+    if (
+      outcomeCandidate === "?" ||
+      outcomeCandidate === "1" ||
+      outcomeCandidate === "X" ||
+      outcomeCandidate === "2"
+    ) {
+      const nextGameText = expected < 16 ? String(expected + 1) : null;
+      const looksLikeNextGameNumber =
+        nextGameText != null &&
+        outcomeCandidate === nextGameText &&
+        lines[cursor + 1] !== nextGameText;
+
+      if (!looksLikeNextGameNumber) {
+        if (
+          outcomeCandidate === "1" ||
+          outcomeCandidate === "X" ||
+          outcomeCandidate === "2"
+        ) {
+          outcome = outcomeCandidate;
+        }
+        cursor += 1;
+      }
+    }
+
+    rows.push({
+      gameNumber: expected,
+      rawStatus,
+      homeTeam,
+      rawScore,
+      awayTeam,
+      outcome,
+      competition,
+    });
+  }
+
+  if (rows.length !== 16) return null;
+  return { externalRoundNumber: anchor.externalRoundNumber, rows };
+}
+
+function parseModernTelesportWinner16StateHtml(
+  html: string,
+): Omit<TelesportWinner16State, "sourceVersion" | "fetchedAt"> | null {
+  const parsed = parseModernWinner16Rows(html);
+  if (!parsed) return null;
+
+  return {
+    externalRoundNumber: parsed.externalRoundNumber,
+    games: parsed.rows.map((row) => {
+      const score = parseTelesportScore(row.rawScore);
+      return {
+        gameNumber: row.gameNumber,
+        status: canonicalTelesportGameStatus(row.rawStatus, score != null),
+        homeScore: score?.home ?? null,
+        awayScore: score?.away ?? null,
+        outcome: row.outcome,
+        rawStatus: row.rawStatus,
+        rawScore: row.rawScore,
+      };
+    }),
+  };
+}
+
+function parseModernTelesportWinner16Html(
+  html: string,
+  now: Date,
+): Omit<
+  TotoRoundDiscovery,
+  "source" | "sourceUrl" | "sourceVersion" | "fetchedAt"
+> | null {
+  const parsed = parseModernWinner16Rows(html);
+  if (!parsed) return null;
+
+  const games: DiscoveredRoundGame[] = parsed.rows.map((row) => ({
+    gameNumber: row.gameNumber,
+    rawKickoff: row.rawStatus,
+    kickoffAt: parseKickoff(row.rawStatus, now),
+    homeTeam: row.homeTeam,
+    awayTeam: row.awayTeam,
+    competition: row.competition,
+  }));
+
+  return {
+    externalRoundNumber: parsed.externalRoundNumber,
+    games,
+    completeKickoffs: games.every((game) => game.kickoffAt !== null),
+  };
+}
+
 export function parseTelesportWinner16StateHtml(
   html: string,
 ): Omit<TelesportWinner16State, "sourceVersion" | "fetchedAt"> {
@@ -269,6 +465,8 @@ export function parseTelesportWinner16StateHtml(
   );
 
   if (!sectionMatch) {
+    const modern = parseModernTelesportWinner16StateHtml(html);
+    if (modern) return modern;
     throw new Error("Telesport Winner 16 state section was not found.");
   }
 
@@ -345,6 +543,8 @@ export function parseTelesportWinner16Html(
   );
 
   if (!sectionMatch) {
+    const modern = parseModernTelesportWinner16Html(html, now);
+    if (modern) return modern;
     throw new Error("Telesport Winner 16 section was not found.");
   }
 
