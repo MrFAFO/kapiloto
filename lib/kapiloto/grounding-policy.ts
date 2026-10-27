@@ -272,7 +272,7 @@ export function applyGroundingPolicy(
       survivingFacts.push({ ...fact, evidence_ids: evidenceIds });
     }
     output.tactical_facts = survivingFacts;
-    const factIds = new Set(survivingFacts.map((fact) => fact.fact_id));
+    const factIds = new Set<string>(survivingFacts.map((fact) => fact.fact_id));
 
     const survivingMatchups: SolMatchupAnalysis[] = [];
     for (const matchup of output.matchup_analysis ?? []) {
