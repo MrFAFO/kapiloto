@@ -85,6 +85,7 @@ function availabilityItems(value: unknown): Array<{
   player: string;
   status: string;
   team: string;
+  functions: string[];
 }> {
   if (!Array.isArray(value)) return [];
 
@@ -106,10 +107,15 @@ function availabilityItems(value: unknown): Array<{
                 ? "סיכון לרוטציה"
                 : "עדכון סגל";
 
+    const functions = Array.isArray(record.functions)
+      ? record.functions.filter((item): item is string => typeof item === "string")
+      : [];
+
     return [{
       player: record.player_name,
       status,
       team: record.team === "away" ? "חוץ" : "בית",
+      functions,
     }];
   });
 }
@@ -189,6 +195,47 @@ function matchupItems(value: unknown): Array<{
       magnitude:
         typeof record.magnitude === "string" ? record.magnitude : "small",
       description: record.description,
+    }];
+  });
+}
+
+function roleLabel(value: string): string {
+  const labels: Record<string, string> = {
+    ball_progressor: "מקדם כדור",
+    creator: "יוצר מצבים",
+    finisher: "מסיים",
+    depth_runner: "רץ לעומק",
+    target_outlet: "נקודת מוצא",
+    defensive_anchor: "עוגן הגנתי",
+    aerial_centre_back: "בלם אווירי",
+    width_provider: "יוצר רוחב",
+    press_leader: "מוביל לחץ",
+    set_piece_taker: "בועט מצבים נייחים",
+    goalkeeper: "שוער",
+  };
+  return labels[value] ?? value.replaceAll("_", " ");
+}
+
+function regimeItems(value: unknown): Array<{
+  team: "home" | "away";
+  type: "coach_change" | "formation_change";
+  effectiveDate: string;
+}> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    if (
+      (record.team !== "home" && record.team !== "away") ||
+      (record.type !== "coach_change" && record.type !== "formation_change") ||
+      typeof record.effective_date !== "string"
+    ) {
+      return [];
+    }
+    return [{
+      team: record.team,
+      type: record.type,
+      effectiveDate: record.effective_date,
     }];
   });
 }
@@ -448,6 +495,7 @@ export default async function MatchPage({
   const awayLineup = expectedLineup(analysis?.expected_lineups, "away");
   const tacticalFacts = tacticalFactItems(analysis?.tactical_facts);
   const matchups = matchupItems(analysis?.matchup_analysis);
+  const regimes = regimeItems(analysis?.regime_changes);
   const watches = watchItems(analysis?.watch_items);
   const hasProbabilities =
     analysis?.p_final_1_bp != null &&
@@ -551,7 +599,7 @@ export default async function MatchPage({
                   </p>
                   {analysis.reliability != null ? (
                     <p className="text-[8px] text-[var(--muted)]">
-                      {analysis.reliability}/100
+                      {Math.round(Number(analysis.reliability) * 100)}/100
                     </p>
                   ) : null}
                 </div>
@@ -646,6 +694,11 @@ export default async function MatchPage({
                         <p className="text-[8px] text-[var(--muted)]">
                           {item.team}
                         </p>
+                        {item.functions.length > 0 ? (
+                          <p className="mt-0.5 break-words text-[8px] text-[var(--kapiloto)]">
+                            {item.functions.map(roleLabel).join(" · ")}
+                          </p>
+                        ) : null}
                       </div>
                       <span className="text-[8px] font-bold text-[var(--diego)]">
                         {item.status}
@@ -726,6 +779,27 @@ export default async function MatchPage({
                       </div>
                       <p className="mt-1.5 text-[9px]">
                         {tacticalLabel(fact.attribute)} · {tacticalLabel(fact.value)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {regimes.length > 0 ? (
+              <section className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4">
+                <p className="text-[11px] font-bold">שינויים מקצועיים אחרונים</p>
+                <div className="mt-3 flex flex-col gap-2">
+                  {regimes.map((item, index) => (
+                    <div
+                      key={`${item.team}-${item.type}-${item.effectiveDate}-${index}`}
+                      className="rounded-xl bg-[var(--elevated)] px-3 py-2.5"
+                    >
+                      <p className="text-[9px] font-bold">
+                        {item.team === "home" ? home : away}
+                      </p>
+                      <p className="mt-0.5 text-[8px] text-[var(--muted)]">
+                        {item.type === "coach_change" ? "שינוי מאמן" : "שינוי מערך"} · {item.effectiveDate}
                       </p>
                     </div>
                   ))}
