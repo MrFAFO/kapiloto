@@ -11,6 +11,11 @@ export type GroundingSummary = {
   acceptedTrustTiers: number[];
   structuredTrustTiers?: number[];
   rejectedCount: number;
+  /**
+   * Research v3: a grounded regime change provably post-dates the frozen
+   * structured form/xG for at least one team.
+   */
+  preRegimeStructuredInputs?: boolean;
 };
 
 export type DerivedAnalyzedFixture = {
@@ -169,6 +174,11 @@ export function deriveReliability(
   } else {
     score -= 0.12;
     reasons.push("no_verified_evidence");
+  }
+
+  if (grounding.preRegimeStructuredInputs) {
+    score -= 0.05;
+    reasons.push("structured_inputs_pre_regime");
   }
 
   if (grounding.rejectedCount > 0) {

@@ -11,12 +11,17 @@ import {
 import {
   deriveFixtureAnalysis,
   type DerivedAnalyzedFixture,
+  type GroundingSummary,
 } from "./derivation";
 import type {
   FrozenFixtureContext,
   ResearchIneligibilityReason,
 } from "./research-run-plan";
 import type { SolFixtureResearchOutput } from "./research-output";
+import {
+  canonicalClaimTypeForDimension,
+  itemTrustTier,
+} from "./research-v3-rules";
 import type { GroundingResult } from "./source-grounding";
 import {
   structuredRefTrustTier,
@@ -66,7 +71,8 @@ export type MaterializedFactor = {
   rationale: string;
   evidence_model_ids: string[];
   structured_refs: string[];
-  matchup_ids: string[];
+  /** Research v3 only; absent for v1/v2 factors (persisted as []). */
+  matchup_ids?: string[];
 };
 
 export type MaterializedAnalysis = {
@@ -279,7 +285,9 @@ function baseMaterialization(
         acceptedIds,
       ),
       structured_refs: [...(factor.structured_refs ?? [])].sort(),
-      matchup_ids: [...(factor.matchup_ids ?? [])].sort(),
+      ...(output.protocol_version === "kapiloto-research-v3"
+        ? { matchup_ids: [...(factor.matchup_ids ?? [])].sort() }
+        : {}),
     }))
     .filter(
       (factor) =>
@@ -387,8 +395,12 @@ function baseMaterialization(
           rejected: grounding.rejected,
           requires_entailment_verification:
             grounding.requiresEntailmentVerification,
-          item_entailment_verdicts:
-            grounding.itemEntailmentVerdicts ?? {},
+          ...(output.protocol_version === "kapiloto-research-v3"
+            ? {
+                item_entailment_verdicts: grounding.itemEntailmentVerdicts ?? {},
+                item_evidence_exclusions: grounding.itemEvidenceExclusions ?? {},
+              }
+            : {}),
         },
       },
     ],
@@ -399,15 +411,9 @@ function groundingSummary(
   grounding: GroundingResult,
   output: SolFixtureResearchOutput,
   card: KapilotoFixtureCard,
-) {
-  const factorEvidenceIds = new Set(
-    output.factors.flatMap((factor) => factor.evidence_ids),
-  );
-  const usable = grounding.accepted.filter(
-    (item) =>
-      factorEvidenceIds.has(item.modelEvidenceId) &&
-      item.entailment !== "unsupported",
-  );
+  rawOutput: SolFixtureResearchOutput = output,
+  decision: GroundingPolicyDecision | null = null,
+): GroundingSummary {
   const structuredRefs = new Set<KapilotoStructuredRef>();
   for (const factor of output.factors) {
     for (const ref of factor.structured_refs ?? []) {
@@ -418,25 +424,64 @@ function groundingSummary(
     .map((ref) => structuredRefTrustTier(ref, card))
     .filter((tier): tier is 1 | 3 => tier != null);
 
+  if (output.protocol_version !== "kapiloto-research-v3") {
+    // Legacy reliability scope (reliability-shadow-v4 and earlier) for
+    // replayed v1/v2 research.
+    const usable = grounding.accepted.filter(
+      (item) => item.entailment !== "unsupported",
+    );
+    return {
+      acceptedTrustTiers: usable.map((item) => item.trustTier),
+      structuredTrustTiers,
+      rejectedCount:
+        grounding.rejected.length +
+        grounding.accepted.filter((item) => item.entailment === "unsupported")
+          .length,
+    };
+  }
+
+  // Research v3 (reliability-shadow-v5): only evidence that supports a
+  // surviving probability-moving factor counts, rated by that factor's
+  // canonical claim class. Descriptive lineup/fact/regime rows neither raise
+  // nor lower reliability merely by existing.
+  const accepted = new Map(
+    grounding.accepted.map((item) => [item.modelEvidenceId, item]),
+  );
+  const tierById = new Map<string, number>();
+  for (const factor of output.factors) {
+    const canonical = canonicalClaimTypeForDimension(factor.dimension);
+    for (const id of factor.evidence_ids) {
+      const evidence = accepted.get(id);
+      if (!evidence || evidence.entailment === "unsupported") continue;
+      const tier = itemTrustTier(evidence, canonical);
+      tierById.set(id, Math.max(tierById.get(id) ?? 0, tier));
+    }
+  }
+  const proposedFactorEvidence = new Set(
+    rawOutput.factors.flatMap((factor) => factor.evidence_ids),
+  );
+
   return {
-    acceptedTrustTiers: usable.map((item) => item.trustTier),
+    acceptedTrustTiers: [...tierById.values()],
     structuredTrustTiers,
     rejectedCount:
       grounding.rejected.filter((item) =>
-        factorEvidenceIds.has(item.evidenceId),
+        proposedFactorEvidence.has(item.evidenceId),
       ).length +
       grounding.accepted.filter(
         (item) =>
-          factorEvidenceIds.has(item.modelEvidenceId) &&
+          proposedFactorEvidence.has(item.modelEvidenceId) &&
           item.entailment === "unsupported",
       ).length,
+    preRegimeStructuredInputs:
+      (decision?.preRegimeStructuredTeams?.length ?? 0) > 0,
   };
 }
 
 function policyAuditInput(decision: GroundingPolicyDecision) {
   return {
     input_type: "grounding_policy",
-    input_version: KAPILOTO_GROUNDING_POLICY_VERSION,
+    input_version: decision.policyVersion ?? KAPILOTO_GROUNDING_POLICY_VERSION,
     metadata: {
       mode: decision.mode,
       p_sol_valid: decision.pSolValid,
@@ -760,6 +805,8 @@ function materializeResearchFixture(
       effective.grounding,
       effective.output,
       effective.card,
+      input.output,
+      decision,
     ),
   );
 
