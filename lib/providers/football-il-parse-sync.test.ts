@@ -101,7 +101,7 @@ function validStandings() {
       },
       {
         id: 4539,
-        position: 4,
+        position: 2,
         points: 18,
         wins: 5,
         draws: 3,
