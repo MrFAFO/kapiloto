@@ -332,13 +332,18 @@ export function verifyStructuredFactor(
   }
 
   let directionSupported = false;
-  if (
-    factor.dimension === "baseline_form" ||
-    factor.dimension === "home_away_draw"
-  ) {
+  if (factor.dimension === "baseline_form") {
     const hasFormRefs = refs.some((ref) => ref.endsWith(".form"));
     const hasXgRefs = refs.some((ref) => ref.endsWith(".attack_xg"));
+    const hasOtherRefs = refs.some(
+      (ref) =>
+        !ref.endsWith(".form") &&
+        !ref.endsWith(".attack_xg"),
+    );
 
+    if (hasOtherRefs) {
+      return { valid: false, reason: "wrong_dimension", refs };
+    }
     if (
       (hasFormRefs && !requiredPair(refs, "form")) ||
       (hasXgRefs && !requiredPair(refs, "attack_xg")) ||
@@ -348,16 +353,30 @@ export function verifyStructuredFactor(
     }
 
     directionSupported =
-      (hasFormRefs && verifyFormDirection(factor, card, refs)) ||
-      (factor.dimension === "baseline_form" &&
-        hasXgRefs &&
-        verifyAttackXgDirection(factor, card, refs));
+      (!hasFormRefs || verifyFormDirection(factor, card, refs)) &&
+      (!hasXgRefs || verifyAttackXgDirection(factor, card, refs));
+  } else if (factor.dimension === "home_away_draw") {
+    if (
+      refs.some((ref) => !ref.endsWith(".form"))
+    ) {
+      return { valid: false, reason: "wrong_dimension", refs };
+    }
+    if (!requiredPair(refs, "form")) {
+      return { valid: false, reason: "insufficient_pair", refs };
+    }
+    directionSupported = verifyFormDirection(factor, card, refs);
   } else if (factor.dimension === "load_schedule") {
+    if (refs.some((ref) => !ref.endsWith(".rest"))) {
+      return { valid: false, reason: "wrong_dimension", refs };
+    }
     if (!requiredPair(refs, "rest")) {
       return { valid: false, reason: "insufficient_pair", refs };
     }
     directionSupported = verifyScheduleDirection(factor, card, refs);
   } else if (factor.dimension === "competition_context") {
+    if (refs.some((ref) => !ref.endsWith(".table"))) {
+      return { valid: false, reason: "wrong_dimension", refs };
+    }
     if (!requiredPair(refs, "table")) {
       return { valid: false, reason: "insufficient_pair", refs };
     }
