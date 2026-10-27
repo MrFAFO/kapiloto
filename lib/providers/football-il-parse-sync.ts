@@ -516,6 +516,7 @@ export async function syncFootballIlRoundAnalytics(
         store,
         context,
         season,
+        tournamentId,
       );
 
       const standingsKey = season + ":" + tournamentId;
