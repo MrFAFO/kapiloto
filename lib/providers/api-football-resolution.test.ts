@@ -221,7 +221,7 @@ test("Hebrew names alone never resolve to a wrong fixture", () => {
 
 test("the seed migration contains exactly the verified mappings and nothing for unverified game 1", () => {
   const sql = readFileSync(
-    join(process.cwd(), "supabase", "migrations", "20261024130000_api_football_verified_mappings_round_264201_v1.sql"),
+    join(process.cwd(), "supabase", "migrations", "20261027183935_api_football_verified_mappings_round_264201_v1.sql"),
     "utf8",
   );
   const tuple = /\('([^']+)', '([0-9a-f-]{36})'::uuid, '((?:[^']|'')+)'\)/g;
