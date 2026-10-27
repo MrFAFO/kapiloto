@@ -502,3 +502,30 @@ test("rejects genuinely different research cutoff instants before model executio
     /cutoff does not match run cutoff/,
   );
 });
+
+test("refuses a frozen run from a different research protocol before the paid model call", async () => {
+  const queue = new MemoryQueue();
+  queue.claimValue = claimed();
+  queue.claimValue.run.researchProtocolVersion = "kapiloto-research-v2";
+  let called = false;
+  const runner: FixtureResearchRunner = {
+    async research() {
+      called = true;
+      return successResult();
+    },
+  };
+
+  const result = await executeOneResearchTask(queue, runner, {
+    workerId: "worker-protocol-guard",
+    heartbeatIntervalMs: 0,
+  });
+
+  assert.equal(called, false);
+  assert.equal(result.status, "failed");
+  assert.equal(queue.finishes.length, 1);
+  assert.equal(queue.finishes[0].failureCode, "executor_validation_failed");
+  assert.match(
+    queue.finishes[0].failureDetail ?? "",
+    /does not match worker protocol/,
+  );
+});
