@@ -2,8 +2,8 @@ import type { KapilotoFixtureCard } from "./fixture-card";
 import type { SolFixtureResearchOutput } from "./research-output";
 
 export const KAPILOTO_RELIABILITY_FORMULA_VERSION =
-  "kapiloto-reliability-shadow-v3" as const;
-export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v1" as const;
+  "kapiloto-reliability-shadow-v5" as const;
+export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v2" as const;
 
 export type Outcome = "1" | "X" | "2";
 
