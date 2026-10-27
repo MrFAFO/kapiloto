@@ -29,7 +29,7 @@ import { SupabaseSportmonksSyncStore } from "@/lib/providers/sportmonks-supabase
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 800;
+export const maxDuration = 300;
 
 export async function GET(): Promise<Response> {
   if (process.env.VERCEL_ENV !== "preview") {
