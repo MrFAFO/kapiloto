@@ -225,13 +225,9 @@ test("an existing provider fixture mapping bypasses discovery calls", async () =
       discoveryCalls += 1;
       return [];
     },
-    async getMatchDetails(gameId) {
+    async getMatchDetails() {
       byIdCalls += 1;
-      assert.equal(gameId, 310779);
-      return providerFixture({
-        homeTeamId: 4530,
-        awayTeamId: 4539,
-      });
+      throw new Error("trusted fixture and team mappings must bypass lookup");
     },
     async getTeamStatistics(_season, teamId) {
       return { stats: [seasonRow(teamId)] };
@@ -247,7 +243,7 @@ test("an existing provider fixture mapping bypasses discovery calls", async () =
 
   assert.equal(result.summary.saved, 1);
   assert.equal(result.fixtures[0]?.status, "saved");
-  assert.equal(byIdCalls, 1);
+  assert.equal(byIdCalls, 0);
   assert.equal(discoveryCalls, 0);
 });
 
@@ -311,4 +307,74 @@ test("a team that has no exact canonical or alias match is not guessed", async (
 
   assert.equal(result.fixtures[0]?.status, "not_found");
   assert.equal(statsCalls, 0);
+});
+
+
+test("fresh season facts skip all Parse calls for the fixture", async () => {
+  let providerCalls = 0;
+  const mappedGame = game({
+    providerFixtureId: 310779,
+    home: {
+      ...game().home,
+      providerTeamId: "4530",
+      providerName: "Hapoel Tel Aviv",
+    },
+    away: {
+      ...game().away,
+      providerTeamId: "4539",
+      providerName: "Maccabi Haifa",
+    },
+  });
+
+  const store: FootballIlSyncStore = {
+    async loadRoundGames() {
+      return [mappedGame];
+    },
+    async hasFreshSeasonFacts(fixtureId, season, capturedAfter) {
+      assert.equal(fixtureId, "fixture-1");
+      assert.equal(season, "26/27");
+      assert.equal(
+        capturedAfter,
+        "2026-10-26T12:00:00.000Z",
+      );
+      return true;
+    },
+    async saveResolvedFixture() {
+      throw new Error("fresh fixture must not rewrite mappings");
+    },
+    async saveFacts() {
+      throw new Error("fresh fixture must not rewrite facts");
+    },
+  };
+
+  const client: FootballIlSyncClient = {
+    async getAllTeams() {
+      providerCalls += 1;
+      return { teams: [] };
+    },
+    async getTeamFixtures() {
+      providerCalls += 1;
+      return [];
+    },
+    async getMatchDetails() {
+      providerCalls += 1;
+      return providerFixture();
+    },
+    async getTeamStatistics() {
+      providerCalls += 1;
+      return { stats: [] };
+    },
+  };
+
+  const result = await syncFootballIlRoundAnalytics(
+    store,
+    client,
+    "round-1",
+    () => new Date("2026-10-27T08:00:00.000Z"),
+  );
+
+  assert.equal(result.summary.fresh, 1);
+  assert.equal(result.summary.saved, 0);
+  assert.equal(result.fixtures[0]?.status, "fresh");
+  assert.equal(providerCalls, 0);
 });
