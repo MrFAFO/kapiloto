@@ -250,6 +250,7 @@ export function buildFootballIlSeasonFacts(
           row.teamId,
           metric.field,
           value,
+          context.capturedAt,
         ]),
         metadata: {
           provider_team_id: row.teamId,
