@@ -674,19 +674,27 @@ export default async function MatchPage({
                     return (
                       <div
                         key={String(team)}
-                        className="rounded-xl bg-[var(--elevated)] p-3"
+                        className="min-w-0 rounded-xl bg-[var(--elevated)] p-3"
                       >
-                        <p className="text-[9px] font-bold">{String(team)}</p>
+                        <p className="break-words text-[9px] font-bold">{String(team)}</p>
                         <p className="mt-1 text-[8px] text-[var(--kapiloto)]">
                           {typed?.formation
                             ? `מערך ${typed.formation}`
                             : "מערך לא מאומת"}
                         </p>
+                        <p className="mt-0.5 text-[8px] text-[var(--muted)]">
+                          {typed?.status === "supported"
+                            ? "הרכב מלא מאומת"
+                            : typed?.status === "partial"
+                              ? "הרכב חלקי"
+                              : "אין הרכב מאומת"}
+                        </p>
                         <div className="mt-2 flex flex-col gap-1">
                           {(typed?.starters ?? []).map((starter) => (
                             <p
                               key={starter.name}
-                              className="text-[8px] leading-4 text-[var(--muted)]"
+                              dir="auto"
+                              className="break-words text-[8px] leading-4 text-[var(--muted)]"
                             >
                               {starter.position} · {starter.name}
                             </p>
