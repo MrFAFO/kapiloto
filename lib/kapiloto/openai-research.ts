@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import researchOutputSchema from "@/docs/ai/kapiloto-research-output.v3.schema.json";
 
 import type { KapilotoFixtureCard } from "./fixture-card";
+import { KAPILOTO_RESEARCH_PROTOCOL_VERSION } from "./research-config";
 import {
   buildKapilotoFixtureResearchInput,
   KAPILOTO_SOL_SYSTEM_PROMPT,
@@ -417,7 +418,7 @@ export async function researchFixtureWithSol(
         parsed,
         card,
         sourceUrls,
-        "kapiloto-research-v3",
+        KAPILOTO_RESEARCH_PROTOCOL_VERSION,
       );
     } catch (error) {
       throw new SolFixtureResearchError(

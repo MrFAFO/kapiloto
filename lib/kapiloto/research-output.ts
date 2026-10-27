@@ -316,11 +316,7 @@ function assertNoUrl(value: string, field: string): void {
 }
 
 function normalizeHumanName(value: string): string {
-  return value
-    .normalize("NFKC")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLocaleLowerCase();
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function isValidFormation(value: string): boolean {
@@ -375,6 +371,177 @@ function assertV3FieldsAbsent(
       throw new Error(`${key} is only valid in kapiloto-research-v3.`);
     }
   }
+  for (const item of Array.isArray(raw.availability) ? raw.availability : []) {
+    if (
+      isRecord(item) &&
+      (item.functions !== undefined || item.function_evidence_ids !== undefined)
+    ) {
+      throw new Error("availability functions are only valid in kapiloto-research-v3.");
+    }
+  }
+  for (const factor of Array.isArray(raw.factors) ? raw.factors : []) {
+    if (isRecord(factor) && factor.matchup_ids !== undefined) {
+      throw new Error("factor.matchup_ids is only valid in kapiloto-research-v3.");
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Player names: letters/marks with simple separators, never URLs or markup. */
+const PLAYER_NAME_PATTERN = /^[\p{L}\p{M}][\p{L}\p{M} .'’׳-]*$/u;
+
+function assertPlayerName(value: string, field: string): void {
+  assertNoUrl(value, field);
+  if (!PLAYER_NAME_PATTERN.test(value.normalize("NFKC").trim())) {
+    throw new Error(`${field} contains characters outside the player-name set.`);
+  }
+}
+
+function fail(path: string, expected: string): never {
+  throw new Error(`${path} must be ${expected}.`);
+}
+
+function expectArray(value: unknown, path: string): unknown[] {
+  if (!Array.isArray(value)) fail(path, "an array");
+  return value;
+}
+
+function expectRecord(value: unknown, path: string): Record<string, unknown> {
+  if (!isRecord(value)) fail(path, "an object");
+  return value;
+}
+
+function expectString(value: unknown, path: string): string {
+  if (typeof value !== "string") fail(path, "a string");
+  return value;
+}
+
+function expectEnum(
+  value: unknown,
+  allowed: readonly string[],
+  path: string,
+): string {
+  if (typeof value !== "string" || !allowed.includes(value)) {
+    fail(path, `one of ${allowed.join("|")}`);
+  }
+  return value;
+}
+
+function expectStringArray(value: unknown, path: string): string[] {
+  return expectArray(value, path).map((item, index) =>
+    expectString(item, `${path}[${index}]`),
+  );
+}
+
+const SIDES = ["home", "away"] as const;
+const FAVORS = ["home", "draw", "away", "none"] as const;
+const MAGNITUDES = ["small", "medium", "large"] as const;
+
+/**
+ * Structural guard for v3 objects so malformed provider output fails with a
+ * clean validation Error instead of a raw TypeError deeper in validation.
+ */
+function assertV3Shape(raw: Record<string, unknown>): void {
+  for (const [index, item] of expectArray(raw.availability, "availability").entries()) {
+    const record = expectRecord(item, `availability[${index}]`);
+    expectEnum(record.team, SIDES, `availability[${index}].team`);
+    expectString(record.player_name, `availability[${index}].player_name`);
+    expectStringArray(record.evidence_ids, `availability[${index}].evidence_ids`);
+    expectArray(record.functions, `availability[${index}].functions`).forEach(
+      (role, roleIndex) =>
+        expectEnum(
+          role,
+          KAPILOTO_ROLE_FUNCTIONS,
+          `availability[${index}].functions[${roleIndex}]`,
+        ),
+    );
+    expectStringArray(
+      record.function_evidence_ids,
+      `availability[${index}].function_evidence_ids`,
+    );
+  }
+
+  const lineups = expectRecord(raw.expected_lineups, "expected_lineups");
+  for (const side of SIDES) {
+    const lineup = expectRecord(lineups[side], `expected_lineups.${side}`);
+    expectEnum(
+      lineup.status,
+      ["supported", "partial", "insufficient_data"],
+      `expected_lineups.${side}.status`,
+    );
+    if (lineup.formation !== null) {
+      expectString(lineup.formation, `expected_lineups.${side}.formation`);
+    }
+    expectStringArray(
+      lineup.formation_evidence_ids,
+      `expected_lineups.${side}.formation_evidence_ids`,
+    );
+    for (const [index, starter] of expectArray(
+      lineup.starters,
+      `expected_lineups.${side}.starters`,
+    ).entries()) {
+      const path = `expected_lineups.${side}.starters[${index}]`;
+      const record = expectRecord(starter, path);
+      expectString(record.player_name, `${path}.player_name`);
+      expectEnum(record.position, ["GK", "DF", "MF", "FW", "unknown"], `${path}.position`);
+      expectEnum(record.confidence, ["low", "medium", "high"], `${path}.confidence`);
+      expectStringArray(record.evidence_ids, `${path}.evidence_ids`);
+    }
+  }
+
+  for (const [index, fact] of expectArray(raw.tactical_facts, "tactical_facts").entries()) {
+    const path = `tactical_facts[${index}]`;
+    const record = expectRecord(fact, path);
+    expectEnum(
+      record.fact_id,
+      ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8"],
+      `${path}.fact_id`,
+    );
+    expectEnum(record.team, SIDES, `${path}.team`);
+    expectEnum(record.phase, KAPILOTO_TACTICAL_PHASES, `${path}.phase`);
+    expectString(record.attribute, `${path}.attribute`);
+    expectString(record.value, `${path}.value`);
+    expectStringArray(record.evidence_ids, `${path}.evidence_ids`);
+  }
+
+  for (const [index, matchup] of expectArray(
+    raw.matchup_analysis,
+    "matchup_analysis",
+  ).entries()) {
+    const path = `matchup_analysis[${index}]`;
+    const record = expectRecord(matchup, path);
+    expectEnum(record.matchup_id, ["m1", "m2", "m3"], `${path}.matchup_id`);
+    expectEnum(record.kind, KAPILOTO_MATCHUP_KINDS, `${path}.kind`);
+    expectStringArray(record.fact_ids, `${path}.fact_ids`);
+    expectEnum(record.favors, FAVORS, `${path}.favors`);
+    expectEnum(record.magnitude, MAGNITUDES, `${path}.magnitude`);
+    expectString(record.description, `${path}.description`);
+    expectStringArray(record.evidence_ids, `${path}.evidence_ids`);
+  }
+
+  for (const [index, regime] of expectArray(raw.regime_changes, "regime_changes").entries()) {
+    const path = `regime_changes[${index}]`;
+    const record = expectRecord(regime, path);
+    expectEnum(record.team, SIDES, `${path}.team`);
+    expectEnum(record.type, ["coach_change", "formation_change"], `${path}.type`);
+    expectString(record.effective_date, `${path}.effective_date`);
+    expectStringArray(record.evidence_ids, `${path}.evidence_ids`);
+  }
+
+  for (const [index, factor] of expectArray(raw.factors, "factors").entries()) {
+    const path = `factors[${index}]`;
+    const record = expectRecord(factor, path);
+    expectEnum(record.dimension, KAPILOTO_RESEARCH_DIMENSIONS, `${path}.dimension`);
+    expectEnum(record.favors, FAVORS, `${path}.favors`);
+    expectEnum(record.magnitude, MAGNITUDES, `${path}.magnitude`);
+    expectStringArray(record.evidence_ids, `${path}.evidence_ids`);
+    expectArray(record.matchup_ids, `${path}.matchup_ids`).forEach((id, idIndex) =>
+      expectEnum(id, ["m1", "m2", "m3"], `${path}.matchup_ids[${idIndex}]`),
+    );
+  }
 }
 
 export function validateSolFixtureResearchOutput(
@@ -403,6 +570,9 @@ export function validateSolFixtureResearchOutput(
     );
   }
   assertV3FieldsAbsent(rawRecord, output.protocol_version);
+  if (output.protocol_version === "kapiloto-research-v3") {
+    assertV3Shape(rawRecord);
+  }
 
   if (output.fixture_key !== card.fixture_key) {
     throw new Error("Sol fixture_key does not match the frozen Fixture Card.");
@@ -455,6 +625,15 @@ export function validateSolFixtureResearchOutput(
     observedSourceUrls.map((url) => normalizeEvidenceUrl(url)),
   );
   const evidenceIds = new Set<string>();
+
+  if (output.protocol_version === "kapiloto-research-v3") {
+    const distinctUrls = new Set(
+      output.evidence.map((item) => normalizeEvidenceUrl(item.url)),
+    );
+    if (distinctUrls.size > 20) {
+      throw new Error("Sol evidence may cite at most 20 distinct URLs.");
+    }
+  }
 
   for (const item of output.evidence) {
     if (!item.evidence_id || evidenceIds.has(item.evidence_id)) {
@@ -513,6 +692,9 @@ export function validateSolFixtureResearchOutput(
       item.player_name,
       "availability.player_name",
     );
+    if (output.protocol_version === "kapiloto-research-v3") {
+      assertPlayerName(item.player_name, "availability.player_name");
+    }
     assertEvidenceReferences(
       item.evidence_ids,
       `availability:${item.player_name}`,
@@ -622,7 +804,23 @@ export function validateSolFixtureResearchOutput(
           starter.player_name,
           "expected_lineups.starters.player_name",
         );
+        assertPlayerName(
+          starter.player_name,
+          `expected_lineups.${side}.starters.player_name`,
+        );
         const normalized = normalizeHumanName(starter.player_name);
+        const absent = (output.availability ?? []).some(
+          (item) =>
+            item.team === side &&
+            (item.status === "out" || item.status === "suspended") &&
+            (item.certainty === "confirmed" || item.certainty === "probable") &&
+            normalizeHumanName(item.player_name) === normalized,
+        );
+        if (absent) {
+          throw new Error(
+            `Predicted starter ${starter.player_name} is listed as unavailable for ${side}.`,
+          );
+        }
         if (!normalized || starterNames.has(normalized)) {
           throw new Error(
             "Predicted starter names must be non-empty and unique across both teams.",

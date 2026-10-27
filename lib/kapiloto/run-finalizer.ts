@@ -13,6 +13,7 @@ import {
   verifyRequiredEntailment,
 } from "./entailment-verifier";
 import { classifyOpenAICallError } from "./openai-research";
+import { KAPILOTO_RESEARCH_PROTOCOL_VERSION } from "./research-config";
 import type { KapilotoFixtureCard } from "./fixture-card";
 import type {
   FrozenFixtureContext,
@@ -33,6 +34,29 @@ import type { GroundingResult } from "./source-grounding";
  * Deterministic data problem in the frozen run (identity, fixture set,
  * missing grounding). Retrying finalization cannot fix it.
  */
+/**
+ * Finalization runs the current grounding/entailment/publication code. A run
+ * frozen under another research protocol must fail closed instead of being
+ * published through rules it was not researched under.
+ */
+export function assertCurrentResearchProtocol(
+  runProtocol: unknown,
+  attemptProtocols: unknown[] = [],
+): void {
+  if (runProtocol !== KAPILOTO_RESEARCH_PROTOCOL_VERSION) {
+    throw new KapilotoFinalizationDataError(
+      `Kapiloto run protocol ${String(runProtocol)} cannot be finalized by ${KAPILOTO_RESEARCH_PROTOCOL_VERSION} code.`,
+    );
+  }
+  for (const protocol of attemptProtocols) {
+    if (protocol !== KAPILOTO_RESEARCH_PROTOCOL_VERSION) {
+      throw new KapilotoFinalizationDataError(
+        `Succeeded attempt protocol ${String(protocol)} does not match run protocol ${KAPILOTO_RESEARCH_PROTOCOL_VERSION}.`,
+      );
+    }
+  }
+}
+
 export class KapilotoFinalizationDataError extends Error {
   constructor(message: string) {
     super(message);
@@ -356,7 +380,9 @@ export class SupabaseKapilotoRunFinalizationStore
     ] = await Promise.all([
       this.client
         .from("kapiloto_research_runs")
-        .select("id,round_id,status,fixture_set,research_cutoff_at")
+        .select(
+          "id,round_id,status,fixture_set,research_cutoff_at,research_protocol_version",
+        )
         .eq("id", runId)
         .maybeSingle(),
       this.client
@@ -385,6 +411,8 @@ export class SupabaseKapilotoRunFinalizationStore
       );
     }
 
+    assertCurrentResearchProtocol(runData.research_protocol_version);
+
     const fixtureSet = parseFixtureSet(runData.fixture_set);
     const attempts = ((attemptsData ?? []) as AttemptRow[]).map((row) => {
       if (!row.round_game_id || !row.fixture_id) {
@@ -407,6 +435,10 @@ export class SupabaseKapilotoRunFinalizationStore
         grounding: parseGrounding(report.grounding),
       };
     });
+    assertCurrentResearchProtocol(
+      runData.research_protocol_version,
+      attempts.map((attempt) => attempt.validatedOutput.protocol_version),
+    );
 
     const carriedIds = fixtureSet.flatMap((fixture) =>
       fixture.mode === "carried_forward"

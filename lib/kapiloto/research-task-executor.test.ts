@@ -523,7 +523,8 @@ test("refuses a frozen run from a different research protocol before the paid mo
   assert.equal(called, false);
   assert.equal(result.status, "failed");
   assert.equal(queue.finishes.length, 1);
-  assert.equal(queue.finishes[0].failureCode, "executor_validation_failed");
+  assert.equal(queue.finishes[0].failureCode, "research_protocol_mismatch");
+  assert.equal(queue.finishes[0].retryable, false);
   assert.match(
     queue.finishes[0].failureDetail ?? "",
     /does not match worker protocol/,
