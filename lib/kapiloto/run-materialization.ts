@@ -66,6 +66,7 @@ export type MaterializedFactor = {
   rationale: string;
   evidence_model_ids: string[];
   structured_refs: string[];
+  matchup_ids: string[];
 };
 
 export type MaterializedAnalysis = {
@@ -107,6 +108,10 @@ export type MaterializedAnalysis = {
   summary: string | null;
   main_risk: string | null;
   availability: SolFixtureResearchOutput["availability"];
+  expected_lineups: SolFixtureResearchOutput["expected_lineups"] | null;
+  tactical_facts: SolFixtureResearchOutput["tactical_facts"] | null;
+  matchup_analysis: SolFixtureResearchOutput["matchup_analysis"] | null;
+  regime_changes: SolFixtureResearchOutput["regime_changes"] | null;
   dimension_coverage: SolFixtureResearchOutput["dimension_coverage"];
   conflicts: SolFixtureResearchOutput["conflicts"];
   watch_items: SolFixtureResearchOutput["watch_items"];
@@ -274,6 +279,7 @@ function baseMaterialization(
         acceptedIds,
       ),
       structured_refs: [...(factor.structured_refs ?? [])].sort(),
+      matchup_ids: [...(factor.matchup_ids ?? [])].sort(),
     }))
     .filter(
       (factor) =>
@@ -314,6 +320,22 @@ function baseMaterialization(
     summary: output.summary,
     main_risk: output.main_risk,
     availability,
+    expected_lineups:
+      output.protocol_version === "kapiloto-research-v3"
+        ? output.expected_lineups ?? null
+        : null,
+    tactical_facts:
+      output.protocol_version === "kapiloto-research-v3"
+        ? output.tactical_facts ?? []
+        : null,
+    matchup_analysis:
+      output.protocol_version === "kapiloto-research-v3"
+        ? output.matchup_analysis ?? []
+        : null,
+    regime_changes:
+      output.protocol_version === "kapiloto-research-v3"
+        ? output.regime_changes ?? []
+        : null,
     dimension_coverage: output.dimension_coverage,
     conflicts,
     watch_items: output.watch_items,
@@ -365,6 +387,8 @@ function baseMaterialization(
           rejected: grounding.rejected,
           requires_entailment_verification:
             grounding.requiresEntailmentVerification,
+          item_entailment_verdicts:
+            grounding.itemEntailmentVerdicts ?? {},
         },
       },
     ],
@@ -376,8 +400,13 @@ function groundingSummary(
   output: SolFixtureResearchOutput,
   card: KapilotoFixtureCard,
 ) {
+  const factorEvidenceIds = new Set(
+    output.factors.flatMap((factor) => factor.evidence_ids),
+  );
   const usable = grounding.accepted.filter(
-    (item) => item.entailment !== "unsupported",
+    (item) =>
+      factorEvidenceIds.has(item.modelEvidenceId) &&
+      item.entailment !== "unsupported",
   );
   const structuredRefs = new Set<KapilotoStructuredRef>();
   for (const factor of output.factors) {
@@ -393,9 +422,14 @@ function groundingSummary(
     acceptedTrustTiers: usable.map((item) => item.trustTier),
     structuredTrustTiers,
     rejectedCount:
-      grounding.rejected.length +
-      grounding.accepted.filter((item) => item.entailment === "unsupported")
-        .length,
+      grounding.rejected.filter((item) =>
+        factorEvidenceIds.has(item.evidenceId),
+      ).length +
+      grounding.accepted.filter(
+        (item) =>
+          factorEvidenceIds.has(item.modelEvidenceId) &&
+          item.entailment === "unsupported",
+      ).length,
   };
 }
 
@@ -459,6 +493,9 @@ function marketOnlyPayload(
     main_risk:
       "The research probability was withheld because a directional signal failed evidence policy.",
     factors: base.factors.filter((factor) => factor.favors === "none"),
+    matchup_analysis:
+      base.matchup_analysis?.filter((matchup) => matchup.favors === "none") ??
+      null,
     inputs: [...base.inputs, policyAuditInput(decision)],
   };
 }
@@ -497,6 +534,9 @@ function insufficientPolicyPayload(
         : "No Kapiloto pick was published because no grounded directional signal remained.",
     main_risk: decision.output.main_risk,
     factors: base.factors.filter((factor) => factor.favors === "none"),
+    matchup_analysis:
+      base.matchup_analysis?.filter((matchup) => matchup.favors === "none") ??
+      null,
     inputs: [...base.inputs, policyAuditInput(decision)],
   };
 }
@@ -583,6 +623,10 @@ function materializeEntailmentDowngrade(
     summary: null,
     main_risk: null,
     availability: [],
+    expected_lineups: null,
+    tactical_facts: null,
+    matchup_analysis: null,
+    regime_changes: null,
     dimension_coverage: [],
     conflicts: [],
     watch_items: [],
@@ -756,6 +800,10 @@ function materializeCarriedFixture(
     settlement_rule_snapshot: input.context.settlementRule,
     neutral_venue_snapshot: input.context.neutralVenue,
     double_priority_rank: null,
+    expected_lineups: null,
+    tactical_facts: null,
+    matchup_analysis: null,
+    regime_changes: null,
     evidence: [],
     factors: [],
     inputs: [
@@ -808,6 +856,10 @@ function materializeUnavailableFixture(
     summary: null,
     main_risk: null,
     availability: [],
+    expected_lineups: null,
+    tactical_facts: null,
+    matchup_analysis: null,
+    regime_changes: null,
     dimension_coverage: [],
     conflicts: [],
     watch_items: [],
