@@ -273,21 +273,21 @@ type ModernWinner16Row = {
 
 function modernVisibleLines(html: string): string[] {
   const withoutNonContent = html
-    .replace(/<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi, " ")
-    .replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style>/gi, " ")
-    .replace(/<noscript\\b[^>]*>[\\s\\S]*?<\\/noscript>/gi, " ");
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, " ");
 
   const withBoundaries = withoutNonContent
-    .replace(/<br\\s*\\/?\\s*>/gi, "\\n")
+    .replace(/<br\s*\/?\s*>/gi, "\n")
     .replace(
-      /<\\/(?:div|p|li|tr|td|th|h1|h2|h3|h4|section|article|header|footer|main|span|button)>/gi,
-      "\\n",
+      /<\/(?:div|p|li|tr|td|th|h1|h2|h3|h4|section|article|header|footer|main|span|button)>/gi,
+      "\n",
     )
     .replace(/<[^>]+>/g, " ");
 
   return decodeHtml(withBoundaries)
-    .split(/\\r?\\n/)
-    .map((line) => line.replace(/\\s+/g, " ").trim())
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
     .filter(Boolean);
 }
 
@@ -295,7 +295,7 @@ function modernRoundAnchor(lines: string[]): {
   index: number;
   externalRoundNumber: string;
 } | null {
-  const currentRoundIndex = lines.findIndex((line) => /^מחזור\\s+נוכחי$/i.test(line));
+  const currentRoundIndex = lines.findIndex((line) => /^מחזור\s+נוכחי$/i.test(line));
   const start = currentRoundIndex >= 0 ? currentRoundIndex + 1 : 0;
   const end =
     currentRoundIndex >= 0
@@ -303,7 +303,7 @@ function modernRoundAnchor(lines: string[]): {
       : lines.length;
 
   for (let index = start; index < end; index += 1) {
-    const match = lines[index].match(/^מחזור\\s*:\\s*(\\d+)$/);
+    const match = lines[index].match(/^מחזור\s*:\s*(\d+)$/);
     if (match) {
       return { index, externalRoundNumber: match[1] };
     }
@@ -340,7 +340,7 @@ function parseModernWinner16Rows(html: string): {
         candidate !== "1" &&
         candidate !== "X" &&
         candidate !== "2" &&
-        !/^מחזור\\s*:/i.test(candidate)
+        !/^מחזור\s*:/i.test(candidate)
       ) {
         competition = normalizeTelesportCompetition(candidate);
       }
@@ -359,8 +359,8 @@ function parseModernWinner16Rows(html: string): {
       !rawStatus ||
       !homeTeam ||
       !awayTeam ||
-      /^\\d{1,2}$/.test(homeTeam) ||
-      /^\\d{1,2}$/.test(awayTeam)
+      /^\d{1,2}$/.test(homeTeam) ||
+      /^\d{1,2}$/.test(awayTeam)
     ) {
       return null;
     }
