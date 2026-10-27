@@ -888,10 +888,6 @@ export type Database = {
           tactical_facts?: Json | null
           matchup_analysis?: Json | null
           regime_changes?: Json | null
-          expected_lineups?: Json | null
-          tactical_facts?: Json | null
-          matchup_analysis?: Json | null
-          regime_changes?: Json | null
           blend_weight?: number | null
           carried_from_analysis_id?: string | null
           conflicts?: Json
@@ -938,6 +934,10 @@ export type Database = {
         }
         Update: {
           availability?: Json
+          expected_lineups?: Json | null
+          tactical_facts?: Json | null
+          matchup_analysis?: Json | null
+          regime_changes?: Json | null
           blend_weight?: number | null
           carried_from_analysis_id?: string | null
           conflicts?: Json
