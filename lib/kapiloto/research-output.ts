@@ -1,4 +1,5 @@
 import type { KapilotoFixtureCard } from "./fixture-card";
+import { validateStructuredRefs } from "./structured-refs";
 
 export const KAPILOTO_RESEARCH_DIMENSIONS = [
   "baseline_form",
@@ -27,7 +28,7 @@ export type SolEvidence = {
 };
 
 export type SolFixtureResearchOutput = {
-  protocol_version: "kapiloto-research-v1";
+  protocol_version: "kapiloto-research-v1" | "kapiloto-research-v2";
   fixture_key: string;
   home_team_id: string;
   away_team_id: string;
@@ -46,6 +47,7 @@ export type SolFixtureResearchOutput = {
     favors: "home" | "draw" | "away" | "none";
     magnitude: "small" | "medium" | "large";
     evidence_ids: string[];
+    structured_refs?: string[];
     rationale: string;
   }>;
   dimension_coverage: Array<{
@@ -139,6 +141,40 @@ export function normalizeEvidenceUrl(raw: string): string {
   return url.toString();
 }
 
+/**
+ * Hard character limits for Sol free-text fields.
+ *
+ * The strict JSON Schema enforces the same bounds during generation through a
+ * `pattern` (OpenAI strict Structured Outputs rejects `maxLength`), so a
+ * length violation can no longer surface only after minutes of paid research.
+ * `research-output.test.ts` keeps the schema patterns and these limits equal.
+ */
+export const KAPILOTO_TEXT_LIMITS = {
+  "evidence.quote": 300,
+  "evidence.claim": 220,
+  "availability.player_name": 80,
+  "factors.rationale": 300,
+  "conflicts.topic": 150,
+  "market_deviation.summary": 300,
+  key_assumptions: 150,
+  main_risk: 300,
+  summary: 700,
+  "watch_items.condition": 150,
+  "data_quality.notes": 220,
+  "suspicious_content_observed.description": 220,
+} as const;
+
+export type KapilotoTextLimitField = keyof typeof KAPILOTO_TEXT_LIMITS;
+
+/** Fields whose schema pattern also requires at least one character. */
+export const KAPILOTO_NON_EMPTY_TEXT_FIELDS: ReadonlySet<KapilotoTextLimitField> =
+  new Set(["evidence.quote", "evidence.claim"]);
+
+export function kapilotoTextLimitPattern(field: KapilotoTextLimitField): string {
+  const min = KAPILOTO_NON_EMPTY_TEXT_FIELDS.has(field) ? 1 : 0;
+  return `^.{${min},${KAPILOTO_TEXT_LIMITS[field]}}$`;
+}
+
 function assertStringLength(
   value: string,
   max: number,
@@ -149,21 +185,13 @@ function assertStringLength(
   }
 }
 
+function assertLimit(value: string, field: KapilotoTextLimitField): void {
+  assertStringLength(value, KAPILOTO_TEXT_LIMITS[field], field);
+}
+
 function assertNoUrl(value: string, field: string): void {
   if (/https?:\/\//i.test(value)) {
     throw new Error(`${field} must not contain a raw URL.`);
-  }
-}
-
-function assertEvidenceReferences(
-  ids: string[],
-  known: Set<string>,
-  field: string,
-): void {
-  for (const id of ids) {
-    if (!known.has(id)) {
-      throw new Error(`${field} references unknown evidence id: ${id}`);
-    }
   }
 }
 
@@ -176,9 +204,15 @@ export function validateSolFixtureResearchOutput(
     throw new Error("Sol research output must be an object.");
   }
 
-  const output = raw as SolFixtureResearchOutput;
+  // Work on a detached JSON copy. Validation must never mutate the parsed
+  // provider response because the untouched validated output is retained for
+  // policy replay/audit later in the pipeline.
+  const output = JSON.parse(JSON.stringify(raw)) as SolFixtureResearchOutput;
 
-  if (output.protocol_version !== "kapiloto-research-v1") {
+  if (
+    output.protocol_version !== "kapiloto-research-v1" &&
+    output.protocol_version !== "kapiloto-research-v2"
+  ) {
     throw new Error("Unexpected Kapiloto research protocol version.");
   }
   if (output.fixture_key !== card.fixture_key) {
@@ -231,17 +265,15 @@ export function validateSolFixtureResearchOutput(
         `Evidence ids must be non-empty and unique: ${item.evidence_id}`,
       );
     }
+
+    // Do not remove evidence merely because its URL was not observed in the
+    // provider web-search trace. Grounding must see the original citation set
+    // so an unobserved/hallucinated reference can count against every item
+    // that cited it rather than silently disappearing.
+    normalizeEvidenceUrl(item.url);
     evidenceIds.add(item.evidence_id);
-
-    const normalized = normalizeEvidenceUrl(item.url);
-    if (!observed.has(normalized)) {
-      throw new Error(
-        `Evidence URL was not observed in the web-search tool sources: ${item.url}`,
-      );
-    }
-
-    assertStringLength(item.quote, 300, "evidence.quote");
-    assertStringLength(item.claim, 220, "evidence.claim");
+    assertLimit(item.quote, "evidence.quote");
+    assertLimit(item.claim, "evidence.claim");
 
     if (item.event_time != null && !Number.isFinite(Date.parse(item.event_time))) {
       throw new Error(
@@ -264,33 +296,46 @@ export function validateSolFixtureResearchOutput(
     dimensions.add(item.dimension);
   }
 
+  const assertEvidenceReferences = (ids: string[], field: string) => {
+    for (const id of ids) {
+      if (!evidenceIds.has(id)) {
+        throw new Error(`${field} references unknown evidence id ${id}.`);
+      }
+    }
+  };
+
   for (const item of output.availability ?? []) {
-    assertEvidenceReferences(
-      item.evidence_ids,
-      evidenceIds,
-      `availability:${item.player_name}`,
-    );
+    assertLimit(item.player_name, "availability.player_name");
+    assertEvidenceReferences(item.evidence_ids, `availability:${item.player_name}`);
   }
 
   for (const factor of output.factors ?? []) {
     assertEvidenceReferences(
       factor.evidence_ids,
-      evidenceIds,
       `factor:${factor.dimension}`,
     );
-    assertStringLength(factor.rationale, 300, "factor.rationale");
+
+    const structuredRefs = factor.structured_refs ?? [];
+    factor.structured_refs = validateStructuredRefs(structuredRefs, card);
+
+    if (factor.evidence_ids.length === 0 && factor.structured_refs.length === 0) {
+      throw new Error(
+        `factor:${factor.dimension} must cite web evidence or structured refs.`,
+      );
+    }
+
+    assertLimit(factor.rationale, "factors.rationale");
     assertNoUrl(factor.rationale, "factor.rationale");
   }
 
   for (const conflict of output.conflicts ?? []) {
+    assertLimit(conflict.topic, "conflicts.topic");
     assertEvidenceReferences(
       conflict.evidence_ids_a,
-      evidenceIds,
       `conflict:${conflict.topic}:a`,
     );
     assertEvidenceReferences(
       conflict.evidence_ids_b,
-      evidenceIds,
       `conflict:${conflict.topic}:b`,
     );
   }
@@ -298,42 +343,39 @@ export function validateSolFixtureResearchOutput(
   if (output.market_deviation != null) {
     assertEvidenceReferences(
       output.market_deviation.evidence_ids,
-      evidenceIds,
       "market_deviation",
     );
-    assertStringLength(
-      output.market_deviation.summary,
-      300,
-      "market_deviation.summary",
-    );
+    assertLimit(output.market_deviation.summary, "market_deviation.summary");
     assertNoUrl(output.market_deviation.summary, "market_deviation.summary");
   }
 
   for (const assumption of output.key_assumptions ?? []) {
-    assertStringLength(assumption, 150, "key_assumptions");
+    assertLimit(assumption, "key_assumptions");
     assertNoUrl(assumption, "key_assumptions");
   }
 
-  assertStringLength(output.main_risk, 300, "main_risk");
-  assertStringLength(output.summary, 700, "summary");
-  assertStringLength(output.data_quality.notes, 220, "data_quality.notes");
+  assertLimit(output.main_risk, "main_risk");
+  assertLimit(output.summary, "summary");
+  assertLimit(output.data_quality.notes, "data_quality.notes");
+
+  for (const item of output.watch_items ?? []) {
+    assertLimit(item.condition, "watch_items.condition");
+  }
   assertNoUrl(output.main_risk, "main_risk");
   assertNoUrl(output.summary, "summary");
   assertNoUrl(output.data_quality.notes, "data_quality.notes");
 
-  for (const suspicious of output.suspicious_content_observed ?? []) {
+  output.suspicious_content_observed = (
+    output.suspicious_content_observed ?? []
+  ).filter((suspicious) => {
     const normalized = normalizeEvidenceUrl(suspicious.url);
-    if (!observed.has(normalized)) {
-      throw new Error(
-        `Suspicious-content URL was not observed by web search: ${suspicious.url}`,
-      );
-    }
-    assertStringLength(
+    if (!observed.has(normalized)) return false;
+    assertLimit(
       suspicious.description,
-      220,
       "suspicious_content_observed.description",
     );
-  }
+    return true;
+  });
 
   return {
     output,

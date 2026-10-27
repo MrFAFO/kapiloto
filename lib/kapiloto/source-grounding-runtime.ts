@@ -68,9 +68,10 @@ export async function groundResearchOutput(
   client: SupabaseClient<Database>,
   card: KapilotoFixtureCard,
   output: SolFixtureResearchOutput,
+  observedSourceUrls: string[] | null = null,
 ): Promise<RuntimeGroundingResult> {
   const [retrieval, registry] = await Promise.all([
-    retrieveResearchSourceDocuments(output),
+    retrieveResearchSourceDocuments(output, observedSourceUrls),
     loadSourceRegistry(client),
   ]);
 
@@ -79,6 +80,7 @@ export async function groundResearchOutput(
     card,
     retrieval.documents,
     registry,
+    observedSourceUrls,
   );
 
   return { grounding, retrieval };
@@ -89,8 +91,13 @@ export function createSupabaseFixtureEvidenceGrounder(
   client: SupabaseClient<Database>,
 ): FixtureEvidenceGrounder {
   return {
-    async ground(card, output) {
-      const result = await groundResearchOutput(client, card, output);
+    async ground(card, output, observedSourceUrls) {
+      const result = await groundResearchOutput(
+        client,
+        card,
+        output,
+        observedSourceUrls,
+      );
       return {
         grounding: result.grounding,
         retrievalFailures: result.retrieval.failures,

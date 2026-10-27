@@ -1,11 +1,13 @@
 import { aggregateMarketPrior } from "./market";
-import { bestAliasSimilarity, normalizeTeamName } from "./match";
+import { bestHybridAliasSimilarity, normalizeTeamName } from "./match";
 import type {
   BookmakerThreeWayQuote,
   ProviderCapabilities,
+  ProviderCompletedMatch,
   ProviderFixture,
   ProviderFixtureCoverage,
   ProviderSpikeFixtureInput,
+  ProviderStanding,
 } from "./types";
 
 const DEFAULT_BASE_URL = "https://api.sportmonks.com/v3/football";
@@ -13,6 +15,7 @@ const MATCH_WINNER_MARKET_ID = 1;
 
 type SportmonksEnvelope<T> = {
   data?: T;
+  message?: string;
   pagination?: {
     count?: number;
     per_page?: number;
@@ -105,6 +108,18 @@ type SportmonksFixtureRow = {
     state?: string;
     developer_name?: string;
   };
+};
+
+type SportmonksStandingRow = {
+  participant_id?: number;
+  league_id?: number;
+  season_id?: number;
+  position?: number;
+  points?: number;
+  details?: Array<{
+    value?: number | string | null;
+    type?: { name?: string; developer_name?: string };
+  }>;
 };
 
 type SportmonksOddRow = {
@@ -295,6 +310,160 @@ export function parseSportmonksLiveResult(
   };
 }
 
+function numericStandingDetail(
+  row: SportmonksStandingRow,
+  names: string[],
+): number | null {
+  const normalizedNames = new Set(
+    names.map((name) => normalizeTeamName(name)),
+  );
+  for (const detail of row.details ?? []) {
+    const candidates = [
+      detail.type?.developer_name,
+      detail.type?.name,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => normalizeTeamName(value));
+
+    if (!candidates.some((name) => normalizedNames.has(name))) continue;
+
+    const value = Number(detail.value);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+export function parseSportmonksStandings(
+  rows: SportmonksStandingRow[],
+): ProviderStanding[] {
+  return rows.flatMap((row) => {
+    if (
+      row.participant_id == null ||
+      row.league_id == null ||
+      row.season_id == null ||
+      row.position == null ||
+      row.points == null
+    ) {
+      return [];
+    }
+    return [{
+      provider: "sportmonks" as const,
+      competitionId: String(row.league_id),
+      season: row.season_id,
+      teamId: String(row.participant_id),
+      position: row.position,
+      points: row.points,
+      played: numericStandingDetail(row, [
+        "overall matches",
+        "overall matched played",
+        "overall matches played",
+        "matches played",
+      ]),
+      goalDifference: numericStandingDetail(row, [
+        "goal difference",
+        "overall goal difference",
+      ]),
+      pointsDeducted: null,
+    }];
+  });
+}
+
+export function parseSportmonksCompletedMatches(
+  rows: SportmonksFixtureRow[],
+): ProviderCompletedMatch[] {
+  const matches: ProviderCompletedMatch[] = [];
+
+  for (const row of rows) {
+    if (canonicalSportmonksLiveStatus(normalizedSportmonksState(row)) !== "finished") {
+      continue;
+    }
+    const fixture = toProviderFixture(row);
+    if (!fixture) continue;
+
+    const regularTime = sportmonksScorePair(row.scores, "2ND_HALF");
+    const current = sportmonksScorePair(row.scores, "CURRENT");
+    const score =
+      regularTime ??
+      (normalizedSportmonksState(row) === "FT" ? current : null);
+    if (!score) continue;
+
+    matches.push({
+      provider: "sportmonks",
+      providerFixtureId: fixture.providerFixtureId,
+      kickoffAt: fixture.kickoffAt,
+      competition: {
+        id: fixture.competition.id,
+        name: fixture.competition.name,
+        country: fixture.competition.country,
+      },
+      season: fixture.season,
+      home: fixture.home,
+      away: fixture.away,
+      homeScore: score.home,
+      awayScore: score.away,
+    });
+  }
+
+  return matches.sort(
+    (a, b) => Date.parse(b.kickoffAt) - Date.parse(a.kickoffAt),
+  );
+}
+
+export type SportmonksLeagueResult = ProviderCompletedMatch & {
+  providerState: string;
+  scoreSource: "2ND_HALF" | "CURRENT";
+};
+
+/**
+ * Finished league matches with their 90-minute score and its provenance.
+ * The `2ND_HALF` row is the cumulative regular-time score; `CURRENT` is only
+ * accepted for plain `FT`, where it cannot include extra time. Matches that
+ * went beyond 90 minutes without a `2ND_HALF` row are dropped. Oldest first.
+ */
+export function parseSportmonksLeagueResults(
+  rows: SportmonksFixtureRow[],
+): SportmonksLeagueResult[] {
+  const matches: SportmonksLeagueResult[] = [];
+
+  for (const row of rows) {
+    const providerState = normalizedSportmonksState(row);
+    if (canonicalSportmonksLiveStatus(providerState) !== "finished") continue;
+    const fixture = toProviderFixture(row);
+    if (!fixture) continue;
+
+    const regularTime = sportmonksScorePair(row.scores, "2ND_HALF");
+    const current = providerState === "FT"
+      ? sportmonksScorePair(row.scores, "CURRENT")
+      : null;
+    const score = regularTime ?? current;
+    if (!score) continue;
+
+    matches.push({
+      provider: "sportmonks",
+      providerFixtureId: fixture.providerFixtureId,
+      kickoffAt: fixture.kickoffAt,
+      competition: {
+        id: fixture.competition.id,
+        name: fixture.competition.name,
+        country: fixture.competition.country,
+      },
+      season: fixture.season,
+      home: fixture.home,
+      away: fixture.away,
+      homeScore: score.home,
+      awayScore: score.away,
+      providerState,
+      scoreSource: regularTime ? "2ND_HALF" : "CURRENT",
+    });
+  }
+
+  return matches.sort(
+    (a, b) =>
+      Date.parse(a.kickoffAt) - Date.parse(b.kickoffAt) ||
+      a.providerFixtureId.localeCompare(b.providerFixtureId),
+  );
+}
+
 function oddSide(
   row: SportmonksOddRow,
   fixture: ProviderFixture,
@@ -384,12 +553,12 @@ function fixtureMatchScore(
   input: ProviderSpikeFixtureInput,
   fixture: ProviderFixture,
 ): number {
-  const home = bestAliasSimilarity(
+  const home = bestHybridAliasSimilarity(
     fixture.home.name,
     input.homeTeam,
     input.aliases?.home,
   );
-  const away = bestAliasSimilarity(
+  const away = bestHybridAliasSimilarity(
     fixture.away.name,
     input.awayTeam,
     input.aliases?.away,
@@ -416,6 +585,9 @@ function fixtureMatchScore(
 }
 
 export class SportmonksClient {
+  /** Provider messages returned instead of data by league-history requests. */
+  readonly emptyResponseNotices: string[] = [];
+
   constructor(
     private readonly apiToken: string,
     private readonly baseUrl = DEFAULT_BASE_URL,
@@ -485,6 +657,91 @@ export class SportmonksClient {
     }
 
     return rows;
+  }
+
+  async getTeamCompletedMatches(
+    teamId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<ProviderCompletedMatch[]> {
+    if (!/^\d+$/.test(teamId)) {
+      throw new Error("Sportmonks team id must be numeric.");
+    }
+
+    const rows: SportmonksFixtureRow[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const envelope = await this.request<SportmonksFixtureRow[]>(
+        `/fixtures/between/${startDate}/${endDate}/${teamId}`,
+        {
+          include: "participants;league;round;state;scores",
+          page,
+        },
+      );
+      rows.push(...requireData(envelope, "team fixture history"));
+      hasMore = envelope.pagination?.has_more === true;
+      page = envelope.pagination?.next_page ?? page + 1;
+      if (page > 100) {
+        throw new Error("Sportmonks team fixture pagination exceeded safety limit.");
+      }
+    }
+
+    return parseSportmonksCompletedMatches(rows);
+  }
+
+  /**
+   * League-wide finished matches (90-minute score with provenance) in a date
+   * range. Pages are advanced numerically because Sportmonks returns
+   * `next_page` as a URL.
+   */
+  async getLeagueCompletedMatchesBetween(
+    leagueId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<SportmonksLeagueResult[]> {
+    if (!/^\d+$/.test(leagueId)) {
+      throw new Error("Sportmonks league id must be numeric.");
+    }
+
+    const rows: SportmonksFixtureRow[] = [];
+    for (let page = 1; ; page += 1) {
+      if (page > 100) {
+        throw new Error("Sportmonks league fixture pagination exceeded safety limit.");
+      }
+      const envelope = await this.request<SportmonksFixtureRow[]>(
+        `/fixtures/between/${startDate}/${endDate}`,
+        {
+          include: "participants;league;round;state;scores",
+          filters: `fixtureLeagues:${leagueId}`,
+          per_page: 50,
+          page,
+        },
+      );
+      if (envelope.data == null && envelope.message) {
+        this.emptyResponseNotices.push(
+          `league ${leagueId} ${startDate}..${endDate}: ${envelope.message}`,
+        );
+      }
+      rows.push(...(envelope.data ?? []));
+      if (envelope.pagination?.has_more !== true) break;
+    }
+
+    return parseSportmonksLeagueResults(rows);
+  }
+
+  async getStandings(seasonId: number): Promise<ProviderStanding[]> {
+    if (!Number.isInteger(seasonId) || seasonId <= 0) {
+      throw new Error("Sportmonks standings require a positive season id.");
+    }
+    const envelope = await this.request<SportmonksStandingRow[]>(
+      `/standings/seasons/${seasonId}`,
+      { include: "participant;details.type" },
+    );
+    return parseSportmonksStandings(
+      requireData(envelope, "standings"),
+    );
   }
 
   async getFixtureById(fixtureId: number): Promise<{

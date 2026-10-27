@@ -90,8 +90,11 @@ export async function ensureKapilotoResearch(
     based_on_run_id: request.basedOnRunId,
   });
 
+  // A breaker must never hide already-published/cacheable research. Probe
+  // first with creation enabled; only apply the breaker if the RPC proves a
+  // new run would actually be required.
   const first = await rpc.call({
-    request,
+    request: { ...request, breakerOpen: false },
     requestSha256,
     config,
     prepared: null,
@@ -99,6 +102,21 @@ export async function ensureKapilotoResearch(
 
   if (first.outcome !== "prepare_required") {
     return first;
+  }
+
+  if (request.breakerOpen) {
+    const blocked = await rpc.call({
+      request,
+      requestSha256,
+      config,
+      prepared: null,
+    });
+    if (blocked.outcome === "prepare_required") {
+      throw new Error(
+        "Kapiloto RPC ignored an open breaker while a new run was required.",
+      );
+    }
+    return blocked;
   }
 
   const prepared = await preparer.prepare({

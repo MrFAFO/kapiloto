@@ -1,6 +1,6 @@
 # Kapiloto Shadow Evaluation Plan v1
 
-Status: pre-implementation evaluation contract.
+Status: evaluation contract. Phase 1 measurement infrastructure (baseline arms B1–B4, B5 projection of published Kapiloto, deterministic selection and proper scoring) is specified in `KAPILOTO-SHADOW-EVALUATION-V1.md`; it runs in shadow mode only.
 
 ## Purpose
 

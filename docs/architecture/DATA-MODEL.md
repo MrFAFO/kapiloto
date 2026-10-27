@@ -84,6 +84,8 @@ Unique: (team_id, normalized_alias).
 
 Purpose: preserve stable multilingual/transliterated names independently of any one data provider. Provider discovery/matching may use these aliases before a provider-specific id mapping exists.
 
+`source` names whose naming an alias reflects. A provider-named alias (for example `Hapoel Katamon` with source `api-football` for Hapoel Jerusalem) records how that provider spells the club; it is a bootstrap aid only and never replaces the Hebrew canonical name.
+
 ### provider_team_mappings
 - provider
 - provider_team_id
@@ -96,6 +98,8 @@ Purpose: preserve stable multilingual/transliterated names independently of any 
 Unique: (provider, provider_team_id).
 
 This prevents supplier naming differences from leaking into product logic.
+
+Only `confirmed` and `manual_override` rows are trusted, both for provider matching and for the provider names that Kapiloto research fixture inputs carry as team aliases. API-Football fixture resolution (D-043) uses a trusted API-Football team id before any name, and uses other providers' trusted `provider_name` values (for example Sportmonks) as an English identity when no API-Football id exists yet. A successful API-Football market sync writes `confirmed` only for mappings backed by provider-id evidence (a trusted fixture mapping, or the mapped team or competition id itself matching). Mappings that rest on a name bootstrap are inserted as `unverified`, never overwrite an existing row, and are ignored by resolution until an operator or a verified seed confirms them.
 
 ## Competitions
 ### competitions
@@ -655,6 +659,75 @@ Non-AI ingestion signals used to compute freshness.
 
 Freshness is computed at read time from deterministic TTL, input versions and signals. Signals never trigger AI by themselves.
 
+
+## Shadow evaluation (server-only)
+These tables back the Research v2 shadow evaluation (`docs/ai/KAPILOTO-SHADOW-EVALUATION-V1.md`, D-041, D-042). All five are append-only (update/delete/truncate triggers raise), have RLS enabled with no policies and no `anon`/`authenticated` grants, and are never read by research, derivation, finalization, publication or the UI. Every time column that a leakage rule depends on is set by an insert trigger.
+
+### football_match_results
+League-wide regular-time results for deterministic baselines, identified by provider IDs (not canonical teams).
+
+- provider, provider_fixture_id (unique together)
+- provider_competition_id, competition_name, provider_season_id
+- kickoff_at
+- provider_home_team_id/name, provider_away_team_id/name
+- home_goals_90, away_goals_90
+- result_basis: regular_time
+- provider_state (e.g. FT, AET), score_source: 2ND_HALF/CURRENT
+- neutral_venue
+- observed_at (DB insert time; must be ≥ kickoff_at + 150 minutes)
+- ingest_version
+
+### fixture_market_quotes
+Raw per-bookmaker 1X2 prices captured for the shadow market arm. Separate from `fixture_market_snapshots`, which remains the production prior source.
+
+- fixture_id
+- provider, provider_fixture_id, provider_home/away_team_id
+- bookmaker_id, bookmaker_name
+- market_type: 1x2_90m
+- odds_home/draw/away (> 1), overround
+- implied_home/draw/away (de-vigged, sum to 1), devig_method_version
+- source_updated_at
+- captured_at (DB insert time; writer value ignored)
+- capture_version
+
+### fixture_market_capture_attempts
+One row per shadow quote-capture attempt, so unavailable market state is explicit.
+
+- fixture_id, provider
+- attempted_at (DB insert time)
+- status: saved/no_quotes/not_found/orientation_mismatch/error/skipped_budget
+- cadence_window: far/mid/near/final
+- provider_fixture_id, quotes_saved (> 0 exactly when saved)
+- provider_requests (0 when skipped_budget), provider_daily_remaining
+- error, capture_version
+
+### kapiloto_eval_predictions
+One row per fixture/arm/arm_version/mode/information cutoff (and source analysis for Kapiloto projections).
+
+- fixture_id, round_game_id
+- arm (free-form identifier), arm_version
+- evaluation_mode: forward/replay (replay requires deterministic)
+- deterministic
+- information_cutoff_at
+- issued_at (DB-stamped: insert time, or the immutable publication time for Kapiloto projections), issued_at_source (publication source exactly for the Kapiloto arms)
+- source_analysis_id (Kapiloto projections must carry that analysis's published probabilities)
+- recorded_at, kickoff_at_snapshot (DB-copied from the fixture or the analysis)
+- home_team_id, away_team_id
+- valid, invalid_reason, p_home/p_draw/p_away
+- basis, input_sha256
+
+### kapiloto_eval_scores
+One scored selection per fixture/arm/arm_version/mode/selection rule/scoring version.
+
+- fixture_id, arm, arm_version, evaluation_mode
+- selection_rule_version, scoring_version
+- status: scored/prediction_unavailable/no_eligible_prediction
+- prediction_id
+- outcome (90-minute field result; must match the finished fixture), home_goals_90, away_goals_90, outcome_source
+- brier, rps, log_loss, top_pick, top_pick_score
+- details, scored_at (DB insert time)
+
+The insert trigger rejects a score whose prediction is not the latest one eligible under selection rule v1.
 
 ## AI personas
 ### Kapiloto

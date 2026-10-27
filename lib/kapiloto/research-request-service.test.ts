@@ -172,3 +172,63 @@ test("a concurrent run created during preparation wins on the second RPC call", 
   assert.equal(result.outcome, "joined_run");
   assert.equal(result.run_id, "run-other");
 });
+test("an open breaker still serves cached research", async () => {
+  const calls: KapilotoRpcCall[] = [];
+  const rpc: KapilotoResearchRpc = {
+    async call(input) {
+      calls.push(input);
+      return response("served_cache", {
+        run_id: "run-existing",
+        current_run_id: "run-existing",
+        runs_consumed: 1,
+      });
+    },
+  };
+  const preparer: KapilotoResearchPreparer = {
+    async prepare() {
+      throw new Error("cached research must not prepare");
+    },
+  };
+
+  const result = await ensureKapilotoResearch(
+    rpc,
+    preparer,
+    { ...request, breakerOpen: true },
+    config,
+  );
+
+  assert.equal(result.outcome, "served_cache");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].request.breakerOpen, false);
+});
+
+test("an open breaker blocks a new run before paid preparation", async () => {
+  const calls: KapilotoRpcCall[] = [];
+  const rpc: KapilotoResearchRpc = {
+    async call(input) {
+      calls.push(input);
+      if (calls.length === 1) return response("prepare_required");
+      return response("breaker_open");
+    },
+  };
+  let prepareCalls = 0;
+  const preparer: KapilotoResearchPreparer = {
+    async prepare() {
+      prepareCalls += 1;
+      throw new Error("breaker must stop before preparation");
+    },
+  };
+
+  const result = await ensureKapilotoResearch(
+    rpc,
+    preparer,
+    { ...request, breakerOpen: true },
+    config,
+  );
+
+  assert.equal(result.outcome, "breaker_open");
+  assert.equal(prepareCalls, 0);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].request.breakerOpen, false);
+  assert.equal(calls[1].request.breakerOpen, true);
+});

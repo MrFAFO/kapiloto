@@ -33,6 +33,9 @@ jobs:
       - name: Provider tests
         run: npm run test:providers
 
+      - name: Football feature tests
+        run: npm run test:features
+
       - name: Round import tests
         run: npm run test:rounds
 

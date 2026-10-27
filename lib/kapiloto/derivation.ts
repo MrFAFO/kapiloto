@@ -9,6 +9,7 @@ export type Outcome = "1" | "X" | "2";
 
 export type GroundingSummary = {
   acceptedTrustTiers: number[];
+  structuredTrustTiers?: number[];
   rejectedCount: number;
 };
 
@@ -149,13 +150,20 @@ export function deriveReliability(
     reasons.push("limited_dimension_coverage");
   }
 
-  if (grounding.acceptedTrustTiers.length > 0) {
+  const verifiedTrustTiers = [
+    ...grounding.acceptedTrustTiers,
+    ...(grounding.structuredTrustTiers ?? []),
+  ];
+  if (verifiedTrustTiers.length > 0) {
     const averageTier =
-      grounding.acceptedTrustTiers.reduce((sum, tier) => sum + tier, 0) /
-      grounding.acceptedTrustTiers.length;
+      verifiedTrustTiers.reduce((sum, tier) => sum + tier, 0) /
+      verifiedTrustTiers.length;
     const sourceQuality = clamp((4 - averageTier) / 3, 0, 1);
     score += sourceQuality * 0.18;
 
+    if ((grounding.structuredTrustTiers?.length ?? 0) > 0) {
+      reasons.push("verified_structured_evidence");
+    }
     if (averageTier <= 2) reasons.push("strong_verified_sources");
     if (averageTier >= 3.5) reasons.push("mostly_low_tier_sources");
   } else {

@@ -119,7 +119,7 @@ function cardModel(view: KapilotoPanelView, now: number): CardModel {
   const recommendation = analysis ? kapilotoRecommendation(analysis) ?? "—" : null;
   const runsMax = research?.runs_max ?? 3;
   const recheck = view.canRecheck
-    ? { label: "בדיקה חוזרת", action: "recheck" as const }
+    ? { label: "בדיקה משותפת למחזור", action: "recheck" as const }
     : null;
   const researchingActions = {
     secondary: { label: "בדיקה מתבצעת" },
@@ -154,7 +154,7 @@ function cardModel(view: KapilotoPanelView, now: number): CardModel {
         },
         secondary: null,
         primary: view.canConsult
-          ? { label: "התחל מחקר", action: "consult" }
+          ? { label: "התחל מחקר משותף", action: "consult" }
           : { label: "אין מחקרים זמינים" },
       };
 
@@ -434,7 +434,7 @@ export function KapilotoToggleBar({
       ? "קפילוטו בודק…"
       : cached
         ? "ניתוח קפילוטו"
-        : "התייעץ עם קפילוטו";
+        : "מחקר משותף למחזור";
 
   return (
     <button

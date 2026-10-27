@@ -13,6 +13,16 @@ import {
 } from "./research-output";
 
 export type KapilotoSolReasoningEffort = "low" | "medium" | "high";
+export type KapilotoSearchContextSize = "low" | "medium" | "high";
+
+/**
+ * `max_output_tokens` caps reasoning tokens plus visible output. OpenAI
+ * recommends reserving at least 25,000 tokens for reasoning models; the
+ * worst-case serialized fixture output is roughly 38k characters
+ * (about 10k-15k tokens). The earlier 8k/12k caps made `incomplete` a
+ * near-certain outcome at high reasoning effort with web search.
+ */
+export const KAPILOTO_SOL_DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
 
 export type SolResearchUsage = {
   inputTokens: number | null;
@@ -36,9 +46,22 @@ export type SolFixtureResearchResult = {
 export type SolFixtureResearchOptions = {
   model: string;
   reasoningEffort?: KapilotoSolReasoningEffort;
+  searchContextSize?: KapilotoSearchContextSize;
   allowedDomains?: string[];
   maxOutputTokens?: number;
+  /**
+   * Hard wall-clock limit for the provider request. The worker derives it
+   * from the remaining serverless budget so a slow call fails with a recorded
+   * reason instead of being killed by the platform mid-flight.
+   */
+  timeoutMs?: number;
 };
+
+export type SolFailureClass =
+  | "model_refusal"
+  | "model_output_invalid"
+  | "provider_transient"
+  | "internal";
 
 export type SolFailureProvenance = {
   responseId: string;
@@ -48,18 +71,119 @@ export type SolFailureProvenance = {
   usage: SolResearchUsage;
 };
 
+export type SolFailureDetails = {
+  /** Stable machine-readable code persisted as the attempt failure_code. */
+  code?: string;
+  /** Whether another attempt can plausibly succeed. */
+  retryable?: boolean;
+  /** True when retrying the identical request shape is likely to fail again. */
+  capacityLimited?: boolean;
+};
+
+function defaultFailureCode(failureClass: SolFailureClass): string {
+  switch (failureClass) {
+    case "model_refusal":
+      return "sol_refusal";
+    case "model_output_invalid":
+      return "sol_output_invalid";
+    case "internal":
+      return "sol_internal_error";
+    default:
+      return "sol_provider_transient";
+  }
+}
+
 export class SolFixtureResearchError extends Error {
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly capacityLimited: boolean;
+
   constructor(
     message: string,
-    readonly failureClass:
-      | "model_refusal"
-      | "model_output_invalid"
-      | "provider_transient",
+    readonly failureClass: SolFailureClass,
     readonly provenance: SolFailureProvenance | null = null,
+    details: SolFailureDetails = {},
   ) {
     super(message);
     this.name = "SolFixtureResearchError";
+    this.code = details.code ?? defaultFailureCode(failureClass);
+    this.retryable =
+      details.retryable ??
+      (failureClass === "provider_transient" ||
+        failureClass === "model_output_invalid");
+    this.capacityLimited = details.capacityLimited ?? false;
   }
+}
+
+function errorStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+}
+
+/**
+ * Maps OpenAI SDK/transport errors to attempt failure semantics. Client
+ * errors (bad schema, auth, unknown model) are configuration problems that a
+ * retry cannot fix, so they fail fast instead of burning every task attempt.
+ */
+export function classifyOpenAICallError(
+  error: unknown,
+): SolFixtureResearchError {
+  if (error instanceof SolFixtureResearchError) return error;
+
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (
+    error instanceof OpenAI.APIConnectionTimeoutError ||
+    error instanceof OpenAI.APIUserAbortError
+  ) {
+    return new SolFixtureResearchError(
+      `Sol request exceeded its execution deadline: ${message}`,
+      "provider_transient",
+      null,
+      { code: "sol_deadline_exceeded", retryable: true, capacityLimited: true },
+    );
+  }
+
+  const status = errorStatus(error);
+  if (status === 429) {
+    return new SolFixtureResearchError(message, "provider_transient", null, {
+      code: "openai_rate_limited",
+    });
+  }
+  if (status != null && status >= 500) {
+    return new SolFixtureResearchError(message, "provider_transient", null, {
+      code: "openai_server_error",
+    });
+  }
+  if (status === 408 || status === 409) {
+    return new SolFixtureResearchError(message, "provider_transient", null, {
+      code: "openai_retryable_client_error",
+    });
+  }
+  if (status != null && status >= 400) {
+    return new SolFixtureResearchError(
+      `OpenAI rejected the research request (HTTP ${status}): ${message}`,
+      "internal",
+      null,
+      {
+        code:
+          status === 400 || status === 422
+            ? "openai_bad_request"
+            : "openai_configuration_error",
+        retryable: false,
+      },
+    );
+  }
+  if (error instanceof OpenAI.APIConnectionError) {
+    return new SolFixtureResearchError(message, "provider_transient", null, {
+      code: "openai_connection_error",
+    });
+  }
+
+  return new SolFixtureResearchError(message, "provider_transient", null, {
+    code: "sol_unknown_error",
+  });
 }
 
 export function createOpenAIClient(apiKey = process.env.OPENAI_API_KEY): OpenAI {
@@ -143,7 +267,7 @@ function incompleteReason(response: unknown): string | null {
     : null;
 }
 
-function usageFromResponse(response: unknown): SolResearchUsage {
+export function usageFromResponse(response: unknown): SolResearchUsage {
   const usage =
     response && typeof response === "object"
       ? (response as {
@@ -193,12 +317,12 @@ export async function researchFixtureWithSol(
             filters: {
               allowed_domains: options.allowedDomains.slice(0, 100),
             },
-            search_context_size: "high" as const,
+            search_context_size: options.searchContextSize ?? "high",
             user_location: { type: "approximate" as const },
           }
         : {
             type: "web_search" as const,
-            search_context_size: "high" as const,
+            search_context_size: options.searchContextSize ?? "high",
             user_location: { type: "approximate" as const },
           };
 
@@ -215,15 +339,22 @@ export async function researchFixtureWithSol(
       text: {
         format: {
           type: "json_schema",
-          name: "kapiloto_fixture_research_v1",
+          name: "kapiloto_fixture_research_v2",
           description:
             "Grounded pre-match research output for one frozen Kapiloto fixture.",
           strict: true,
           schema: researchOutputSchema as Record<string, unknown>,
         },
       },
-      max_output_tokens: options.maxOutputTokens ?? 12_000,
+      max_output_tokens:
+        options.maxOutputTokens ?? KAPILOTO_SOL_DEFAULT_MAX_OUTPUT_TOKENS,
       store: false,
+    }, {
+      // Attempt-level retries live in the database queue. SDK retries would
+      // silently repeat a multi-minute paid request inside one serverless
+      // invocation and push it past the platform execution ceiling.
+      maxRetries: 0,
+      ...(options.timeoutMs != null ? { timeout: options.timeoutMs } : {}),
     });
 
     if (hasRefusal(response)) {
@@ -231,16 +362,31 @@ export async function researchFixtureWithSol(
         "Sol refused the fixture research request.",
         "model_refusal",
         failureProvenance(response as typeof response & Record<string, unknown>),
+        { code: "sol_refusal", retryable: false },
       );
     }
 
     if (response.status !== "completed") {
       const reason = incompleteReason(response);
-      throw new SolFixtureResearchError(
-        `Sol response did not complete: ${response.status}${reason ? ` (${reason})` : ""}`,
-        "provider_transient",
-        failureProvenance(response as typeof response & Record<string, unknown>),
+      const provenance = failureProvenance(
+        response as typeof response & Record<string, unknown>,
       );
+      const message = `Sol response did not complete: ${response.status}${reason ? ` (${reason})` : ""}`;
+
+      if (reason === "content_filter") {
+        throw new SolFixtureResearchError(message, "model_refusal", provenance, {
+          code: "sol_incomplete:content_filter",
+          retryable: false,
+        });
+      }
+
+      throw new SolFixtureResearchError(message, "provider_transient", provenance, {
+        code: `sol_incomplete:${reason ?? "unknown"}`,
+        retryable: true,
+        // Exhausting the output budget repeats for the same request shape;
+        // the executor changes the shape before the next attempt.
+        capacityLimited: reason === "max_output_tokens" || reason == null,
+      });
     }
 
     if (!response.output_text) {
@@ -248,6 +394,7 @@ export async function researchFixtureWithSol(
         "Sol response completed without structured output text.",
         "model_output_invalid",
         failureProvenance(response as typeof response & Record<string, unknown>),
+        { code: "sol_output_empty" },
       );
     }
 
@@ -259,6 +406,7 @@ export async function researchFixtureWithSol(
         "Sol structured output could not be parsed as JSON.",
         "model_output_invalid",
         failureProvenance(response as typeof response & Record<string, unknown>),
+        { code: "sol_output_unparseable" },
       );
     }
 
@@ -277,6 +425,7 @@ export async function researchFixtureWithSol(
         }`,
         "model_output_invalid",
         failureProvenance(response as typeof response & Record<string, unknown>),
+        { code: "sol_semantic_validation_failed" },
       );
     }
 
@@ -291,12 +440,7 @@ export async function researchFixtureWithSol(
       },
     };
   } catch (error) {
-    if (error instanceof SolFixtureResearchError) throw error;
-
-    throw new SolFixtureResearchError(
-      error instanceof Error ? error.message : String(error),
-      "provider_transient",
-    );
+    throw classifyOpenAICallError(error);
   }
 }
 

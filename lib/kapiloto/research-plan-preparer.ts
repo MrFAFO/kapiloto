@@ -1,11 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { SupabaseApiFootballSyncStore } from "@/lib/providers/api-football-supabase-store";
-import {
-  syncApiFootballRoundMarket,
-  type ApiFootballSyncClient,
-} from "@/lib/providers/api-football-sync";
-
 import { loadRoundFixtureCardInputs } from "./fixture-input-store";
 import { buildKapilotoResearchRunPlan } from "./research-run-plan";
 import type {
@@ -24,7 +18,6 @@ export class SupabaseKapilotoResearchPreparer
 {
   constructor(
     private readonly client: SupabaseClient,
-    private readonly apiFootball: ApiFootballSyncClient | null = null,
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -54,19 +47,9 @@ export class SupabaseKapilotoResearchPreparer
     roundId: string;
     currentRunId: string | null;
   }): Promise<PreparedKapilotoRun> {
-    const providerSync = this.apiFootball
-      ? await syncApiFootballRoundMarket(
-          new SupabaseApiFootballSyncStore(this.client),
-          this.apiFootball,
-          input.roundId,
-          this.clock,
-        )
-      : null;
-
-    // Freeze the research evidence boundary only after any optional structured
-    // provider refresh. If no provider key is available, cached market priors
-    // remain usable and missing markets fall back to the explicit league-base
-    // prior in fixture-input-store.
+    // Provider collection is scheduled independently from user demand. The
+    // research request freezes whatever provider snapshots already exist at
+    // this instant; it never performs slow or billable football-data calls.
     const researchCutoffAt = this.clock().toISOString();
 
     const [fixtureInputs, previousAnalyses] = await Promise.all([
@@ -92,14 +75,11 @@ export class SupabaseKapilotoResearchPreparer
       taskGameIds: plan.taskGameIds,
       inputSnapshot: {
         task_fixture_ids: plan.taskFixtureIds,
-        prior_strategy: providerSync
-          ? "api-football-market-with-league-base-fallback"
-          : "cached-market-with-league-base-fallback",
-        structured_provider: providerSync ? "api-football" : null,
-        provider_sync_started_at: providerSync?.startedAt ?? null,
-        provider_sync_completed_at: providerSync?.completedAt ?? null,
-        provider_sync_summary:
-          providerSync?.summary ?? { status: "skipped_no_runtime_key" },
+        prior_strategy: "cached-market-with-league-base-fallback",
+        structured_provider: "scheduled_snapshot",
+        provider_sync_started_at: null,
+        provider_sync_completed_at: null,
+        provider_sync_summary: { status: "scheduled_provider_sync" },
         prepared_at: researchCutoffAt,
       },
     };

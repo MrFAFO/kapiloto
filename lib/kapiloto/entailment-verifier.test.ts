@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  EntailmentProviderError,
   EntailmentVerificationError,
   verifyRequiredEntailment,
   type EntailmentJudge,
@@ -75,28 +76,38 @@ test("batches required evidence and marks supported claims", async () => {
   );
 });
 
-test("unsupported material claim blocks the batch", async () => {
+test("unsupported material claim is a structured downgrade result, not an error", async () => {
   const judge: EntailmentJudge = {
     async verify(items) {
       return {
         verdicts: items.map((item) => ({
           verificationId: item.verificationId,
-          verdict: "unsupported" as const,
+          verdict:
+            item.fixtureId === "fixture-2"
+              ? ("unsupported" as const)
+              : ("supported" as const),
         })),
+        provenance: { responseId: "resp-1", model: "sol-model" },
       };
     },
   };
 
-  await assert.rejects(
-    () =>
-      verifyRequiredEntailment(
-        [{ fixtureId: "fixture-1", grounding: grounding() }],
-        judge,
-      ),
-    (error: unknown) =>
-      error instanceof EntailmentVerificationError &&
-      error.code === "unsupported_claim",
+  const result = await verifyRequiredEntailment(
+    [
+      { fixtureId: "fixture-1", grounding: grounding("e1") },
+      { fixtureId: "fixture-2", grounding: grounding("e1") },
+    ],
+    judge,
   );
+
+  assert.deepEqual(result.downgradedFixtureIds, ["fixture-2"]);
+  assert.equal(result.unsupported.length, 1);
+  assert.equal(result.unsupported[0].evidenceId, "e1");
+  assert.equal(result.unsupported[0].canonicalUrl, "https://example.com/report");
+  assert.equal(result.fixtures[0].grounding.accepted[0].entailment, "supported");
+  // The rejected claim is never marked supported.
+  assert.equal(result.fixtures[1].grounding.accepted[0].entailment, "unsupported");
+  assert.deepEqual(result.fixtures[1].grounding.requiresEntailmentVerification, []);
 });
 
 test("missing or duplicate judge verdicts are rejected", async () => {
@@ -162,4 +173,96 @@ test("no pending material evidence skips the judge", async () => {
 
   assert.equal(called, false);
   assert.equal(result.checkedEvidenceCount, 0);
+});
+
+test("invalid judge output is an operational, retryable failure", async () => {
+  const judge: EntailmentJudge = {
+    async verify() {
+      throw new EntailmentVerificationError(
+        "Entailment model output was not valid JSON.",
+        "invalid_judge_output",
+        [{ responseId: "resp-bad", model: "sol", claims: 1, usage: null }],
+      );
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      verifyRequiredEntailment(
+        [{ fixtureId: "fixture-1", grounding: grounding() }],
+        judge,
+      ),
+    (error: unknown) =>
+      error instanceof EntailmentVerificationError &&
+      error.code === "invalid_judge_output" &&
+      error.retryable &&
+      error.calls[0]?.responseId === "resp-bad",
+  );
+});
+
+test("inconsistent grounding is terminal, not retryable", async () => {
+  const broken = grounding("e1");
+  broken.requiresEntailmentVerification = ["missing-evidence"];
+
+  await assert.rejects(
+    () =>
+      verifyRequiredEntailment(
+        [{ fixtureId: "fixture-1", grounding: broken }],
+        {
+          async verify() {
+            throw new Error("judge must not run");
+          },
+        },
+      ),
+    (error: unknown) =>
+      error instanceof EntailmentVerificationError &&
+      error.code === "invalid_grounding" &&
+      !error.retryable,
+  );
+});
+
+test("large claim sets are chunked and keep every completed call on failure", async () => {
+  const fixtures: FixtureGroundingForEntailment[] = Array.from(
+    { length: 70 },
+    (_, index) => ({
+      fixtureId: `fixture-${index + 1}`,
+      grounding: grounding("e1"),
+    }),
+  );
+  let call = 0;
+  const judge: EntailmentJudge = {
+    async verify(items) {
+      call += 1;
+      const responseId = `resp-${call}`;
+      if (call === 3) {
+        throw new EntailmentProviderError(new Error("503 upstream"), []);
+      }
+      return {
+        verdicts: items.map((item) => ({
+          verificationId: item.verificationId,
+          verdict: "supported" as const,
+        })),
+        provenance: {
+          responseId,
+          model: "sol",
+          usage: {
+            inputTokens: 10,
+            cachedInputTokens: 0,
+            outputTokens: 5,
+            reasoningTokens: 2,
+            totalTokens: 15,
+          },
+        },
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => verifyRequiredEntailment(fixtures, judge),
+    (error: unknown) =>
+      error instanceof EntailmentProviderError &&
+      error.calls.length === 2 &&
+      error.calls.every((item) => item.claims === 32),
+  );
+  assert.equal(call, 3);
 });

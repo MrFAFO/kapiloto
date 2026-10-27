@@ -3,7 +3,6 @@ import { notFound, redirect } from "next/navigation";
 
 import { KapilotoWordmark } from "@/components/kapiloto-wordmark";
 import { MobileAppNav } from "@/components/mobile-app-nav";
-import { MatchResearchPanel } from "@/components/match-research-panel";
 import { loadActiveGroups, selectActiveGroup } from "@/lib/groups/current-group";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthenticatedUserId } from "@/lib/supabase/auth";
@@ -163,20 +162,6 @@ export default async function MatchPage({
     throw new Error(`Failed to load match: ${fixtureError.message}`);
   }
   if (!fixture) notFound();
-
-  const { data: roundGame, error: roundGameError } = await admin
-    .from("round_games")
-    .select("id,round_id,kickoff_at")
-    .eq("fixture_id", fixture.id)
-    .order("kickoff_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (roundGameError) {
-    throw new Error(
-      `Failed to resolve fixture round context: ${roundGameError.message}`,
-    );
-  }
 
   const [
     teamsResult,
@@ -395,19 +380,13 @@ export default async function MatchPage({
           </div>
         </section>
 
-        <MatchResearchPanel
-          roundId={roundGame?.round_id ?? null}
-          roundGameId={roundGame?.id ?? null}
-          groupId={activeGroup?.groupId ?? null}
-        />
-
         {!analysis ? (
           <section className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4">
             <p className="text-[12px] font-bold">טרם פורסם ניתוח קפילוטו</p>
             <p className="mt-2 text-[9px] leading-5 text-[var(--muted)]">
-              העמוד מחובר ל־Match Intelligence האמיתי. ברגע שמחקר משותף של
-              המחזור יפורסם, ההסתברויות, הגורמים, הסיכון והמקורות יופיעו כאן
-              אוטומטית. אין כאן נתוני דמו או השלמות מומצאות.
+              העמוד הזה מיועד לצפייה בלבד. מחקר חדש מופעל רק ברמת מחזור
+              Winner 16 המשותף לכל המשתמשים. כשהמחקר המרכזי יפורסם,
+              ההסתברויות, הגורמים, הסיכון והמקורות יופיעו כאן אוטומטית.
             </p>
           </section>
         ) : (

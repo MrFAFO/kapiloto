@@ -295,10 +295,19 @@ export type SourceRetrievalResult = {
 
 export async function retrieveResearchSourceDocuments(
   output: SolFixtureResearchOutput,
+  observedSourceUrls: string[] | null = null,
 ): Promise<SourceRetrievalResult> {
+  const observed =
+    observedSourceUrls == null
+      ? null
+      : new Set(observedSourceUrls.map((url) => normalizeEvidenceUrl(url)));
   const urls = [
     ...new Set(
-      output.evidence.map((item) => normalizeEvidenceUrl(item.url)),
+      output.evidence
+        .map((item) => normalizeEvidenceUrl(item.url))
+        // Never fetch a URL invented only in model JSON. The provider's
+        // observed web-search trace is the allow-list for retrieval.
+        .filter((url) => observed == null || observed.has(url)),
     ),
   ];
 

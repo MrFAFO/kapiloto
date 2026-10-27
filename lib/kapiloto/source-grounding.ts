@@ -1,4 +1,5 @@
 import type { KapilotoFixtureCard } from "./fixture-card";
+import { verifyStructuredFactor } from "./structured-refs";
 import {
   normalizeEvidenceUrl,
   type SolFixtureResearchOutput,
@@ -41,6 +42,7 @@ export type GroundedEvidence = {
 export type GroundingRejection = {
   evidenceId: string;
   reason:
+    | "unobserved_url"
     | "document_missing"
     | "source_denied"
     | "quote_not_found"
@@ -53,6 +55,12 @@ export type GroundingResult = {
   accepted: GroundedEvidence[];
   rejected: GroundingRejection[];
   requiresEntailmentVerification: string[];
+  /**
+   * Deterministic item-level evidence-policy failures. These do not justify
+   * another paid model call: callers must remove unsupported items and only
+   * withhold the whole fixture if no supported recommendation signal remains.
+   */
+  policyFailures?: string[];
 };
 
 const TIME_SENSITIVE_CLAIM_TYPES = new Set([
@@ -146,19 +154,10 @@ function isIndependent(
 function acceptedReferences(
   ids: string[],
   accepted: Map<string, GroundedEvidence>,
-  context: string,
 ): GroundedEvidence[] {
-  const supporting = ids
+  return ids
     .map((id) => accepted.get(id))
     .filter((item): item is GroundedEvidence => item != null);
-
-  if (supporting.length === 0) {
-    throw new Error(
-      `${context} has no evidence that passed grounding.`,
-    );
-  }
-
-  return supporting;
 }
 
 export function verifyGroundedResearchEvidence(
@@ -166,6 +165,7 @@ export function verifyGroundedResearchEvidence(
   card: KapilotoFixtureCard,
   documents: RetrievedSourceDocument[],
   registryEntries: SourceRegistryEntry[],
+  observedSourceUrls: string[] | null = null,
 ): GroundingResult {
   const cutoffMs = Date.parse(card.research_cutoff_at);
   if (!Number.isFinite(cutoffMs)) {
@@ -173,11 +173,24 @@ export function verifyGroundedResearchEvidence(
   }
 
   const documentsByUrl = documentMap(documents);
+  const observed =
+    observedSourceUrls == null
+      ? null
+      : new Set(observedSourceUrls.map((url) => normalizeEvidenceUrl(url)));
   const accepted: GroundedEvidence[] = [];
   const rejected: GroundingRejection[] = [];
 
   for (const evidence of output.evidence) {
     const canonicalUrl = normalizeEvidenceUrl(evidence.url);
+
+    if (observed != null && !observed.has(canonicalUrl)) {
+      rejected.push({
+        evidenceId: evidence.evidence_id,
+        reason: "unobserved_url",
+      });
+      continue;
+    }
+
     const document = documentsByUrl.get(canonicalUrl);
 
     if (!document) {
@@ -267,33 +280,45 @@ export function verifyGroundedResearchEvidence(
     accepted.map((item) => [item.modelEvidenceId, item]),
   );
 
+  const policyFailures: string[] = [];
+
   for (const availability of output.availability) {
-    acceptedReferences(
+    const supporting = acceptedReferences(
       availability.evidence_ids,
       acceptedById,
-      `availability:${availability.player_name}`,
     );
+    if (supporting.length !== availability.evidence_ids.length) {
+      policyFailures.push(
+        `availability:${availability.player_name} has evidence that failed grounding.`,
+      );
+    }
   }
 
   for (const conflict of output.conflicts) {
-    acceptedReferences(
-      conflict.evidence_ids_a,
-      acceptedById,
-      `conflict:${conflict.topic}:a`,
-    );
-    acceptedReferences(
-      conflict.evidence_ids_b,
-      acceptedById,
-      `conflict:${conflict.topic}:b`,
-    );
+    const left = acceptedReferences(conflict.evidence_ids_a, acceptedById);
+    const right = acceptedReferences(conflict.evidence_ids_b, acceptedById);
+    if (left.length !== conflict.evidence_ids_a.length) {
+      policyFailures.push(
+        `conflict:${conflict.topic}:a has evidence that failed grounding.`,
+      );
+    }
+    if (right.length !== conflict.evidence_ids_b.length) {
+      policyFailures.push(
+        `conflict:${conflict.topic}:b has evidence that failed grounding.`,
+      );
+    }
   }
 
   if (output.market_deviation) {
-    acceptedReferences(
+    const supporting = acceptedReferences(
       output.market_deviation.evidence_ids,
       acceptedById,
-      "market_deviation",
     );
+    if (supporting.length !== output.market_deviation.evidence_ids.length) {
+      policyFailures.push(
+        "market_deviation has evidence that failed grounding.",
+      );
+    }
   }
 
   const requiresEntailmentVerification = new Set<string>();
@@ -302,23 +327,69 @@ export function verifyGroundedResearchEvidence(
     const supporting = acceptedReferences(
       factor.evidence_ids,
       acceptedById,
-      `factor:${factor.dimension}`,
     );
+    const structured =
+      (factor.structured_refs?.length ?? 0) > 0
+        ? verifyStructuredFactor(factor, card)
+        : null;
 
-    if (factor.magnitude === "small") continue;
-
-    const hasStrongSource = supporting.some((item) => item.trustTier <= 2);
-    const hasTwoIndependent =
-      supporting.some((left, index) =>
-        supporting
-          .slice(index + 1)
-          .some((right) => isIndependent(left, right)),
+    if (supporting.length !== factor.evidence_ids.length) {
+      policyFailures.push(
+        `factor:${factor.dimension} has evidence that failed grounding.`,
       );
+      continue;
+    }
 
-    if (!hasStrongSource && !hasTwoIndependent) {
-      throw new Error(
-        `Material factor ${factor.dimension} lacks strong or independent corroborated evidence.`,
+    if (structured && !structured.valid) {
+      policyFailures.push(
+        `factor:${factor.dimension} failed structured verification: ${structured.reason}.`,
       );
+      continue;
+    }
+
+    if (factor.evidence_ids.length === 0 && !structured?.valid) {
+      policyFailures.push(
+        `factor:${factor.dimension} has no verified support channel.`,
+      );
+      continue;
+    }
+
+    // Every directional web-backed factor can move p_sol and therefore its
+    // web claims require entailment verification. A structured-only small
+    // factor is checked deterministically by verifyStructuredFactor instead.
+    if (
+      factor.favors === "none" &&
+      factor.magnitude === "small" &&
+      factor.evidence_ids.length === 0
+    ) {
+      continue;
+    }
+
+    if (factor.magnitude !== "small") {
+      // V1 deliberately refuses medium/large structured-only effects. When a
+      // factor is material, web support still needs the existing strong-source
+      // or independent corroboration rule.
+      if (factor.evidence_ids.length === 0) {
+        policyFailures.push(
+          `Material factor ${factor.dimension} requires grounded web corroboration in V1.`,
+        );
+        continue;
+      }
+
+      const hasStrongSource = supporting.some((item) => item.trustTier <= 2);
+      const hasTwoIndependent =
+        supporting.some((left, index) =>
+          supporting
+            .slice(index + 1)
+            .some((right) => isIndependent(left, right)),
+        );
+
+      if (!hasStrongSource && !hasTwoIndependent) {
+        policyFailures.push(
+          `Material factor ${factor.dimension} lacks strong or independent corroborated evidence.`,
+        );
+        continue;
+      }
     }
 
     for (const item of supporting) {
@@ -329,6 +400,11 @@ export function verifyGroundedResearchEvidence(
   return {
     accepted,
     rejected,
-    requiresEntailmentVerification: [...requiresEntailmentVerification].sort(),
+    // Unsupported items are removed individually by the executor. Material
+    // factors that remain fully grounded still require entailment verification.
+    requiresEntailmentVerification: [
+      ...requiresEntailmentVerification,
+    ].sort(),
+    policyFailures,
   };
 }

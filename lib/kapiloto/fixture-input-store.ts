@@ -1,5 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  SupabaseFixtureStructuredSnapshotStore,
+  type StoredFixtureStructuredSnapshot,
+} from "@/lib/football-features/supabase-store";
+import {
+  SupabaseProviderAnalyticsStore,
+  type FixtureProviderAnalyticsSnapshot,
+} from "./provider-analytics";
+
 import type { FixtureCardInput } from "./fixture-card";
 
 type RoundGameRow = {
@@ -33,7 +42,15 @@ type TeamAliasRow = {
 type TeamMappingRow = {
   team_id: string;
   provider_name: string | null;
+  mapping_status: string | null;
 };
+
+/**
+ * Only trusted provider mappings may lend their provider name to research
+ * aliases; `unverified` rows (for example an API-Football name bootstrap) and
+ * rows without a status are ignored.
+ */
+const TRUSTED_MAPPING_STATUSES = new Set(["confirmed", "manual_override"]);
 
 type MarketSnapshotRow = {
   id: string;
@@ -56,6 +73,8 @@ export type FixtureInputRows = {
   teamAliases: TeamAliasRow[];
   teamMappings: TeamMappingRow[];
   marketSnapshots: MarketSnapshotRow[];
+  structuredSnapshots?: StoredFixtureStructuredSnapshot[];
+  providerAnalyticsSnapshots?: FixtureProviderAnalyticsSnapshot[];
 };
 
 function latestSnapshotByFixture(
@@ -107,7 +126,11 @@ function aliasesByTeam(
   };
 
   for (const row of aliasRows) add(row.team_id, row.alias);
-  for (const row of mappingRows) add(row.team_id, row.provider_name);
+  for (const row of mappingRows) {
+    if (row.mapping_status != null && TRUSTED_MAPPING_STATUSES.has(row.mapping_status)) {
+      add(row.team_id, row.provider_name);
+    }
+  }
 
   return map;
 }
@@ -132,6 +155,18 @@ export function assembleFixtureCardInputs(
   const teams = new Map(rows.teams.map((team) => [team.id, team]));
   const aliases = aliasesByTeam(rows.teamAliases, rows.teamMappings);
   const priors = latestSnapshotByFixture(rows.marketSnapshots, researchCutoffAt);
+  const structuredSnapshots = new Map(
+    (rows.structuredSnapshots ?? []).map((snapshot) => [
+      snapshot.fixtureId,
+      snapshot,
+    ]),
+  );
+  const providerAnalyticsSnapshots = new Map(
+    (rows.providerAnalyticsSnapshots ?? []).map((snapshot) => [
+      snapshot.fixture_id,
+      snapshot,
+    ]),
+  );
 
   return sortedGames.map((game) => {
     const home = teams.get(game.home_team_id);
@@ -167,6 +202,38 @@ export function assembleFixtureCardInputs(
       kickoffAt: game.kickoff_at,
       neutralVenue: game.neutral_venue,
       settlementRule: game.settlement_rule,
+      structuredSnapshot: (() => {
+        const snapshot = structuredSnapshots.get(game.fixture_id);
+        return snapshot == null
+          ? null
+          : {
+              id: snapshot.id,
+              featureVersion: snapshot.featureVersion,
+              sha256: snapshot.sha256,
+              computedAt: snapshot.computedAt,
+              cutoffAt: snapshot.researchCutoffAt,
+              features: snapshot.features,
+            };
+      })(),
+      providerAnalytics: (() => {
+        const snapshot = providerAnalyticsSnapshots.get(game.fixture_id);
+        if (!snapshot) return null;
+        const homeMetrics = snapshot.teams.find(
+          (team) => team.team_id === game.home_team_id,
+        );
+        const awayMetrics = snapshot.teams.find(
+          (team) => team.team_id === game.away_team_id,
+        );
+        if (!homeMetrics || !awayMetrics) return null;
+        return {
+          provider: snapshot.provider,
+          sourceVersion: snapshot.source_version,
+          capturedAt: snapshot.captured_at,
+          season: snapshot.season,
+          home: homeMetrics,
+          away: awayMetrics,
+        };
+      })(),
       prior:
         prior == null
           ? {
@@ -214,6 +281,16 @@ export async function loadRoundFixtureCardInputs(
     ...new Set(games.flatMap((game) => [game.home_team_id, game.away_team_id])),
   ];
   const fixtureIds = games.map((game) => game.fixture_id);
+  const [structuredSnapshots, providerAnalyticsSnapshots] = await Promise.all([
+    new SupabaseFixtureStructuredSnapshotStore(client).loadLatestAtOrBefore(
+      fixtureIds,
+      researchCutoffAt,
+    ),
+    new SupabaseProviderAnalyticsStore(client).loadLatestAtOrBefore(
+      fixtureIds,
+      researchCutoffAt,
+    ),
+  ]);
 
   const [
     { data: teamsData, error: teamsError },
@@ -228,7 +305,7 @@ export async function loadRoundFixtureCardInputs(
       .in("team_id", teamIds),
     client
       .from("provider_team_mappings")
-      .select("team_id,provider_name")
+      .select("team_id,provider_name,mapping_status")
       .eq("provider", provider)
       .in("team_id", teamIds),
     client
@@ -260,6 +337,8 @@ export async function loadRoundFixtureCardInputs(
       teamAliases: (aliasesData ?? []) as TeamAliasRow[],
       teamMappings: (mappingsData ?? []) as TeamMappingRow[],
       marketSnapshots: (marketsData ?? []) as MarketSnapshotRow[],
+      structuredSnapshots: [...structuredSnapshots.values()],
+      providerAnalyticsSnapshots: [...providerAnalyticsSnapshots.values()],
     },
     researchCutoffAt,
   );
