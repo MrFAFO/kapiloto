@@ -8,6 +8,7 @@ import {
   type SolFixtureResearchResult,
 } from "./openai-research";
 import { KAPILOTO_RESEARCH_DIMENSIONS } from "./research-output";
+import { KAPILOTO_RESEARCH_PROTOCOL_VERSION } from "./research-config";
 import {
   DEFAULT_RESEARCH_REQUEST_PROFILE,
   executeOneResearchTask,
@@ -65,7 +66,7 @@ function claimed(attemptNo = 1): ClaimedResearchAttempt {
     fixtureCard: card,
     run: {
       modelKey: "sol-model",
-      researchProtocolVersion: "kapiloto-research-v1",
+      researchProtocolVersion: KAPILOTO_RESEARCH_PROTOCOL_VERSION,
       promptTemplateSha256: "a".repeat(64),
       maxAttemptsPerTask: 3,
       executionTopology: "fixture_fanout",

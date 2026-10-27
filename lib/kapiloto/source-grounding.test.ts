@@ -308,3 +308,111 @@ test("a claim with no grounded support requests a fail-closed downgrade without 
     ),
   );
 });
+
+function v3LineupOutput(): SolFixtureResearchOutput {
+  const output = baseOutput();
+  output.protocol_version = "kapiloto-research-v3";
+  output.evidence = [
+    {
+      evidence_id: "lineup-1",
+      url: "https://club.example/lineup",
+      quote: "Player A is expected to start for Home.",
+      claim: "Player A is expected to start.",
+      claim_type: "lineup",
+      about_team: "home",
+      event_time: "2026-10-18",
+    },
+  ];
+  output.availability = [];
+  output.expected_lineups = {
+    home: {
+      status: "partial",
+      formation: null,
+      formation_evidence_ids: [],
+      starters: [
+        {
+          player_name: "Player A",
+          position: "FW",
+          confidence: "medium",
+          evidence_ids: ["lineup-1"],
+        },
+      ],
+    },
+    away: {
+      status: "insufficient_data",
+      formation: null,
+      formation_evidence_ids: [],
+      starters: [],
+    },
+  };
+  output.tactical_facts = [];
+  output.matchup_analysis = [];
+  output.regime_changes = [];
+  output.factors = [];
+  return output;
+}
+
+test("v3 lineup evidence creates a server-written item entailment request", () => {
+  const v3Card = { ...card, lineup_research: "enabled" as const };
+  const result = verifyGroundedResearchEvidence(
+    v3LineupOutput(),
+    v3Card,
+    [
+      document({
+        requestedUrl: "https://club.example/lineup",
+        finalUrl: "https://club.example/lineup",
+        publishedAt: "2026-10-18T10:00:00Z",
+        text: "Team update: Player A is expected to start for Home.",
+      }),
+    ],
+    [
+      {
+        domain: "club.example",
+        denied: false,
+        tierByClaimType: { lineup: 1, default: 2 },
+      },
+    ],
+  );
+
+  assert.equal(result.accepted.length, 1);
+  assert.equal(result.rejected.length, 0);
+  assert.deepEqual(result.itemEntailmentRequests, [
+    {
+      verificationId: "lineup:home:starter:0",
+      evidenceIds: ["lineup-1"],
+      claim: "Player A is expected to start for Home.",
+    },
+  ]);
+});
+
+test("v3 rejects stale lineup evidence even when the model labels it correctly", () => {
+  const v3Card = { ...card, lineup_research: "enabled" as const };
+  const result = verifyGroundedResearchEvidence(
+    v3LineupOutput(),
+    v3Card,
+    [
+      document({
+        requestedUrl: "https://club.example/lineup",
+        finalUrl: "https://club.example/lineup",
+        publishedAt: "2026-10-01T10:00:00Z",
+        text: "Team update: Player A is expected to start for Home.",
+      }),
+    ],
+    [
+      {
+        domain: "club.example",
+        denied: false,
+        tierByClaimType: { lineup: 1, default: 2 },
+      },
+    ],
+  );
+
+  // Freshness is derived from the citing item, not the declared claim type:
+  // the row is quote-verified, but it can no longer support a predicted start.
+  assert.deepEqual(result.itemEntailmentRequests, []);
+  assert.ok(
+    result.policyFailures?.some((failure) =>
+      /lineup:home:starter:0 failed item provenance: lineup-1=stale/.test(failure),
+    ),
+  );
+});

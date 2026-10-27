@@ -16,6 +16,7 @@ import {
 } from "./openai-research";
 import {
   KAPILOTO_PROMPT_TEMPLATE_SHA256,
+  KAPILOTO_RESEARCH_PROTOCOL_VERSION,
   KAPILOTO_RESEARCH_SCHEMA_SHA256,
 } from "./research-config";
 import {
@@ -292,6 +293,19 @@ function semanticStage(code: string): string {
   return "not_started";
 }
 
+/**
+ * A run frozen under another research protocol must never be executed with
+ * this worker's prompt/schema. Raised before any paid model call.
+ */
+export class ResearchProtocolMismatchError extends Error {
+  constructor(readonly runProtocol: string) {
+    super(
+      `Frozen research run protocol ${runProtocol} does not match worker protocol ${KAPILOTO_RESEARCH_PROTOCOL_VERSION}.`,
+    );
+    this.name = "ResearchProtocolMismatchError";
+  }
+}
+
 /** Marks a failed write of a successful result; never recorded as failure. */
 class SuccessFinishError extends Error {
   constructor(readonly cause: unknown) {
@@ -561,6 +575,15 @@ export async function executeOneResearchTask(
 
   try {
     const card = validateClaim(attempt);
+
+    if (
+      attempt.run.researchProtocolVersion !==
+      KAPILOTO_RESEARCH_PROTOCOL_VERSION
+    ) {
+      throw new ResearchProtocolMismatchError(
+        attempt.run.researchProtocolVersion,
+      );
+    }
 
     const baseProfile: ResearchRequestProfile = {
       reasoningEffort:
@@ -868,7 +891,10 @@ export async function executeOneResearchTask(
       validationMs: null,
       totalMs: now() - startedAt,
       failureClass: "internal",
-      failureCode: "executor_validation_failed",
+      failureCode:
+        error instanceof ResearchProtocolMismatchError
+          ? "research_protocol_mismatch"
+          : "executor_validation_failed",
       failureDetail: error instanceof Error ? error.message : String(error),
       validatedOutput: null,
       validationReport: {

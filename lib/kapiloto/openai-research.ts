@@ -1,8 +1,9 @@
 import OpenAI from "openai";
 
-import researchOutputSchema from "@/docs/ai/kapiloto-research-output.schema.json";
+import researchOutputSchema from "@/docs/ai/kapiloto-research-output.v3.schema.json";
 
 import type { KapilotoFixtureCard } from "./fixture-card";
+import { KAPILOTO_RESEARCH_PROTOCOL_VERSION } from "./research-config";
 import {
   buildKapilotoFixtureResearchInput,
   KAPILOTO_SOL_SYSTEM_PROMPT,
@@ -339,7 +340,7 @@ export async function researchFixtureWithSol(
       text: {
         format: {
           type: "json_schema",
-          name: "kapiloto_fixture_research_v2",
+          name: "kapiloto_fixture_research_v3",
           description:
             "Grounded pre-match research output for one frozen Kapiloto fixture.",
           strict: true,
@@ -417,6 +418,7 @@ export async function researchFixtureWithSol(
         parsed,
         card,
         sourceUrls,
+        KAPILOTO_RESEARCH_PROTOCOL_VERSION,
       );
     } catch (error) {
       throw new SolFixtureResearchError(

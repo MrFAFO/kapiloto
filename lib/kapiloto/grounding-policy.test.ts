@@ -212,3 +212,68 @@ test("valid structured refs do not replace corroboration for material web factor
   assert.equal(decision.pSolValid, false);
   assert.equal(decision.output.factors.length, 0);
 });
+
+
+test("v3 prunes an unsupported predicted starter and recomputes lineup status", () => {
+  const raw = output();
+  raw.protocol_version = "kapiloto-research-v3";
+  raw.expected_lineups = {
+    home: {
+      status: "supported",
+      formation: null,
+      formation_evidence_ids: [],
+      starters: [
+        {
+          player_name: "Player A",
+          position: "FW",
+          confidence: "high",
+          evidence_ids: ["e2"],
+        },
+      ],
+    },
+    away: {
+      status: "insufficient_data",
+      formation: null,
+      formation_evidence_ids: [],
+      starters: [],
+    },
+  };
+  raw.tactical_facts = [];
+  raw.matchup_analysis = [];
+  raw.regime_changes = [];
+
+  const grounded = grounding("supported");
+  grounded.accepted.push({
+    modelEvidenceId: "e2",
+    canonicalUrl: "https://club.example/lineup",
+    domain: "club.example",
+    claimType: "lineup",
+    aboutTeam: "home",
+    quote: "Player A may be considered.",
+    claim: "Player A is expected to start.",
+    sourceEventTime: "2026-10-29",
+    publishedAt: "2026-10-29T10:00:00Z",
+    retrievedAt: "2026-10-29T11:00:00Z",
+    trustTier: 1,
+    quoteVerified: true,
+    entailment: "not_checked",
+    syndicationClusterId: null,
+    contentSha256: "b".repeat(64),
+  });
+  grounded.itemEntailmentVerdicts = {
+    "lineup:home:starter:0": "unsupported",
+  };
+
+  const decision = applyGroundingPolicy(raw, grounded, card());
+
+  assert.deepEqual(decision.output.expected_lineups?.home.starters, []);
+  assert.equal(
+    decision.output.expected_lineups?.home.status,
+    "insufficient_data",
+  );
+  assert.ok(
+    decision.removedItems.some((item) =>
+      item.startsWith("lineup:home:starter:Player A"),
+    ),
+  );
+});

@@ -8,6 +8,7 @@ export const KAPILOTO_FIXTURE_CARD_VERSION =
 export const KAPILOTO_SETTLEMENT_90M =
   "result_after_90_minutes_including_stoppage_time" as const;
 export const DEFAULT_RESEARCH_SAFETY_WINDOW_MINUTES = 15;
+export const LINEUP_RESEARCH_WINDOW_HOURS = 48;
 
 export type BasisPointTriple = {
   home: number;
@@ -96,6 +97,7 @@ export type KapilotoFixtureCard = {
   kickoff_at: string;
   neutral_venue: boolean;
   research_cutoff_at: string;
+  lineup_research?: "enabled" | "disabled";
   structured: {
     table_snapshot_id: string | null;
     recent_matches: Record<string, unknown>[];
@@ -340,6 +342,11 @@ export function buildKapilotoFixtureCard(
     kickoff_at: new Date(input.kickoffAt).toISOString(),
     neutral_venue: input.neutralVenue,
     research_cutoff_at: new Date(researchCutoffAt).toISOString(),
+    lineup_research:
+      Date.parse(input.kickoffAt) - Date.parse(researchCutoffAt) <=
+      LINEUP_RESEARCH_WINDOW_HOURS * 60 * 60_000
+        ? "enabled"
+        : "disabled",
     structured: {
       table_snapshot_id: input.tableSnapshotId ?? null,
       recent_matches: input.recentMatches ?? [],

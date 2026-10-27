@@ -834,6 +834,10 @@ export type Database = {
       kapiloto_analyses: {
         Row: {
           availability: Json
+          expected_lineups: Json | null
+          tactical_facts: Json | null
+          matchup_analysis: Json | null
+          regime_changes: Json | null
           blend_weight: number | null
           carried_from_analysis_id: string | null
           conflicts: Json
@@ -880,6 +884,10 @@ export type Database = {
         }
         Insert: {
           availability?: Json
+          expected_lineups?: Json | null
+          tactical_facts?: Json | null
+          matchup_analysis?: Json | null
+          regime_changes?: Json | null
           blend_weight?: number | null
           carried_from_analysis_id?: string | null
           conflicts?: Json
@@ -926,6 +934,10 @@ export type Database = {
         }
         Update: {
           availability?: Json
+          expected_lineups?: Json | null
+          tactical_facts?: Json | null
+          matchup_analysis?: Json | null
+          regime_changes?: Json | null
           blend_weight?: number | null
           carried_from_analysis_id?: string | null
           conflicts?: Json
@@ -1162,6 +1174,7 @@ export type Database = {
           id: string
           magnitude: string
           rationale: string
+          matchup_ids: Json
         }
         Insert: {
           analysis_id: string
@@ -1170,6 +1183,7 @@ export type Database = {
           id?: string
           magnitude: string
           rationale: string
+          matchup_ids?: Json
         }
         Update: {
           analysis_id?: string
@@ -1178,6 +1192,7 @@ export type Database = {
           id?: string
           magnitude?: string
           rationale?: string
+          matchup_ids?: Json
         }
         Relationships: [
           {

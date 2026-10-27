@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 
-import researchOutputSchema from "@/docs/ai/kapiloto-research-output.schema.json";
+import researchOutputSchema from "@/docs/ai/kapiloto-research-output.v3.schema.json";
 
 export type KapilotoOpenAIPreflightResult = {
   responseId: string;
@@ -69,7 +69,7 @@ export async function runKapilotoResearchSchemaPreflight(
       text: {
         format: {
           type: "json_schema",
-          name: "kapiloto_fixture_research_v1",
+          name: "kapiloto_fixture_research_v3",
           strict: true,
           schema: researchOutputSchema as Record<string, unknown>,
         },

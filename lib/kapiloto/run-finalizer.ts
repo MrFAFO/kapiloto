@@ -13,6 +13,7 @@ import {
   verifyRequiredEntailment,
 } from "./entailment-verifier";
 import { classifyOpenAICallError } from "./openai-research";
+import { KAPILOTO_RESEARCH_PROTOCOL_VERSION } from "./research-config";
 import type { KapilotoFixtureCard } from "./fixture-card";
 import type {
   FrozenFixtureContext,
@@ -33,6 +34,29 @@ import type { GroundingResult } from "./source-grounding";
  * Deterministic data problem in the frozen run (identity, fixture set,
  * missing grounding). Retrying finalization cannot fix it.
  */
+/**
+ * Finalization runs the current grounding/entailment/publication code. A run
+ * frozen under another research protocol must fail closed instead of being
+ * published through rules it was not researched under.
+ */
+export function assertCurrentResearchProtocol(
+  runProtocol: unknown,
+  attemptProtocols: unknown[] = [],
+): void {
+  if (runProtocol !== KAPILOTO_RESEARCH_PROTOCOL_VERSION) {
+    throw new KapilotoFinalizationDataError(
+      `Kapiloto run protocol ${String(runProtocol)} cannot be finalized by ${KAPILOTO_RESEARCH_PROTOCOL_VERSION} code.`,
+    );
+  }
+  for (const protocol of attemptProtocols) {
+    if (protocol !== KAPILOTO_RESEARCH_PROTOCOL_VERSION) {
+      throw new KapilotoFinalizationDataError(
+        `Succeeded attempt protocol ${String(protocol)} does not match run protocol ${KAPILOTO_RESEARCH_PROTOCOL_VERSION}.`,
+      );
+    }
+  }
+}
+
 export class KapilotoFinalizationDataError extends Error {
   constructor(message: string) {
     super(message);
@@ -311,6 +335,13 @@ function materializedSource(row: AnalysisRow): CarryForwardSource {
       summary: row.summary,
       main_risk: row.main_risk,
       availability: jsonArray(row.availability) as SolFixtureResearchOutput["availability"],
+      // Carry-forward deliberately drops time-sensitive V3 tactical detail.
+      // A stale predicted XI must never be presented as current after the
+      // source run's cutoff.
+      expected_lineups: null,
+      tactical_facts: null,
+      matchup_analysis: null,
+      regime_changes: null,
       dimension_coverage: jsonArray(row.dimension_coverage) as SolFixtureResearchOutput["dimension_coverage"],
       conflicts: jsonArray(row.conflicts) as SolFixtureResearchOutput["conflicts"],
       watch_items: jsonArray(row.watch_items) as SolFixtureResearchOutput["watch_items"],
@@ -349,7 +380,9 @@ export class SupabaseKapilotoRunFinalizationStore
     ] = await Promise.all([
       this.client
         .from("kapiloto_research_runs")
-        .select("id,round_id,status,fixture_set,research_cutoff_at")
+        .select(
+          "id,round_id,status,fixture_set,research_cutoff_at,research_protocol_version",
+        )
         .eq("id", runId)
         .maybeSingle(),
       this.client
@@ -378,6 +411,8 @@ export class SupabaseKapilotoRunFinalizationStore
       );
     }
 
+    assertCurrentResearchProtocol(runData.research_protocol_version);
+
     const fixtureSet = parseFixtureSet(runData.fixture_set);
     const attempts = ((attemptsData ?? []) as AttemptRow[]).map((row) => {
       if (!row.round_game_id || !row.fixture_id) {
@@ -400,6 +435,10 @@ export class SupabaseKapilotoRunFinalizationStore
         grounding: parseGrounding(report.grounding),
       };
     });
+    assertCurrentResearchProtocol(
+      runData.research_protocol_version,
+      attempts.map((attempt) => attempt.validatedOutput.protocol_version),
+    );
 
     const carriedIds = fixtureSet.flatMap((fixture) =>
       fixture.mode === "carried_forward"
@@ -597,10 +636,20 @@ export async function prepareKapilotoRunPublication(
     );
   }
 
+  const researchedIds = new Set(
+    researched.map((fixture) => fixture.fixtureId),
+  );
+  const actuallyDowngradedFixtureIds = materialized.analyses
+    .filter(
+      (analysis) =>
+        researchedIds.has(analysis.fixture_id) &&
+        unsupportedByFixture.has(analysis.fixture_id) &&
+        analysis.p_sol_1_bp == null,
+    )
+    .map((analysis) => analysis.fixture_id)
+    .sort();
+
   if (entailment.checkedEvidenceCount > 0) {
-    const researchedIds = new Set(
-      researched.map((fixture) => fixture.fixtureId),
-    );
     materialized.analyses
       .filter((analysis) => researchedIds.has(analysis.fixture_id))
       .forEach((analysis) => {
@@ -614,12 +663,22 @@ export async function prepareKapilotoRunPublication(
             model: entailment.provenance.model,
             checked_claims: entailment.checkedEvidenceCount,
             unsupported_claims: entailment.unsupported.length,
+            downgraded_fixture_ids: actuallyDowngradedFixtureIds,
           },
         });
       });
   }
 
-  return { materialized, entailment };
+  return {
+    materialized,
+    entailment: {
+      ...entailment,
+      // The verifier only knows that an entailment check failed. V3 policy
+      // decides whether that failure merely prunes a descriptive item or
+      // actually disables Sol for the fixture.
+      downgradedFixtureIds: actuallyDowngradedFixtureIds,
+    },
+  };
 }
 
 /**

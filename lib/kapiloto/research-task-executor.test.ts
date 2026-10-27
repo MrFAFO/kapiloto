@@ -16,6 +16,7 @@ import {
   type SolFixtureResearchResult,
 } from "./openai-research";
 import { KAPILOTO_RESEARCH_DIMENSIONS } from "./research-output";
+import { KAPILOTO_RESEARCH_PROTOCOL_VERSION } from "./research-config";
 
 const card: KapilotoFixtureCard = {
   fixture_card_version: "kapiloto-fixture-card-v2",
@@ -67,7 +68,7 @@ function claimed(): ClaimedResearchAttempt {
     fixtureCard: card,
     run: {
       modelKey: "sol-model",
-      researchProtocolVersion: "kapiloto-research-v1",
+      researchProtocolVersion: KAPILOTO_RESEARCH_PROTOCOL_VERSION,
       promptTemplateSha256: "a".repeat(64),
       maxAttemptsPerTask: 3,
       executionTopology: "fixture_fanout",
@@ -499,5 +500,33 @@ test("rejects genuinely different research cutoff instants before model executio
   assert.match(
     queue.finishes[0].failureDetail ?? "",
     /cutoff does not match run cutoff/,
+  );
+});
+
+test("refuses a frozen run from a different research protocol before the paid model call", async () => {
+  const queue = new MemoryQueue();
+  queue.claimValue = claimed();
+  queue.claimValue.run.researchProtocolVersion = "kapiloto-research-v2";
+  let called = false;
+  const runner: FixtureResearchRunner = {
+    async research() {
+      called = true;
+      return successResult();
+    },
+  };
+
+  const result = await executeOneResearchTask(queue, runner, {
+    workerId: "worker-protocol-guard",
+    heartbeatIntervalMs: 0,
+  });
+
+  assert.equal(called, false);
+  assert.equal(result.status, "failed");
+  assert.equal(queue.finishes.length, 1);
+  assert.equal(queue.finishes[0].failureCode, "research_protocol_mismatch");
+  assert.equal(queue.finishes[0].retryable, false);
+  assert.match(
+    queue.finishes[0].failureDetail ?? "",
+    /does not match worker protocol/,
   );
 });

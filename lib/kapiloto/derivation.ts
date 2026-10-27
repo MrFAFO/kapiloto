@@ -2,8 +2,8 @@ import type { KapilotoFixtureCard } from "./fixture-card";
 import type { SolFixtureResearchOutput } from "./research-output";
 
 export const KAPILOTO_RELIABILITY_FORMULA_VERSION =
-  "kapiloto-reliability-shadow-v3" as const;
-export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v1" as const;
+  "kapiloto-reliability-shadow-v5" as const;
+export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v2" as const;
 
 export type Outcome = "1" | "X" | "2";
 
@@ -11,6 +11,11 @@ export type GroundingSummary = {
   acceptedTrustTiers: number[];
   structuredTrustTiers?: number[];
   rejectedCount: number;
+  /**
+   * Research v3: a grounded regime change provably post-dates the frozen
+   * structured form/xG for at least one team.
+   */
+  preRegimeStructuredInputs?: boolean;
 };
 
 export type DerivedAnalyzedFixture = {
@@ -169,6 +174,11 @@ export function deriveReliability(
   } else {
     score -= 0.12;
     reasons.push("no_verified_evidence");
+  }
+
+  if (grounding.preRegimeStructuredInputs) {
+    score -= 0.05;
+    reasons.push("structured_inputs_pre_regime");
   }
 
   if (grounding.rejectedCount > 0) {

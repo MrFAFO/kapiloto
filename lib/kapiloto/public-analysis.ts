@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { SolFixtureResearchOutput } from "./research-output";
+
 export type KapilotoPublicFixtureAnalysis = {
   analysisId: string;
   runId: string;
@@ -11,6 +13,11 @@ export type KapilotoPublicFixtureAnalysis = {
   reliabilityBand: "low" | "medium" | "high" | null;
   summary: string | null;
   mainRisk: string | null;
+  availability?: SolFixtureResearchOutput["availability"] | null;
+  expectedLineups?: SolFixtureResearchOutput["expected_lineups"] | null;
+  tacticalFacts?: SolFixtureResearchOutput["tactical_facts"] | null;
+  matchupAnalysis?: SolFixtureResearchOutput["matchup_analysis"] | null;
+  regimeChanges?: SolFixtureResearchOutput["regime_changes"] | null;
   generatedAt: string;
   validUntil: string | null;
 };
@@ -24,7 +31,7 @@ export async function loadPublicFixtureAnalysis(
   const { data, error } = await admin
     .from("kapiloto_analyses")
     .select(
-      "id,research_run_id,outcome,primary_pick,suggested_double,double_priority_rank,reliability_band,summary,main_risk,generated_at,valid_until",
+      "id,research_run_id,outcome,primary_pick,suggested_double,double_priority_rank,reliability_band,summary,main_risk,availability,expected_lineups,tactical_facts,matchup_analysis,regime_changes,generated_at,valid_until",
     )
     .eq("research_run_id", runId)
     .eq("round_game_id", roundGameId)
@@ -63,6 +70,26 @@ export async function loadPublicFixtureAnalysis(
         : (data.reliability_band as "low" | "medium" | "high"),
     summary: data.summary == null ? null : String(data.summary),
     mainRisk: data.main_risk == null ? null : String(data.main_risk),
+    availability:
+      data.availability == null
+        ? null
+        : (data.availability as SolFixtureResearchOutput["availability"]),
+    expectedLineups:
+      data.expected_lineups == null
+        ? null
+        : (data.expected_lineups as SolFixtureResearchOutput["expected_lineups"]),
+    tacticalFacts:
+      data.tactical_facts == null
+        ? null
+        : (data.tactical_facts as SolFixtureResearchOutput["tactical_facts"]),
+    matchupAnalysis:
+      data.matchup_analysis == null
+        ? null
+        : (data.matchup_analysis as SolFixtureResearchOutput["matchup_analysis"]),
+    regimeChanges:
+      data.regime_changes == null
+        ? null
+        : (data.regime_changes as SolFixtureResearchOutput["regime_changes"]),
     generatedAt: String(data.generated_at),
     validUntil:
       data.valid_until == null ? null : String(data.valid_until),

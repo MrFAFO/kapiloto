@@ -58,6 +58,12 @@ The envelope contains:
 
 Analysis includes outcome, deterministically derived primary_pick and suggested_double, global double_priority_rank/double_gain_score, group-specific double_recommended, reliability/reliability_band, server-derived p_final basis points, summary, main_risk, generated_at and validated evidence/sources.
 
+Research v3 adds optional, sanitized fields to the fixture analysis:
+`expectedLineups`, `tacticalFacts`, `matchupAnalysis` and `regimeChanges`.
+They are null for v1/v2 analyses and for carried-forward analyses. They are
+descriptive research only; probabilities, picks and double ranks remain
+derived from factors and the frozen prior.
+
 `double_recommended` in the API is contextual to the requesting group's configured double budget; it is not stored as a universal model output. The shared stored probabilities/rank remain identical for every group.
 
 `reliability` means trust in the research quality, not the chance that the top outcome occurs. Precise p_final percentages are primarily optimizer/internal data and should not be presented to users as calibrated win probabilities until calibration is validated.

@@ -4,6 +4,12 @@ import {
   normalizeEvidenceUrl,
   type SolFixtureResearchOutput,
 } from "./research-output";
+import { groundResearchV3Items } from "./research-v3-grounding";
+import {
+  resolveV3TierMap,
+  tierFromMap,
+  V3_MAX_DISTINCT_EVIDENCE_URLS,
+} from "./research-v3-rules";
 
 export type SourceRegistryEntry = {
   domain: string;
@@ -37,6 +43,11 @@ export type GroundedEvidence = {
   entailment: "supported" | "unsupported" | "not_checked";
   syndicationClusterId: string | null;
   contentSha256: string;
+  /**
+   * Research v3 only: the domain's resolved tier per claim type, so policy can
+   * rate the evidence by the canonical class of the item citing it.
+   */
+  claimTierMap?: Record<string, number>;
 };
 
 export type GroundingRejection = {
@@ -48,13 +59,31 @@ export type GroundingRejection = {
     | "quote_not_found"
     | "published_after_cutoff"
     | "undated_time_sensitive_claim"
-    | "invalid_source_timestamp";
+    | "invalid_source_timestamp"
+    | "url_cap_exceeded";
+};
+
+/** One server-written item-level entailment check (research v3). */
+export type GroundingItemEntailmentRequest = {
+  verificationId: string;
+  evidenceIds: string[];
+  claim: string;
 };
 
 export type GroundingResult = {
   accepted: GroundedEvidence[];
   rejected: GroundingRejection[];
   requiresEntailmentVerification: string[];
+  /** Research v3 item-level checks still to be judged. */
+  itemEntailmentRequests?: GroundingItemEntailmentRequest[];
+  /** Research v3 item-level verdicts keyed by item verification id. */
+  itemEntailmentVerdicts?: Record<string, "supported" | "unsupported">;
+  /**
+   * Research v3: evidence ids that are unusable for a specific item (for
+   * example `factor:2`) because they fail that item's derived provenance or
+   * freshness rule, although the evidence row itself was quote-verified.
+   */
+  itemEvidenceExclusions?: Record<string, string[]>;
   /**
    * Deterministic item-level evidence-policy failures. These do not justify
    * another paid model call: callers must remove unsupported items and only
@@ -68,6 +97,10 @@ const TIME_SENSITIVE_CLAIM_TYPES = new Set([
   "schedule_fatigue",
   "club_coach_news",
   "conditions",
+  "lineup",
+  "formation",
+  "tactical_setup",
+  "coach_regime",
 ]);
 
 function normalizedText(value: string): string {
@@ -179,9 +212,23 @@ export function verifyGroundedResearchEvidence(
       : new Set(observedSourceUrls.map((url) => normalizeEvidenceUrl(url)));
   const accepted: GroundedEvidence[] = [];
   const rejected: GroundingRejection[] = [];
+  const isV3 = output.protocol_version === "kapiloto-research-v3";
+  const distinctUrls = new Set<string>();
 
   for (const evidence of output.evidence) {
     const canonicalUrl = normalizeEvidenceUrl(evidence.url);
+
+    if (isV3) {
+      distinctUrls.add(canonicalUrl);
+      if (distinctUrls.size > V3_MAX_DISTINCT_EVIDENCE_URLS) {
+        distinctUrls.delete(canonicalUrl);
+        rejected.push({
+          evidenceId: evidence.evidence_id,
+          reason: "url_cap_exceeded",
+        });
+        continue;
+      }
+    }
 
     if (observed != null && !observed.has(canonicalUrl)) {
       rejected.push({
@@ -268,11 +315,19 @@ export function verifyGroundedResearchEvidence(
       sourceEventTime: evidence.event_time,
       publishedAt,
       retrievedAt: new Date(retrievedMs).toISOString(),
-      trustTier: trustTier(evidence.claim_type, registry),
+      trustTier: isV3
+        ? tierFromMap(
+            resolveV3TierMap(registry?.tierByClaimType ?? {}),
+            evidence.claim_type,
+          )
+        : trustTier(evidence.claim_type, registry),
       quoteVerified: true,
       entailment: "not_checked",
       syndicationClusterId: registry?.syndicationClusterId ?? null,
       contentSha256: document.contentSha256,
+      ...(isV3
+        ? { claimTierMap: resolveV3TierMap(registry?.tierByClaimType ?? {}) }
+        : {}),
     });
   }
 
@@ -281,6 +336,10 @@ export function verifyGroundedResearchEvidence(
   );
 
   const policyFailures: string[] = [];
+  const v3 = isV3
+    ? groundResearchV3Items(output, card, acceptedById)
+    : null;
+  if (v3) policyFailures.push(...v3.policyFailures);
 
   for (const availability of output.availability) {
     const supporting = acceptedReferences(
@@ -323,9 +382,12 @@ export function verifyGroundedResearchEvidence(
 
   const requiresEntailmentVerification = new Set<string>();
 
-  for (const factor of output.factors) {
+  for (const [factorIndex, factor] of output.factors.entries()) {
+    const excluded = new Set(
+      v3?.itemEvidenceExclusions[`factor:${factorIndex}`] ?? [],
+    );
     const supporting = acceptedReferences(
-      factor.evidence_ids,
+      factor.evidence_ids.filter((id) => !excluded.has(id)),
       acceptedById,
     );
     const structured =
@@ -405,6 +467,13 @@ export function verifyGroundedResearchEvidence(
     requiresEntailmentVerification: [
       ...requiresEntailmentVerification,
     ].sort(),
+    ...(v3
+      ? {
+          itemEntailmentRequests: v3.itemEntailmentRequests,
+          itemEntailmentVerdicts: {},
+          itemEvidenceExclusions: v3.itemEvidenceExclusions,
+        }
+      : {}),
     policyFailures,
   };
 }
