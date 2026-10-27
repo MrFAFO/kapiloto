@@ -377,7 +377,7 @@ export function applyGroundingPolicy(
     }
   }
 
-  const survivingMatchupById = new Map(
+  const survivingMatchupById = new Map<string, SolMatchupAnalysis>(
     (output.matchup_analysis ?? []).map((item) => [item.matchup_id, item]),
   );
   const removedDirectionalFactors: ResearchFactor[] = [];
