@@ -283,30 +283,6 @@ test("standing facts are emitted only from validator-approved stages", () => {
           gamesCount: 8,
         },
       ],
-      ChampionshipRound: [
-        {
-          id: 4539,
-          position: 1,
-          points: 168,
-          wins: 49,
-          draws: 21,
-          losses: 25,
-          goalsScored: 153,
-          goalsReceived: 107,
-          gamesCount: 95,
-        },
-        {
-          id: 4536,
-          position: 2,
-          points: 213,
-          wins: 64,
-          draws: 21,
-          losses: 11,
-          goalsScored: 185,
-          goalsReceived: 80,
-          gamesCount: 96,
-        },
-      ],
     },
   );
 
@@ -455,4 +431,65 @@ test("standing facts are withheld when more than one stage is independently trus
     facts.some((fact) => fact.fact_key === "season.games_played"),
     false,
   );
+});
+
+
+test("standing facts are withheld when an additional active stage exists even if it is invalid", () => {
+  const facts = buildFootballIlStandingFacts(
+    context,
+    "26/27",
+    902,
+    {
+      RegularSeason: [
+        {
+          id: 4539,
+          position: 2,
+          points: 18,
+          wins: 5,
+          draws: 3,
+          losses: 0,
+          goalsScored: 20,
+          goalsReceived: 14,
+          gamesCount: 26,
+        },
+        {
+          id: 4536,
+          position: 1,
+          points: 20,
+          wins: 6,
+          draws: 2,
+          losses: 0,
+          goalsScored: 24,
+          goalsReceived: 8,
+          gamesCount: 26,
+        },
+      ],
+      ChampionshipRound: [
+        {
+          id: 4539,
+          position: 1,
+          points: 168,
+          wins: 49,
+          draws: 21,
+          losses: 25,
+          goalsScored: 153,
+          goalsReceived: 107,
+          gamesCount: 95,
+        },
+        {
+          id: 4536,
+          position: 2,
+          points: 213,
+          wins: 64,
+          draws: 21,
+          losses: 11,
+          goalsScored: 185,
+          goalsReceived: 80,
+          gamesCount: 96,
+        },
+      ],
+    },
+  );
+
+  assert.equal(facts.length, 0);
 });
