@@ -407,7 +407,12 @@ test("v3 rejects stale lineup evidence even when the model labels it correctly",
     ],
   );
 
-  assert.deepEqual(result.rejected, [
-    { evidenceId: "lineup-1", reason: "stale_time_sensitive_claim" },
-  ]);
+  // Freshness is derived from the citing item, not the declared claim type:
+  // the row is quote-verified, but it can no longer support a predicted start.
+  assert.deepEqual(result.itemEntailmentRequests, []);
+  assert.ok(
+    result.policyFailures?.some((failure) =>
+      /lineup:home:starter:0 failed item provenance: lineup-1=stale/.test(failure),
+    ),
+  );
 });
