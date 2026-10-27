@@ -16,6 +16,7 @@ import {
 } from "./openai-research";
 import {
   KAPILOTO_PROMPT_TEMPLATE_SHA256,
+  KAPILOTO_RESEARCH_PROTOCOL_VERSION,
   KAPILOTO_RESEARCH_SCHEMA_SHA256,
 } from "./research-config";
 import {
@@ -561,6 +562,15 @@ export async function executeOneResearchTask(
 
   try {
     const card = validateClaim(attempt);
+
+    if (
+      attempt.run.researchProtocolVersion !==
+      KAPILOTO_RESEARCH_PROTOCOL_VERSION
+    ) {
+      throw new Error(
+        `Frozen research run protocol ${attempt.run.researchProtocolVersion} does not match worker protocol ${KAPILOTO_RESEARCH_PROTOCOL_VERSION}.`,
+      );
+    }
 
     const baseProfile: ResearchRequestProfile = {
       reasoningEffort:
