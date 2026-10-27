@@ -9,7 +9,7 @@ const MIGRATION = join(
   process.cwd(),
   "supabase",
   "migrations",
-  "20261024090000_kapiloto_shadow_evaluation_v1.sql",
+  "20261027183933_kapiloto_shadow_evaluation_v1.sql",
 );
 
 // Only the columns the migration's triggers read from existing tables.

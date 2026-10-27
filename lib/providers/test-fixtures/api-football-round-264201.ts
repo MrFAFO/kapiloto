@@ -7,7 +7,7 @@
  * complete 1X2 market on the same fixture. Game 1 (2026-10-26) was outside
  * the Free plan's date window, so it has no verified API-Football ids.
  *
- * The seed migration 20261024130000_api_football_verified_mappings_round_264201_v1
+ * The seed migration 20261027183935_api_football_verified_mappings_round_264201_v1
  * must contain exactly these mappings; a test enforces it.
  */
 

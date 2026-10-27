@@ -1,6 +1,6 @@
 # Kapiloto Shadow Evaluation v1 (Research v2, Phase 1)
 
-Status: implemented in shadow mode on `feature/research-v2-foundations` and prepared for production shadow activation (D-042). Migration `20261024090000_kapiloto_shadow_evaluation_v1.sql` is written and tested against PGlite. It is **not applied** to any hosted database, and no job is scheduled.
+Status: implemented in shadow mode and deployed to the production database on 2026-10-27 under migration `20261027183933_kapiloto_shadow_evaluation_v1.sql`. The migration is tested against PGlite. The shadow evaluation job is still not scheduled in `vercel.json`, so deployment of the schema alone does not activate recurring shadow evaluation.
 
 This document implements the measurement part of `KAPILOTO-EVALUATION-PLAN.md`. It adds no claim that any arm is better than another; that can only come from forward data scored under the rules below.
 
