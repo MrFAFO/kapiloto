@@ -24,8 +24,7 @@ import {
 } from "@/lib/kapiloto/run-materialization";
 import { estimateSolUsageCostMicros } from "@/lib/kapiloto/research-cost";
 import { aggregateMarketPrior } from "@/lib/providers/market";
-import { SportmonksClient } from "@/lib/providers/sportmonks";
-import { SupabaseSportmonksSyncStore } from "@/lib/providers/sportmonks-supabase-store";
+import type { BookmakerThreeWayQuote } from "@/lib/providers/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -36,14 +35,11 @@ export async function GET(): Promise<Response> {
     return Response.json({ ok: false, error: "preview_only" }, { status: 403 });
   }
 
-  const sportmonksToken = process.env.SPORTMONKS_API_TOKEN?.trim();
   const openAiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!sportmonksToken || !openAiKey) {
+  if (!openAiKey) {
     return Response.json({
       ok: false,
-      error: "missing_runtime_secret",
-      sportmonks: Boolean(sportmonksToken),
-      openai: Boolean(openAiKey),
+      error: "OPENAI_API_KEY_missing",
     }, { status: 503 });
   }
 
@@ -59,41 +55,29 @@ export async function GET(): Promise<Response> {
     return Response.json({ ok: false, error: "round_not_found" }, { status: 404 });
   }
 
-  const sportmonksStore = new SupabaseSportmonksSyncStore(admin);
-  const sportmonksGames = await sportmonksStore.loadRoundGames(String(round.id));
-  const smGame = sportmonksGames.find((game) => game.gameNumber === 1);
-  if (!smGame) {
-    return Response.json({ ok: false, error: "game_1_not_found" }, { status: 404 });
-  }
-  if (smGame.providerFixtureId == null) {
-    return Response.json({
-      ok: false,
-      error: "sportmonks_fixture_mapping_missing",
-    }, { status: 409 });
-  }
-
-  const sportmonks = new SportmonksClient(sportmonksToken);
-  const resolved = await sportmonks.getFixtureById(smGame.providerFixtureId);
-  if (!resolved.fixture) {
-    return Response.json({
-      ok: false,
-      error: "sportmonks_fixture_not_found",
-      providerFixtureId: smGame.providerFixtureId,
-    }, { status: 404 });
-  }
-
-  const quotes = await sportmonks.getThreeWayQuotes(resolved.fixture);
+  const capturedAt = new Date().toISOString();
+  const quotes: BookmakerThreeWayQuote[] = [
+    {
+      providerFixtureId: "manual-web-264301-1",
+      bookmakerId: "sportsbet",
+      bookmakerName: "Sportsbet",
+      capturedAt,
+      odds: { home: 1.99, draw: 3.60, away: 2.85 },
+    },
+    {
+      providerFixtureId: "manual-web-264301-1",
+      bookmakerId: "meridian",
+      bookmakerName: "Meridian",
+      capturedAt,
+      odds: { home: 2.00, draw: 3.35, away: 3.05 },
+    },
+  ];
   const marketPrior = aggregateMarketPrior(quotes);
   if (!marketPrior) {
-    return Response.json({
-      ok: false,
-      error: "sportmonks_no_market",
-      providerFixtureId: resolved.fixture.providerFixtureId,
-      quotes: quotes.length,
-    }, { status: 207 });
+    throw new Error("Manual live market quotes did not produce a market prior.");
   }
 
-  const capturedAt = new Date().toISOString();
+
   const researchCutoffAt = new Date(Date.now() + 100).toISOString();
   const inputs = await loadRoundFixtureCardInputs(
     admin,
@@ -107,7 +91,7 @@ export async function GET(): Promise<Response> {
   }
 
   const marketSnapshotId =
-    `shadow:sportmonks:${resolved.fixture.providerFixtureId}:${capturedAt}`;
+    `shadow:live-web-market:264301:1:${capturedAt}`;
   const input = {
     ...baseInput,
     prior: {
@@ -212,14 +196,20 @@ export async function GET(): Promise<Response> {
       kickoffAt: baseInput.kickoffAt,
     },
     market: {
-      provider: "sportmonks",
-      providerFixtureId: resolved.fixture.providerFixtureId,
+      provider: "manual_live_web_quotes",
       bookmakerCount: marketPrior.bookmakerCount,
       method: marketPrior.method,
       degraded: marketPrior.degraded,
       capturedAt,
       probabilitiesBp: marketPrior.probabilitiesBp,
-      quoteBookmakers: quotes.map((quote) => quote.bookmakerName),
+      quotes: quotes.map((quote) => ({
+        bookmaker: quote.bookmakerName,
+        odds: quote.odds,
+      })),
+      sourceUrls: [
+        "https://www.sportsbet.com.au/betting/soccer/rest-of-europe/israeli-premier-league/hapoel-tel-aviv-v-maccabi-haifa-11102665",
+        "https://meridianbet.rs/sr/kladjenje/fudbal/izrael/liga-haal/hapoel-tel-aviv-fc-maccabi-haifa-fc/19964352",
+      ],
     },
     fixtureCard: card,
     sol: {
