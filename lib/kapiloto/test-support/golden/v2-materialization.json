@@ -1,0 +1,1118 @@
+{
+  "analyses": [
+    {
+      "round_game_id": "game-1",
+      "fixture_id": "fixture-1",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": "market",
+      "market_snapshot_id": "market-1",
+      "model_self_confidence": "medium",
+      "summary": "A small home edge.",
+      "main_risk": "Late team news.",
+      "availability": [
+        {
+          "team": "away",
+          "player_name": "Player B",
+          "status": "out",
+          "role": "regular",
+          "certainty": "confirmed",
+          "evidence_ids": [
+            "e2"
+          ]
+        }
+      ],
+      "dimension_coverage": [
+        {
+          "dimension": "baseline_form",
+          "status": "no_material_signal"
+        },
+        {
+          "dimension": "home_away_draw",
+          "status": "no_material_signal"
+        },
+        {
+          "dimension": "availability",
+          "status": "material_signal"
+        },
+        {
+          "dimension": "load_schedule",
+          "status": "no_material_signal"
+        },
+        {
+          "dimension": "tactical_matchup",
+          "status": "no_material_signal"
+        },
+        {
+          "dimension": "competition_context",
+          "status": "no_material_signal"
+        },
+        {
+          "dimension": "club_coach_news",
+          "status": "no_material_signal"
+        },
+        {
+          "dimension": "independent_model",
+          "status": "no_material_signal"
+        },
+        {
+          "dimension": "conditions",
+          "status": "no_material_signal"
+        },
+        {
+          "dimension": "head_to_head",
+          "status": "no_material_signal"
+        }
+      ],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [
+        "Player B stays out."
+      ],
+      "data_quality": {
+        "sparse_coverage": false,
+        "language_limited": false,
+        "notes": "ok"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [
+        {
+          "model_evidence_id": "e1",
+          "url_canonical": "https://example.com/e1",
+          "domain": "example.com",
+          "claim_type": "availability",
+          "about_team": "home",
+          "quote": "Quote e1.",
+          "claim": "Claim e1.",
+          "source_event_time": null,
+          "published_at": "2026-10-19T10:00:00.000Z",
+          "retrieved_at": "2026-10-20T09:00:00.000Z",
+          "trust_tier": 3,
+          "quote_verified": true,
+          "entailment": "supported",
+          "syndication_cluster_id": null,
+          "content_sha256": "sha-e1",
+          "status": "accepted",
+          "rejected_reason": null
+        },
+        {
+          "model_evidence_id": "e2",
+          "url_canonical": "https://example.com/e2",
+          "domain": "example.com",
+          "claim_type": "availability",
+          "about_team": "home",
+          "quote": "Quote e2.",
+          "claim": "Claim e2.",
+          "source_event_time": null,
+          "published_at": "2026-10-19T10:00:00.000Z",
+          "retrieved_at": "2026-10-20T09:00:00.000Z",
+          "trust_tier": 1,
+          "quote_verified": true,
+          "entailment": "not_checked",
+          "syndication_cluster_id": null,
+          "content_sha256": "sha-e2",
+          "status": "accepted",
+          "rejected_reason": null
+        }
+      ],
+      "factors": [
+        {
+          "dimension": "availability",
+          "favors": "home",
+          "magnitude": "small",
+          "rationale": "Away are missing a regular.",
+          "evidence_model_ids": [
+            "e1"
+          ],
+          "structured_refs": []
+        }
+      ],
+      "inputs": [
+        {
+          "input_type": "fixture_card",
+          "input_version": "kapiloto-fixture-card-v2",
+          "metadata": {
+            "fixture_id": "fixture-1",
+            "market_snapshot_id": "market-1",
+            "structured_snapshot_id": null,
+            "structured_snapshot_sha256": null,
+            "structured_feature_version": null
+          }
+        },
+        {
+          "input_type": "grounding_report",
+          "input_version": "kapiloto-grounding-v1",
+          "metadata": {
+            "accepted_count": 2,
+            "rejected": [
+              {
+                "evidenceId": "e3",
+                "reason": "quote_not_found"
+              }
+            ],
+            "requires_entailment_verification": []
+          }
+        },
+        {
+          "input_type": "grounding_policy",
+          "input_version": "kapiloto-grounding-policy-v8",
+          "metadata": {
+            "mode": "sol",
+            "p_sol_valid": true,
+            "removed_items": [],
+            "removed_directional_dimensions": [],
+            "non_directional_removal_count": 0,
+            "reasons": []
+          }
+        }
+      ],
+      "outcome": "analyzed",
+      "p_prior_1_bp": 4500,
+      "p_prior_x_bp": 3000,
+      "p_prior_2_bp": 2500,
+      "p_sol_1_bp": 4800,
+      "p_sol_x_bp": 2800,
+      "p_sol_2_bp": 2400,
+      "p_final_1_bp": 4724,
+      "p_final_x_bp": 2851,
+      "p_final_2_bp": 2425,
+      "reliability": 0.745,
+      "reliability_band": "high",
+      "reliability_reasons": [
+        "broad_dimension_coverage",
+        "strong_verified_sources",
+        "grounding_rejections"
+      ],
+      "primary_pick": "1",
+      "suggested_double": "1X",
+      "double_priority_rank": 1,
+      "double_gain_score": 0.47219745,
+      "blend_weight": 0.745,
+      "deviation_cap_applied": false
+    },
+    {
+      "round_game_id": "game-2",
+      "fixture_id": "fixture-2",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-3",
+      "fixture_id": "fixture-3",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-4",
+      "fixture_id": "fixture-4",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-5",
+      "fixture_id": "fixture-5",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-6",
+      "fixture_id": "fixture-6",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-7",
+      "fixture_id": "fixture-7",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-8",
+      "fixture_id": "fixture-8",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-9",
+      "fixture_id": "fixture-9",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-10",
+      "fixture_id": "fixture-10",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-11",
+      "fixture_id": "fixture-11",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-12",
+      "fixture_id": "fixture-12",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-13",
+      "fixture_id": "fixture-13",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-14",
+      "fixture_id": "fixture-14",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-15",
+      "fixture_id": "fixture-15",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    },
+    {
+      "round_game_id": "game-16",
+      "fixture_id": "fixture-16",
+      "outcome": "research_unavailable",
+      "carried_from_analysis_id": null,
+      "research_cutoff_at": "2026-10-20T10:00:00.000Z",
+      "kickoff_at_snapshot": "2026-10-21T18:00:00.000Z",
+      "settlement_rule_snapshot": "result_after_90_minutes_including_stoppage_time",
+      "neutral_venue_snapshot": false,
+      "orientation_verified": true,
+      "prior_type": null,
+      "market_snapshot_id": null,
+      "p_prior_1_bp": null,
+      "p_prior_x_bp": null,
+      "p_prior_2_bp": null,
+      "p_sol_1_bp": null,
+      "p_sol_x_bp": null,
+      "p_sol_2_bp": null,
+      "p_final_1_bp": null,
+      "p_final_x_bp": null,
+      "p_final_2_bp": null,
+      "reliability": null,
+      "reliability_band": null,
+      "reliability_reasons": [
+        "research_unavailable:missing_prior"
+      ],
+      "model_self_confidence": null,
+      "primary_pick": null,
+      "suggested_double": null,
+      "double_priority_rank": null,
+      "double_gain_score": null,
+      "blend_weight": null,
+      "deviation_cap_applied": false,
+      "summary": null,
+      "main_risk": null,
+      "availability": [],
+      "dimension_coverage": [],
+      "conflicts": [],
+      "watch_items": [],
+      "key_assumptions": [],
+      "data_quality": {
+        "sparse_coverage": true,
+        "language_limited": false,
+        "notes": "research_unavailable:missing_prior"
+      },
+      "suspicious_content": [],
+      "valid_until": null,
+      "generated_at": null,
+      "evidence": [],
+      "factors": [],
+      "inputs": [
+        {
+          "input_type": "research_unavailable",
+          "input_version": "kapiloto-run-plan-v1",
+          "metadata": {
+            "reason": "missing_prior"
+          }
+        }
+      ]
+    }
+  ],
+  "synthesis": {
+    "analyzed_fixtures": 1,
+    "insufficient_data_fixtures": 0,
+    "carried_forward_fixtures": 0,
+    "research_unavailable_fixtures": 15,
+    "double_ranking": [
+      {
+        "fixture_id": "fixture-1",
+        "round_game_id": "game-1",
+        "game_number": 1,
+        "rank": 1,
+        "primary_pick": "1",
+        "suggested_double": "1X",
+        "double_gain_score": 0.47219745,
+        "reliability": 0.745
+      }
+    ]
+  }
+}
