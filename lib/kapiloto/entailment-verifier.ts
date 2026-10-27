@@ -333,8 +333,15 @@ export async function verifyRequiredEntailment(
     throw new EntailmentProviderError(cause, calls);
   }
 
+  // Evidence-level unsupported verdicts remain publication-significant.
+  // V3 item-level verdicts (starter/formation/fact/matchup/regime) are kept
+  // in itemEntailmentVerdicts and pruned individually by grounding-policy v9.
   const unsupported: UnsupportedEntailment[] = pending
-    .filter((item) => verdictByKey.get(item.verificationId) === "unsupported")
+    .filter(
+      (item) =>
+        item.itemVerificationId == null &&
+        verdictByKey.get(item.verificationId) === "unsupported",
+    )
     .map((item) => ({
       fixtureId: item.fixtureId,
       evidenceId: item.evidenceId,
