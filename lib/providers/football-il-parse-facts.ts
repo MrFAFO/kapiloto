@@ -289,15 +289,17 @@ export async function ingestFootballIlSeasonAnalytics(
     );
   }
 
-  const rows: FootballIlTeamStatistics[] = [];
-  for (const teamId of teamIds) {
-    const response = await source.getTeamStatistics(season, teamId);
-    rows.push(
-      ...response.stats.filter(
-        (row) => row.teamId === teamId && row.seasonName === season,
-      ),
-    );
-  }
+  const responses = await Promise.all(
+    teamIds.map(async (teamId) => ({
+      teamId,
+      response: await source.getTeamStatistics(season, teamId),
+    })),
+  );
+  const rows = responses.flatMap(({ teamId, response }) =>
+    response.stats.filter(
+      (row) => row.teamId === teamId && row.seasonName === season,
+    ),
+  );
 
   const facts = buildFootballIlSeasonFacts(context, rows);
   const factsWritten = await store.saveFacts(facts);
