@@ -337,21 +337,20 @@ function trustedStandingForTeam(
   standings: FootballIlStandings,
   teamId: number,
 ): { stage: string; row: FootballIlStandingRow } | null {
-  const candidates: Array<{ stage: string; row: FootballIlStandingRow }> = [];
+  const activeStages = Object.entries(standings).filter(([, rows]) =>
+    rows.some((item) => item.id === teamId && item.gamesCount > 0),
+  );
+  if (activeStages.length !== 1) return null;
 
-  for (const [stage, rows] of Object.entries(standings)) {
-    const validation = validateFootballIlStandings(
-      { [stage]: rows },
-      { requirePlayedMatches: true },
-    );
-    if (!validation.trustworthy) continue;
+  const [stage, rows] = activeStages[0];
+  const validation = validateFootballIlStandings(
+    { [stage]: rows },
+    { requirePlayedMatches: true },
+  );
+  if (!validation.trustworthy) return null;
 
-    const row = rows.find((item) => item.id === teamId);
-    if (row) candidates.push({ stage, row });
-  }
-
-  if (candidates.length !== 1) return null;
-  return candidates[0];
+  const row = rows.find((item) => item.id === teamId);
+  return row ? { stage, row } : null;
 }
 
 export function buildFootballIlStandingFacts(
