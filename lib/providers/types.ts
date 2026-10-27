@@ -1,4 +1,4 @@
-export type ProviderName = "api-football" | "sportmonks";
+export type ProviderName = "api-football" | "sportmonks" | "football-il-parse";
 
 export type ThreeWayBasisPoints = {
   home: number;
