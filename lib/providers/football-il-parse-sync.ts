@@ -7,6 +7,7 @@ import {
 import type {
   FootballIlFixture,
   FootballIlTeam,
+  FootballIlTeamStatistics,
 } from "./football-il-parse";
 
 export type FootballIlRoundTeam = {
@@ -48,6 +49,11 @@ export type FootballIlResolvedFixture = {
 export interface FootballIlSyncStore extends FootballIlFactStore {
   loadRoundGames(roundId: string): Promise<FootballIlRoundGame[]>;
   saveResolvedFixture(snapshot: FootballIlResolvedFixture): Promise<void>;
+  hasFreshSeasonFacts?(
+    fixtureId: string,
+    season: string,
+    capturedAfter: string,
+  ): Promise<boolean>;
 }
 
 export interface FootballIlSyncClient extends FootballIlSeasonAnalyticsSource {
@@ -62,7 +68,13 @@ export type FootballIlFixtureSyncResult = {
   gameNumber: number;
   roundGameId: string;
   fixtureId: string;
-  status: "saved" | "unsupported" | "not_found" | "ambiguous" | "error";
+  status:
+    | "saved"
+    | "fresh"
+    | "unsupported"
+    | "not_found"
+    | "ambiguous"
+    | "error";
   providerFixtureId: string | null;
   tournamentId: number | null;
   season: string | null;
@@ -79,6 +91,7 @@ export type FootballIlRoundSyncResult = {
   summary: {
     requested: number;
     saved: number;
+    fresh: number;
     unsupported: number;
     notFound: number;
     ambiguous: number;
@@ -262,6 +275,21 @@ export async function syncFootballIlRoundAnalytics(
 
   const teamsByTournament = new Map<number, FootballIlTeam[]>();
   const fixturesByTeam = new Map<number, FootballIlFixture[]>();
+  const seasonStats = new Map<
+    string,
+    Promise<{ stats: FootballIlTeamStatistics[] }>
+  >();
+  const seasonSource: FootballIlSeasonAnalyticsSource = {
+    getTeamStatistics(season, teamId) {
+      const key = season + ":" + teamId;
+      let pending = seasonStats.get(key);
+      if (!pending) {
+        pending = client.getTeamStatistics(season, teamId);
+        seasonStats.set(key, pending);
+      }
+      return pending;
+    },
+  };
 
   async function loadTeams(tournamentId: number): Promise<FootballIlTeam[]> {
     const cached = teamsByTournament.get(tournamentId);
@@ -299,9 +327,60 @@ export async function syncFootballIlRoundAnalytics(
     }
 
     try {
+      const season = footballIlSeasonForKickoff(game.kickoffAt);
+      const capturedAfter = new Date(
+        clock().getTime() - 20 * 60 * 60 * 1000,
+      ).toISOString();
+
+      if (
+        store.hasFreshSeasonFacts &&
+        (await store.hasFreshSeasonFacts(
+          game.fixtureId,
+          season,
+          capturedAfter,
+        ))
+      ) {
+        fixtures.push({
+          gameNumber: game.gameNumber,
+          roundGameId: game.roundGameId,
+          fixtureId: game.fixtureId,
+          status: "fresh",
+          providerFixtureId:
+            game.providerFixtureId == null
+              ? null
+              : String(game.providerFixtureId),
+          tournamentId,
+          season,
+          seasonRows: 0,
+          factsWritten: 0,
+          error: null,
+        });
+        continue;
+      }
+
       let resolved: FootballIlResolvedFixture | null = null;
 
-      if (game.providerFixtureId != null) {
+      if (
+        game.providerFixtureId != null &&
+        game.home.providerTeamId != null &&
+        game.away.providerTeamId != null
+      ) {
+        resolved = {
+          game,
+          providerFixtureId: game.providerFixtureId,
+          tournamentId,
+          home: {
+            providerTeamId: Number(game.home.providerTeamId),
+            providerName: game.home.providerName,
+          },
+          away: {
+            providerTeamId: Number(game.away.providerTeamId),
+            providerName: game.away.providerName,
+          },
+          capturedAt: clock().toISOString(),
+          resolution: "provided_id",
+        };
+      } else if (game.providerFixtureId != null) {
         const fixture = await client.getMatchDetails(game.providerFixtureId);
         ensureFixtureOrientation(game, fixture);
 
@@ -421,9 +500,8 @@ export async function syncFootballIlRoundAnalytics(
       }
 
       await store.saveResolvedFixture(resolved);
-      const season = footballIlSeasonForKickoff(game.kickoffAt);
       const analytics = await ingestFootballIlSeasonAnalytics(
-        client,
+        seasonSource,
         store,
         factContext(game, resolved),
         season,
@@ -465,6 +543,7 @@ export async function syncFootballIlRoundAnalytics(
     summary: {
       requested: fixtures.length,
       saved: fixtures.filter((fixture) => fixture.status === "saved").length,
+      fresh: fixtures.filter((fixture) => fixture.status === "fresh").length,
       unsupported: fixtures.filter(
         (fixture) => fixture.status === "unsupported",
       ).length,
