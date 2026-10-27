@@ -28,3 +28,6 @@ next-env.d.ts
 # OS/editor
 .DS_Store
 .idea/
+
+# generated local/provider reports
+/artifacts/

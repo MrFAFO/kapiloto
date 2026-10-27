@@ -3,68 +3,75 @@
 Figma source:
 https://www.figma.com/design/2Pp5ae9bgqhTfwcU2JcIlK
 
-## Mobile-first screens created
+## Approved Figma pages
+Only the current approved Dark Stadium work remains in the file:
 
-### 01 — Current Round
-- round navigation;
-- closing time;
-- group name;
-- doubles counter;
-- Toto 1/X/2 controls;
-- Kapiloto entry point;
-- bottom navigation.
+1. **00 — Auth · Dark Stadium**
+2. **01 — Mobile App · Dark Stadium**
+3. **02 — Design System · Dark Stadium**
+4. **03 — Desktop Adaptation · Dark Stadium**
 
-### 02 — Kapiloto Analysis
-- primary recommendation;
-- confidence;
-- concise reasoning;
-- key factors;
-- main risk;
-- freshness and sources;
-- apply-to-draft action.
+Legacy light-theme and rejected concept pages were removed from the Figma file.
 
-### 03 — Group Consensus
-- submission progress;
-- democratic consensus;
-- per-outcome support;
-- doubles rationale;
-- Kapiloto whole-ticket review action;
-- admin generate action.
+## Locked visual direction
+**Dark Stadium**
 
-### 04 — Statistics
-- weekly leader;
-- group average;
-- consensus score;
-- weekly leaderboard;
-- consensus comparison;
-- Kapiloto benchmark.
+The mobile experience is the source priority. Desktop is a later responsive adaptation.
 
-### 05 — Group
-- members and ticket-submission status;
-- ticket score/status;
-- group round state;
-- pending join requests with admin actions.
+## Current mobile core screens
+- Current Round with upcoming, live, finished-hit and finished-miss fixture states.
+- Large thumb-friendly 2/X/1 controls; selecting two outcomes automatically counts as a double.
+- Visible used/max doubles count and per-game double badge.
+- Inline per-fixture Kapiloto expansion with professional analysis, freshness, recheck and final recommendation.
+- Diego full-ticket builder and Diego preview before filling the normal draft.
+- Group screen with member submissions and join requests.
+- Democratic Consensus screen with vote distribution.
+- Statistics screen with weekly ranking and group comparisons.
+- History and previous-round read-only screens.
+- Create-group / join-group post-login state.
+- Submitted-editable, max-doubles-reached and locked/read-only ticket states.
+- Centered primary page titles across the approved mobile screens.
 
-### 06 — Onboarding
-- registration/login switch;
-- username, email and password;
-- create-group path;
-- join-existing-group path.
+## Locked AI roles
+- Manual filling is the default.
+- **Kapiloto** is a per-fixture analyst only in the primary user-facing flow.
+- Kapiloto expands inline under a fixture and never navigates away.
+- Kapiloto may recommend a double, but the recommendation is ranked relative to all 16 fixtures and the limited group double budget.
+- Kapiloto has no separate Apply button; the user edits the normal 1/X/2 controls.
+- **Diego** is the only autonomous whole-ticket builder.
+- Diego fills the same normal editable user draft; there is no separate “Diego ticket”.
 
-## Design direction
-- iPhone-first, 390px reference width.
+## Design rules now locked
+- 390px reference mobile width.
 - Hebrew RTL.
-- Light neutral surface system.
-- Blue for core product actions/selections.
-- Purple for Kapiloto AI.
-- Dark navy for important round/summary states.
-- Compact cards suitable for 16-fixture rounds.
+- Dark Stadium visual language.
+- Primary page heading centered in the upper header.
+- Purple = Kapiloto / AI / uncertainty intelligence.
+- Cyan = Diego / full-ticket generation.
+- Blue = user selection / action.
+- Red = live or miss/risk depending context.
+- Green = hit / completion / success.
+- Status is never represented by color alone; text labels remain mandatory.
+- Finished games are visually darker/desaturated with subtle green-grey or red-grey treatment.
+- Kapiloto fixture analysis stays inline.
+- Every fixture independently shows league, date/result/status and ticket state.
 
-## Still to design
-- history/round browser;
-- live round state variants;
-- full member ticket detail;
-- admin round settings;
-- join-request detail;
-- empty/error/loading states;
-- desktop responsive compositions.
+## Authentication
+Figma page: **00 — Auth · Dark Stadium**
+- username/password login;
+- remember-me control;
+- signup with username/password + email-or-phone recovery contact;
+- password-recovery state;
+- approved full-width 3:2 Kapiloto + Diego stadium hero on all three auth screens;
+- logo treatment matches the approved Kapiloto wordmark used in the app.
+
+## Implemented in code
+- Current Round (10.1 / 10.2) and inline Kapiloto states (10.12 researching, 10.13 stale, 10.14 error) in `components/current-round-ticket.tsx` and `components/kapiloto-panel.tsx`. Changed, budget-exhausted and rate-limited reuse the 10.2 panel template; status-pill tone follows the locked color rules (success / signal / live) instead of a single green. Analysis body text is 10px/1.6 instead of 9px for readability. Diego bar is visual only.
+
+## Next design work
+- dedicated Figma frames for Kapiloto changed / budget-exhausted / rate-limited (code currently reuses the 10.2 template);
+- draft Saving / Saved / Save failed / offline behavior;
+- explicit eighth-double rejection interaction;
+- admin round settings and member-management edge states;
+- consensus stale/regeneration state;
+- desktop adaptation of the approved mobile behavior.
