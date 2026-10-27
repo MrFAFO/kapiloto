@@ -11,6 +11,8 @@ export const KAPILOTO_STRUCTURED_REFS = [
   "away.rest",
   "home.table",
   "away.table",
+  "home.attack_xg",
+  "away.attack_xg",
 ] as const;
 
 export type KapilotoStructuredRef =
@@ -44,7 +46,7 @@ function isKnownRef(value: string): value is KapilotoStructuredRef {
 
 function referencedSides(
   refs: KapilotoStructuredRef[],
-  kind: "form" | "rest" | "table",
+  kind: "form" | "rest" | "table" | "attack_xg",
 ): Set<Side> {
   return new Set(
     refs
@@ -55,7 +57,7 @@ function referencedSides(
 
 function requiredPair(
   refs: KapilotoStructuredRef[],
-  kind: "form" | "rest" | "table",
+  kind: "form" | "rest" | "table" | "attack_xg",
 ): boolean {
   const sides = referencedSides(refs, kind);
   return sides.has("home") && sides.has("away");
@@ -177,17 +179,62 @@ function verifyTableDirection(
   );
 }
 
+function verifyAttackXgDirection(
+  factor: ResearchFactor,
+  card: KapilotoFixtureCard,
+  refs: KapilotoStructuredRef[],
+): boolean {
+  if (
+    factor.dimension !== "baseline_form" ||
+    !requiredPair(refs, "attack_xg")
+  ) {
+    return false;
+  }
+
+  const analytics = card.structured.provider_analytics;
+  const home = analytics?.home;
+  const away = analytics?.away;
+
+  if (
+    home?.xg_per_match == null ||
+    away?.xg_per_match == null ||
+    home.games_played == null ||
+    away.games_played == null ||
+    home.games_played < 5 ||
+    away.games_played < 5
+  ) {
+    return false;
+  }
+
+  return favorsByDifference(
+    factor,
+    home.xg_per_match,
+    away.xg_per_match,
+    0.15,
+  );
+}
+
 function refAvailable(
   ref: KapilotoStructuredRef,
   card: KapilotoFixtureCard,
 ): boolean {
-  const snapshot = card.structured.structured_snapshot;
-  if (!snapshot) return false;
-
   const [side, kind] = ref.split(".") as [
     Side,
-    "form" | "rest" | "table",
+    "form" | "rest" | "table" | "attack_xg",
   ];
+
+  if (kind === "attack_xg") {
+    const analytics = card.structured.provider_analytics;
+    const team = analytics?.[side];
+    return (
+      team?.xg_per_match != null &&
+      team.games_played != null &&
+      team.games_played >= 5
+    );
+  }
+
+  const snapshot = card.structured.structured_snapshot;
+  if (!snapshot) return false;
   const team = snapshot.features[side];
   const coverage = team.coverage[kind];
 
@@ -201,12 +248,17 @@ export function structuredRefTrustTier(
   ref: KapilotoStructuredRef,
   card: KapilotoFixtureCard,
 ): 1 | 3 | null {
-  const snapshot = card.structured.structured_snapshot;
-  if (!snapshot) return null;
   const [side, kind] = ref.split(".") as [
     Side,
-    "form" | "rest" | "table",
+    "form" | "rest" | "table" | "attack_xg",
   ];
+
+  if (kind === "attack_xg") {
+    return refAvailable(ref, card) ? 1 : null;
+  }
+
+  const snapshot = card.structured.structured_snapshot;
+  if (!snapshot) return null;
   const team = snapshot.features[side];
   if (team[kind] == null) return null;
   const coverage = team.coverage[kind];
@@ -220,9 +272,12 @@ export function validateStructuredRefs(
   card: KapilotoFixtureCard,
 ): KapilotoStructuredRef[] {
   if (refs.length === 0) return [];
-  if (!card.structured.structured_snapshot) {
+  if (
+    !card.structured.structured_snapshot &&
+    !card.structured.provider_analytics
+  ) {
     throw new Error(
-      "Structured references require a frozen Fixture Card v3 snapshot.",
+      "Structured references require frozen structured inputs.",
     );
   }
 
@@ -247,7 +302,10 @@ export function verifyStructuredFactor(
   if (rawRefs.length === 0) {
     return { valid: false, reason: "no_structured_refs", refs: [] };
   }
-  if (!card.structured.structured_snapshot) {
+  if (
+    !card.structured.structured_snapshot &&
+    !card.structured.provider_analytics
+  ) {
     return { valid: false, reason: "missing_snapshot", refs: [] };
   }
 
@@ -278,10 +336,22 @@ export function verifyStructuredFactor(
     factor.dimension === "baseline_form" ||
     factor.dimension === "home_away_draw"
   ) {
-    if (!requiredPair(refs, "form")) {
+    const hasFormRefs = refs.some((ref) => ref.endsWith(".form"));
+    const hasXgRefs = refs.some((ref) => ref.endsWith(".attack_xg"));
+
+    if (
+      (hasFormRefs && !requiredPair(refs, "form")) ||
+      (hasXgRefs && !requiredPair(refs, "attack_xg")) ||
+      (!hasFormRefs && !hasXgRefs)
+    ) {
       return { valid: false, reason: "insufficient_pair", refs };
     }
-    directionSupported = verifyFormDirection(factor, card, refs);
+
+    directionSupported =
+      (hasFormRefs && verifyFormDirection(factor, card, refs)) ||
+      (factor.dimension === "baseline_form" &&
+        hasXgRefs &&
+        verifyAttackXgDirection(factor, card, refs));
   } else if (factor.dimension === "load_schedule") {
     if (!requiredPair(refs, "rest")) {
       return { valid: false, reason: "insufficient_pair", refs };
