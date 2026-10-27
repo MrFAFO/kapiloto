@@ -114,11 +114,11 @@ test("public read model is null-tolerant for v1/v2 rows and serializes v3 fields
 });
 
 test("schema preflight exercises the live research v3 schema", async () => {
-  let request: Record<string, unknown> | null = null;
+  const requests: Record<string, unknown>[] = [];
   const client = {
     responses: {
       create: async (input: Record<string, unknown>) => {
-        request = input;
+        requests.push(input);
         return {
           id: "resp-preflight",
           model: "gpt-test",
@@ -132,8 +132,9 @@ test("schema preflight exercises the live research v3 schema", async () => {
   const result = await runKapilotoResearchSchemaPreflight(client as never, "gpt-test");
   assert.equal(result.schemaAccepted, true);
 
+  const request = requests[0] ?? {};
   const format = (
-    (request?.text as { format?: Record<string, unknown> } | undefined)?.format
+    (request.text as { format?: Record<string, unknown> } | undefined)?.format
   ) ?? {};
   assert.equal(format.name, "kapiloto_fixture_research_v3");
   const schema = format.schema as {
