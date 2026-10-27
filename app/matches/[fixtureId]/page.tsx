@@ -114,6 +114,136 @@ function availabilityItems(value: unknown): Array<{
   });
 }
 
+function expectedLineup(value: unknown, side: "home" | "away"): {
+  status: string;
+  formation: string | null;
+  starters: Array<{ name: string; position: string; confidence: string }>;
+} | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = (value as Record<string, unknown>)[side];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const starters = Array.isArray(record.starters)
+    ? record.starters.flatMap((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+        const starter = item as Record<string, unknown>;
+        if (typeof starter.player_name !== "string") return [];
+        return [{
+          name: starter.player_name,
+          position:
+            typeof starter.position === "string" ? starter.position : "unknown",
+          confidence:
+            typeof starter.confidence === "string" ? starter.confidence : "low",
+        }];
+      })
+    : [];
+
+  return {
+    status: typeof record.status === "string" ? record.status : "insufficient_data",
+    formation: typeof record.formation === "string" ? record.formation : null,
+    starters,
+  };
+}
+
+function tacticalFactItems(value: unknown): Array<{
+  team: string;
+  phase: string;
+  attribute: string;
+  value: string;
+}> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    if (
+      typeof record.team !== "string" ||
+      typeof record.phase !== "string" ||
+      typeof record.attribute !== "string" ||
+      typeof record.value !== "string"
+    ) {
+      return [];
+    }
+    return [{
+      team: record.team,
+      phase: record.phase,
+      attribute: record.attribute,
+      value: record.value,
+    }];
+  });
+}
+
+function matchupItems(value: unknown): Array<{
+  kind: string;
+  favors: string;
+  magnitude: string;
+  description: string;
+}> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    if (typeof record.description !== "string") return [];
+    return [{
+      kind: typeof record.kind === "string" ? record.kind : "matchup",
+      favors: typeof record.favors === "string" ? record.favors : "none",
+      magnitude:
+        typeof record.magnitude === "string" ? record.magnitude : "small",
+      description: record.description,
+    }];
+  });
+}
+
+function tacticalLabel(value: string): string {
+  const labels: Record<string, string> = {
+    possession: "התקפה מסודרת",
+    attacking_transition: "מעבר להתקפה",
+    defending: "הגנה מסודרת",
+    defensive_transition: "מעבר להגנה",
+    set_pieces: "מצבים נייחים",
+    build_up: "בניית משחק",
+    progression: "התקדמות",
+    width: "רוחב",
+    counter: "מתפרצות",
+    outlet: "מוצא למעבר",
+    press_height: "גובה לחץ",
+    block: "בלוק הגנתי",
+    line: "קו הגנה",
+    reaction: "תגובה לאיבוד",
+    rest_defence: "Rest defence",
+    attacking: "התקפי",
+    defending_set_piece: "הגנתי",
+    aerial: "משחק אווירי",
+    short: "קצר",
+    mixed: "מעורב",
+    direct: "ישיר",
+    central: "מרכז",
+    wide: "אגפים",
+    long: "ארוך",
+    narrow: "צר",
+    overload_left: "עומס שמאל",
+    overload_right: "עומס ימין",
+    fast_direct: "מהיר וישיר",
+    measured: "מבוקר",
+    rare: "נדיר",
+    target_forward: "חלוץ מטרה",
+    pace_runners: "רצים לעומק",
+    none: "ללא יתרון",
+    high: "גבוה",
+    mid: "בינוני",
+    low: "נמוך",
+    medium: "בינוני",
+    deep: "עמוק",
+    counterpress: "לחץ מיד לאחר איבוד",
+    retreat: "נסיגה",
+    secure: "יציב",
+    exposed: "חשוף",
+    strong: "חזק",
+    average: "ממוצע",
+    weak: "חלש",
+  };
+  return labels[value] ?? value.replaceAll("_", " ");
+}
+
 function signalLabel(value: string): string {
   switch (value) {
     case "lineup":
@@ -237,6 +367,10 @@ export default async function MatchPage({
         summary: string | null;
         main_risk: string | null;
         availability: unknown;
+        expected_lineups: unknown;
+        tactical_facts: unknown;
+        matchup_analysis: unknown;
+        regime_changes: unknown;
         watch_items: unknown;
         generated_at: string;
         valid_until: string | null;
@@ -261,7 +395,7 @@ export default async function MatchPage({
     const analysisResult = await admin
       .from("kapiloto_analyses")
       .select(
-        "id,outcome,carried_from_analysis_id,p_final_1_bp,p_final_x_bp,p_final_2_bp,reliability,reliability_band,reliability_reasons,primary_pick,suggested_double,summary,main_risk,availability,watch_items,generated_at,valid_until",
+        "id,outcome,carried_from_analysis_id,p_final_1_bp,p_final_x_bp,p_final_2_bp,reliability,reliability_band,reliability_reasons,primary_pick,suggested_double,summary,main_risk,availability,expected_lineups,tactical_facts,matchup_analysis,regime_changes,watch_items,generated_at,valid_until",
       )
       .eq("id", analysisId)
       .eq("fixture_id", fixture.id)
@@ -310,6 +444,10 @@ export default async function MatchPage({
   }
 
   const availability = availabilityItems(analysis?.availability);
+  const homeLineup = expectedLineup(analysis?.expected_lineups, "home");
+  const awayLineup = expectedLineup(analysis?.expected_lineups, "away");
+  const tacticalFacts = tacticalFactItems(analysis?.tactical_facts);
+  const matchups = matchupItems(analysis?.matchup_analysis);
   const watches = watchItems(analysis?.watch_items);
   const hasProbabilities =
     analysis?.p_final_1_bp != null &&
@@ -512,6 +650,107 @@ export default async function MatchPage({
                       <span className="text-[8px] font-bold text-[var(--diego)]">
                         {item.status}
                       </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {(homeLineup?.starters.length ?? 0) > 0 ||
+            (awayLineup?.starters.length ?? 0) > 0 ||
+            homeLineup?.formation ||
+            awayLineup?.formation ? (
+              <section className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4">
+                <p className="text-[11px] font-bold">הרכבים ומערכים צפויים</p>
+                <p className="mt-1 text-[8px] leading-4 text-[var(--muted)]">
+                  מוצגים רק פרטים שעברו אימות מקורות. הרכב חלקי אינו מושלם באמצעות ניחוש.
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  {[
+                    [home, homeLineup],
+                    [away, awayLineup],
+                  ].map(([team, lineup]) => {
+                    const typed = lineup as ReturnType<typeof expectedLineup>;
+                    return (
+                      <div
+                        key={String(team)}
+                        className="rounded-xl bg-[var(--elevated)] p-3"
+                      >
+                        <p className="text-[9px] font-bold">{String(team)}</p>
+                        <p className="mt-1 text-[8px] text-[var(--kapiloto)]">
+                          {typed?.formation
+                            ? `מערך ${typed.formation}`
+                            : "מערך לא מאומת"}
+                        </p>
+                        <div className="mt-2 flex flex-col gap-1">
+                          {(typed?.starters ?? []).map((starter) => (
+                            <p
+                              key={starter.name}
+                              className="text-[8px] leading-4 text-[var(--muted)]"
+                            >
+                              {starter.position} · {starter.name}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+
+            {tacticalFacts.length > 0 ? (
+              <section className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4">
+                <p className="text-[11px] font-bold">פרופיל טקטי מאומת</p>
+                <div className="mt-3 flex flex-col gap-2">
+                  {tacticalFacts.map((fact, index) => (
+                    <div
+                      key={`${fact.team}-${fact.phase}-${fact.attribute}-${index}`}
+                      className="rounded-xl bg-[var(--elevated)] p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[8px] font-bold text-[var(--kapiloto)]">
+                          {fact.team === "home" ? home : away}
+                        </span>
+                        <span className="text-[8px] text-[var(--muted)]">
+                          {tacticalLabel(fact.phase)}
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-[9px]">
+                        {tacticalLabel(fact.attribute)} · {tacticalLabel(fact.value)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {matchups.length > 0 ? (
+              <section className="rounded-[18px] border border-[var(--border)] bg-[var(--panel)] p-4">
+                <p className="text-[11px] font-bold">מאצ׳אפים טקטיים</p>
+                <div className="mt-3 flex flex-col gap-2">
+                  {matchups.map((matchup, index) => (
+                    <div
+                      key={`${matchup.kind}-${index}`}
+                      className="rounded-xl border border-[var(--border)] bg-[var(--elevated)] p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[8px] text-[var(--muted)]">
+                          {tacticalLabel(matchup.kind)}
+                        </span>
+                        <span className="text-[8px] font-bold text-[var(--kapiloto)]">
+                          {matchup.favors === "home"
+                            ? `יתרון ${home}`
+                            : matchup.favors === "away"
+                              ? `יתרון ${away}`
+                              : matchup.favors === "draw"
+                                ? "תומך בתיקו"
+                                : "ללא יתרון מובהק"}
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-[9px] leading-5">
+                        {matchup.description}
+                      </p>
                     </div>
                   ))}
                 </div>
