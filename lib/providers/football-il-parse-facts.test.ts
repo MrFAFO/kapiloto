@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildFootballIlMatchFacts,
+  buildFootballIlSeasonFacts,
   buildFootballIlStandingFacts,
   ingestFootballIlMatchAnalytics,
   ingestFootballIlSeasonAnalytics,
@@ -323,5 +324,36 @@ test("standing facts are emitted only from validator-approved stages", () => {
     facts.every(
       (fact) => fact.provider_endpoint.includes("get_league_standings"),
     ),
+  );
+});
+
+
+test("season facts snapshot identical values at distinct capture times", () => {
+  const rows = [
+    row(4539, {
+      seasonName: "26/27",
+      expectedGoals: 18.5,
+      Goal: 20,
+    }),
+  ];
+
+  const first = buildFootballIlSeasonFacts(context, rows);
+  const second = buildFootballIlSeasonFacts(
+    {
+      ...context,
+      capturedAt: "2026-10-28T08:00:00.000Z",
+    },
+    rows,
+  );
+
+  const firstXg = first.find((fact) => fact.fact_key === "season.xg.expected");
+  const secondXg = second.find((fact) => fact.fact_key === "season.xg.expected");
+
+  assert.ok(firstXg);
+  assert.ok(secondXg);
+  assert.equal(firstXg.value_numeric, secondXg.value_numeric);
+  assert.notEqual(
+    firstXg.source_fingerprint,
+    secondXg.source_fingerprint,
   );
 });
