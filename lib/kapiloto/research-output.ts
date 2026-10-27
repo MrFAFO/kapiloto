@@ -644,7 +644,7 @@ export function validateSolFixtureResearchOutput(
       }
 
       if (
-        card.lineup_research === "disabled" &&
+        card.lineup_research !== "enabled" &&
         (lineup.formation != null || lineup.starters.length > 0)
       ) {
         throw new Error(
