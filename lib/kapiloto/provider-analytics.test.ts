@@ -122,3 +122,29 @@ test("a partial newest capture falls back to the latest complete capture", () =>
     1.5,
   );
 });
+
+
+test("conflicting duplicate facts invalidate a capture instead of overwriting silently", () => {
+  const snapshots = assembleProviderAnalyticsSnapshots(
+    [
+      row("fixture-1", "home", "season.xg.expected", 12, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "home", "season.xg.expected", 13, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "away", "season.xg.expected", 10, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "home", "season.games_played", 8, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "away", "season.games_played", 8, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "home", "season.xg.expected", 11, "2026-10-26T08:00:00Z"),
+      row("fixture-1", "away", "season.xg.expected", 9, "2026-10-26T08:00:00Z"),
+      row("fixture-1", "home", "season.games_played", 8, "2026-10-26T08:00:00Z"),
+      row("fixture-1", "away", "season.games_played", 8, "2026-10-26T08:00:00Z"),
+    ],
+    "2026-10-27T09:00:00Z",
+  );
+
+  const snapshot = snapshots.get("fixture-1");
+  assert.ok(snapshot);
+  assert.equal(snapshot.captured_at, "2026-10-26T08:00:00Z");
+  assert.equal(
+    snapshot.teams.find((team) => team.team_id === "home")?.xg_expected,
+    11,
+  );
+});
