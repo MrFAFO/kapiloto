@@ -1,10 +1,15 @@
 import type { KapilotoFixtureCard } from "./fixture-card";
-import type { SolFixtureResearchOutput } from "./research-output";
+import type {
+  SolExpectedLineup,
+  SolFixtureResearchOutput,
+  SolMatchupAnalysis,
+  SolTacticalFact,
+} from "./research-output";
 import type { GroundedEvidence, GroundingResult } from "./source-grounding";
 import { verifyStructuredFactor } from "./structured-refs";
 
 export const KAPILOTO_GROUNDING_POLICY_VERSION =
-  "kapiloto-grounding-policy-v8" as const;
+  "kapiloto-grounding-policy-v9" as const;
 
 type ResearchFactor = SolFixtureResearchOutput["factors"][number];
 
@@ -27,11 +32,7 @@ function independent(left: GroundedEvidence, right: GroundedEvidence): boolean {
   );
 }
 
-function materialCorroboration(
-  factor: ResearchFactor,
-  supporting: GroundedEvidence[],
-): boolean {
-  if (factor.magnitude === "small") return true;
+function hasStrongOrIndependent(supporting: GroundedEvidence[]): boolean {
   if (supporting.some((item) => item.trustTier <= 2)) return true;
   return supporting.some((left, index) =>
     supporting
@@ -40,10 +41,81 @@ function materialCorroboration(
   );
 }
 
+function materialCorroboration(
+  factor: ResearchFactor,
+  supporting: GroundedEvidence[],
+): boolean {
+  if (factor.magnitude === "small") return true;
+  return hasStrongOrIndependent(supporting);
+}
+
 function cloneOutput(
   output: SolFixtureResearchOutput,
 ): SolFixtureResearchOutput {
   return JSON.parse(JSON.stringify(output)) as SolFixtureResearchOutput;
+}
+
+function magnitudeRank(value: "small" | "medium" | "large"): number {
+  return value === "small" ? 1 : value === "medium" ? 2 : 3;
+}
+
+function normalizeName(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase();
+}
+
+function lineupPositionCounts(lineup: SolExpectedLineup): {
+  valid: boolean;
+  full: boolean;
+} {
+  if (!lineup.formation || lineup.starters.length !== 11) {
+    return { valid: false, full: false };
+  }
+  if (lineup.starters.some((starter) => starter.position === "unknown")) {
+    return { valid: false, full: true };
+  }
+
+  const digits = lineup.formation.split("-").map(Number);
+  const expectedDf = digits[0] ?? 0;
+  const expectedFw = digits[digits.length - 1] ?? 0;
+  const expectedMf = digits.slice(1, -1).reduce((sum, value) => sum + value, 0);
+  const actual = {
+    GK: lineup.starters.filter((starter) => starter.position === "GK").length,
+    DF: lineup.starters.filter((starter) => starter.position === "DF").length,
+    MF: lineup.starters.filter((starter) => starter.position === "MF").length,
+    FW: lineup.starters.filter((starter) => starter.position === "FW").length,
+  };
+
+  return {
+    full: true,
+    valid:
+      actual.GK === 1 &&
+      actual.DF === expectedDf &&
+      actual.MF === expectedMf &&
+      actual.FW === expectedFw,
+  };
+}
+
+function deriveLineupStatus(
+  lineup: SolExpectedLineup,
+  supporting: GroundedEvidence[],
+): SolExpectedLineup["status"] {
+  if (!lineup.formation && lineup.starters.length === 0) {
+    return "insufficient_data";
+  }
+
+  const shape = lineupPositionCounts(lineup);
+  if (
+    shape.full &&
+    shape.valid &&
+    hasStrongOrIndependent(supporting)
+  ) {
+    return "supported";
+  }
+  return "partial";
 }
 
 export function applyGroundingPolicy(
@@ -57,25 +129,209 @@ export function applyGroundingPolicy(
       .filter((item) => item.entailment !== "unsupported")
       .map((item) => [item.modelEvidenceId, item]),
   );
+  const itemVerdicts = grounding.itemEntailmentVerdicts ?? {};
   const removedItems: string[] = [];
   const removedDirectionalDimensions = new Set<string>();
+  const forcedInvalidationReasons = new Set<string>();
   let nonDirectionalRemovalCount = 0;
 
   const usableEvidenceIds = (ids: string[]) =>
     ids.filter((id) => usableById.has(id));
+  const evidenceFor = (ids: string[]) =>
+    usableEvidenceIds(ids)
+      .map((id) => usableById.get(id))
+      .filter((item): item is GroundedEvidence => item != null);
+  const itemSupported = (verificationId: string) =>
+    itemVerdicts[verificationId] === "supported";
 
-  output.availability = output.availability.flatMap((item) => {
-    const evidenceIds = usableEvidenceIds(item.evidence_ids);
+  output.availability = output.availability.flatMap((rawItem, index) => {
+    const evidenceIds = usableEvidenceIds(rawItem.evidence_ids);
     if (evidenceIds.length === 0) {
-      removedItems.push(`availability:${item.player_name}`);
+      removedItems.push(`availability:${rawItem.player_name}`);
       nonDirectionalRemovalCount += 1;
       return [];
     }
-    if (evidenceIds.length !== item.evidence_ids.length) {
-      removedItems.push(`availability_evidence_pruned:${item.player_name}`);
+
+    const item = { ...rawItem, evidence_ids: evidenceIds };
+    if (evidenceIds.length !== rawItem.evidence_ids.length) {
+      removedItems.push(
+        `availability_evidence_pruned:${rawItem.player_name}`,
+      );
     }
-    return [{ ...item, evidence_ids: evidenceIds }];
+
+    if (output.protocol_version === "kapiloto-research-v3") {
+      const functions = rawItem.functions ?? [];
+      const functionEvidence = usableEvidenceIds(
+        rawItem.function_evidence_ids ?? [],
+      );
+      if (
+        functions.length > 0 &&
+        (!itemSupported(`availability:functions:${index}`) ||
+          functionEvidence.length !==
+            (rawItem.function_evidence_ids ?? []).length)
+      ) {
+        item.functions = [];
+        item.function_evidence_ids = [];
+        removedItems.push(
+          `availability_functions:${rawItem.player_name}`,
+        );
+      } else {
+        item.functions = functions;
+        item.function_evidence_ids = functionEvidence;
+      }
+    }
+
+    return [item];
   });
+
+  if (output.protocol_version === "kapiloto-research-v3") {
+    const unavailableBySide = {
+      home: new Set(
+        output.availability
+          .filter(
+            (item) =>
+              item.team === "home" &&
+              (item.status === "out" || item.status === "suspended"),
+          )
+          .map((item) => normalizeName(item.player_name)),
+      ),
+      away: new Set(
+        output.availability
+          .filter(
+            (item) =>
+              item.team === "away" &&
+              (item.status === "out" || item.status === "suspended"),
+          )
+          .map((item) => normalizeName(item.player_name)),
+      ),
+    };
+
+    for (const side of ["home", "away"] as const) {
+      const rawLineup = output.expected_lineups?.[side];
+      if (!rawLineup) continue;
+
+      const formationEvidence = usableEvidenceIds(
+        rawLineup.formation_evidence_ids,
+      );
+      const formation =
+        rawLineup.formation != null &&
+        itemSupported(`lineup:${side}:formation`) &&
+        formationEvidence.length === rawLineup.formation_evidence_ids.length
+          ? rawLineup.formation
+          : null;
+
+      if (rawLineup.formation && !formation) {
+        removedItems.push(`lineup:${side}:formation`);
+      }
+
+      const starters = rawLineup.starters.flatMap((starter, index) => {
+        const evidenceIds = usableEvidenceIds(starter.evidence_ids);
+        const unavailable = unavailableBySide[side].has(
+          normalizeName(starter.player_name),
+        );
+        if (
+          !itemSupported(`lineup:${side}:starter:${index}`) ||
+          evidenceIds.length !== starter.evidence_ids.length ||
+          unavailable
+        ) {
+          removedItems.push(
+            `lineup:${side}:starter:${starter.player_name}`,
+          );
+          return [];
+        }
+        return [{ ...starter, evidence_ids: evidenceIds }];
+      });
+
+      const sanitized: SolExpectedLineup = {
+        ...rawLineup,
+        formation,
+        formation_evidence_ids:
+          formation == null ? [] : formationEvidence,
+        starters,
+        status: "insufficient_data",
+      };
+      const allEvidence = evidenceFor([
+        ...sanitized.formation_evidence_ids,
+        ...sanitized.starters.flatMap((starter) => starter.evidence_ids),
+      ]);
+      sanitized.status = deriveLineupStatus(sanitized, allEvidence);
+      output.expected_lineups![side] = sanitized;
+    }
+
+    const survivingFacts: SolTacticalFact[] = [];
+    for (const fact of output.tactical_facts ?? []) {
+      const evidenceIds = usableEvidenceIds(fact.evidence_ids);
+      if (
+        !itemSupported(`tactical_fact:${fact.fact_id}`) ||
+        evidenceIds.length !== fact.evidence_ids.length
+      ) {
+        removedItems.push(`tactical_fact:${fact.fact_id}`);
+        nonDirectionalRemovalCount += 1;
+        continue;
+      }
+      survivingFacts.push({ ...fact, evidence_ids: evidenceIds });
+    }
+    output.tactical_facts = survivingFacts;
+    const factIds = new Set(survivingFacts.map((fact) => fact.fact_id));
+
+    const survivingMatchups: SolMatchupAnalysis[] = [];
+    for (const matchup of output.matchup_analysis ?? []) {
+      const evidenceIds = usableEvidenceIds(matchup.evidence_ids);
+      const supporting = evidenceFor(evidenceIds);
+      const factsSurvive = matchup.fact_ids.every((id) => factIds.has(id));
+      const recentDirectionalEvidence =
+        matchup.favors === "none" ||
+        supporting.some((item) => {
+          if (!item.publishedAt) return false;
+          return (
+            Date.parse(card.research_cutoff_at) -
+              Date.parse(item.publishedAt) <=
+            14 * 86_400_000
+          );
+        });
+      const corroborated =
+        matchup.magnitude === "small" ||
+        hasStrongOrIndependent(supporting);
+      const magnitudeAllowed =
+        matchup.kind !== "aerial_set_piece" ||
+        matchup.magnitude === "small";
+
+      if (
+        !itemSupported(`matchup:${matchup.matchup_id}`) ||
+        evidenceIds.length !== matchup.evidence_ids.length ||
+        !factsSurvive ||
+        !recentDirectionalEvidence ||
+        !corroborated ||
+        !magnitudeAllowed
+      ) {
+        removedItems.push(`matchup:${matchup.matchup_id}`);
+        if (matchup.favors === "none") {
+          nonDirectionalRemovalCount += 1;
+        }
+        continue;
+      }
+
+      survivingMatchups.push({ ...matchup, evidence_ids: evidenceIds });
+    }
+    output.matchup_analysis = survivingMatchups;
+
+    output.regime_changes = (output.regime_changes ?? []).flatMap(
+      (regime, index) => {
+        const evidenceIds = usableEvidenceIds(regime.evidence_ids);
+        const supporting = evidenceFor(evidenceIds);
+        if (
+          !itemSupported(`regime:${index}`) ||
+          evidenceIds.length !== regime.evidence_ids.length ||
+          !hasStrongOrIndependent(supporting)
+        ) {
+          removedItems.push(`regime:${index}`);
+          nonDirectionalRemovalCount += 1;
+          return [];
+        }
+        return [{ ...regime, evidence_ids: evidenceIds }];
+      },
+    );
+  }
 
   output.conflicts = output.conflicts.flatMap((item) => {
     const evidenceIdsA = usableEvidenceIds(item.evidence_ids_a);
@@ -91,11 +347,13 @@ export function applyGroundingPolicy(
     ) {
       removedItems.push(`conflict_evidence_pruned:${item.topic}`);
     }
-    return [{
-      ...item,
-      evidence_ids_a: evidenceIdsA,
-      evidence_ids_b: evidenceIdsB,
-    }];
+    return [
+      {
+        ...item,
+        evidence_ids_a: evidenceIdsA,
+        evidence_ids_b: evidenceIdsB,
+      },
+    ];
   });
 
   if (output.market_deviation) {
@@ -107,7 +365,9 @@ export function applyGroundingPolicy(
       removedItems.push("market_deviation");
       nonDirectionalRemovalCount += 1;
     } else {
-      if (evidenceIds.length !== output.market_deviation.evidence_ids.length) {
+      if (
+        evidenceIds.length !== output.market_deviation.evidence_ids.length
+      ) {
         removedItems.push("market_deviation_evidence_pruned");
       }
       output.market_deviation = {
@@ -117,20 +377,39 @@ export function applyGroundingPolicy(
     }
   }
 
+  const survivingMatchupById = new Map(
+    (output.matchup_analysis ?? []).map((item) => [item.matchup_id, item]),
+  );
   const removedDirectionalFactors: ResearchFactor[] = [];
-  output.factors = output.factors.flatMap((rawFactor) => {
+  const kept: Array<{ factor: ResearchFactor; originalIndex: number }> = [];
+  let directionalTacticalCount = 0;
+
+  const recordRemovedFactor = (factor: ResearchFactor, reason?: string) => {
+    removedItems.push(
+      `factor:${factor.dimension}${reason ? `:${reason}` : ""}`,
+    );
+    if (factor.favors === "none") {
+      nonDirectionalRemovalCount += 1;
+    } else {
+      removedDirectionalDimensions.add(factor.dimension);
+      removedDirectionalFactors.push(factor);
+    }
+  };
+
+  for (let index = 0; index < output.factors.length; index += 1) {
+    const rawFactor = output.factors[index];
     const evidenceIds = usableEvidenceIds(rawFactor.evidence_ids);
     const factor = { ...rawFactor, evidence_ids: evidenceIds };
-    const supporting = evidenceIds
-      .map((id) => usableById.get(id))
-      .filter((item): item is GroundedEvidence => item != null);
+    const supporting = evidenceFor(evidenceIds);
     const structured =
       (factor.structured_refs?.length ?? 0) > 0
         ? verifyStructuredFactor(factor, card)
         : null;
+    const linkedMatchups = (factor.matchup_ids ?? []).map((id) =>
+      survivingMatchupById.get(id),
+    );
 
-    const structuredUsable =
-      structured == null || structured.valid;
+    const structuredUsable = structured == null || structured.valid;
     const hasVerifiedSupport =
       supporting.length > 0 || structured?.valid === true;
     const directionalEntailmentPassed =
@@ -142,29 +421,138 @@ export function applyGroundingPolicy(
       factor.magnitude === "small" ||
       (supporting.length > 0 &&
         materialCorroboration(factor, supporting));
+    const matchupsSurvive =
+      linkedMatchups.every((item) => item != null);
+
+    let specialRulesPass = true;
+
+    if (
+      factor.dimension === "tactical_matchup" &&
+      factor.favors !== "none"
+    ) {
+      directionalTacticalCount += 1;
+      if (directionalTacticalCount > 1) {
+        specialRulesPass = false;
+        forcedInvalidationReasons.add(
+          "p_sol_invalidated:multiple_tactical_factors",
+        );
+      }
+      if (factor.magnitude === "large") specialRulesPass = false;
+      const linked = linkedMatchups.filter(
+        (item): item is SolMatchupAnalysis => item != null,
+      );
+      if (
+        linked.length > 0 &&
+        linked.every((item) => item.kind === "aerial_set_piece") &&
+        factor.magnitude !== "small"
+      ) {
+        specialRulesPass = false;
+      }
+    }
+
+    if (
+      factor.dimension === "availability" &&
+      factor.favors !== "none"
+    ) {
+      const supportedMaterialAbsences = output.availability.filter(
+        (item) =>
+          (item.status === "out" || item.status === "suspended") &&
+          (item.certainty === "confirmed" || item.certainty === "probable") &&
+          (item.functions?.length ?? 0) > 0,
+      ).length;
+      const maximumRank =
+        supportedMaterialAbsences >= 2
+          ? 3
+          : supportedMaterialAbsences === 1
+            ? 2
+            : 1;
+      if (magnitudeRank(factor.magnitude) > maximumRank) {
+        specialRulesPass = false;
+      }
+    }
 
     const keep =
       structuredUsable &&
       hasVerifiedSupport &&
       directionalEntailmentPassed &&
-      corroborationPassed;
+      corroborationPassed &&
+      matchupsSurvive &&
+      specialRulesPass;
 
-    if (keep) {
-      if (evidenceIds.length !== rawFactor.evidence_ids.length) {
-        removedItems.push(`factor_evidence_pruned:${factor.dimension}`);
-      }
-      return [factor];
+    if (!keep) {
+      recordRemovedFactor(
+        rawFactor,
+        !matchupsSurvive ? "linked_matchup_removed" : undefined,
+      );
+      continue;
     }
 
-    removedItems.push(`factor:${factor.dimension}`);
-    if (factor.favors === "none") {
-      nonDirectionalRemovalCount += 1;
-    } else {
-      removedDirectionalDimensions.add(factor.dimension);
-      removedDirectionalFactors.push(rawFactor);
+    if (evidenceIds.length !== rawFactor.evidence_ids.length) {
+      removedItems.push(`factor_evidence_pruned:${factor.dimension}`);
     }
+    kept.push({ factor, originalIndex: index });
+  }
+
+  const directionalEvidenceUsers = new Map<string, number[]>();
+  const directionalStructuredUsers = new Map<string, number[]>();
+  for (let index = 0; index < kept.length; index += 1) {
+    const factor = kept[index].factor;
+    if (factor.favors === "none") continue;
+    for (const evidenceId of factor.evidence_ids) {
+      const users = directionalEvidenceUsers.get(evidenceId) ?? [];
+      users.push(index);
+      directionalEvidenceUsers.set(evidenceId, users);
+    }
+    for (const ref of factor.structured_refs ?? []) {
+      const family = ref.endsWith(".form")
+        ? "form"
+        : ref.endsWith(".attack_xg")
+          ? "attack_xg"
+          : ref.endsWith(".table")
+            ? "table"
+            : ref.endsWith(".rest")
+              ? "rest"
+              : ref;
+      const users = directionalStructuredUsers.get(family) ?? [];
+      users.push(index);
+      directionalStructuredUsers.set(family, users);
+    }
+  }
+
+  const doubleCountedIndexes = new Set<number>();
+  for (const users of directionalEvidenceUsers.values()) {
+    if (new Set(users).size > 1) {
+      users.forEach((index) => doubleCountedIndexes.add(index));
+      forcedInvalidationReasons.add(
+        "p_sol_invalidated:duplicate_directional_evidence",
+      );
+    }
+  }
+  for (const users of directionalStructuredUsers.values()) {
+    if (new Set(users).size > 1) {
+      users.forEach((index) => doubleCountedIndexes.add(index));
+      forcedInvalidationReasons.add(
+        "p_sol_invalidated:duplicate_structured_strength",
+      );
+    }
+  }
+
+  output.factors = kept.flatMap((record, keptIndex) => {
+    if (!doubleCountedIndexes.has(keptIndex)) return [record.factor];
+    recordRemovedFactor(record.factor, "double_count");
     return [];
   });
+
+  if (output.protocol_version === "kapiloto-research-v3") {
+    const linkedSurviving = new Set(
+      output.factors.flatMap((factor) => factor.matchup_ids ?? []),
+    );
+    output.matchup_analysis = (output.matchup_analysis ?? []).filter(
+      (matchup) =>
+        matchup.favors === "none" ||
+        linkedSurviving.has(matchup.matchup_id),
+    );
+  }
 
   const removedDimensions = new Set(
     removedItems
@@ -183,6 +571,13 @@ export function applyGroundingPolicy(
     output.watch_items = [];
     output.main_risk =
       "Some reported inputs were excluded because they did not pass evidence policy.";
+    output.summary =
+      output.factors.length > 0
+        ? output.factors
+            .slice(0, 2)
+            .map((factor) => factor.rationale)
+            .join(" ")
+        : "Only limited verified pre-match information remained after evidence checks.";
     output.data_quality = {
       ...output.data_quality,
       sparse_coverage: true,
@@ -208,16 +603,12 @@ export function applyGroundingPolicy(
     (factor) => factor.favors !== "none",
   );
 
-  // Small directional claims are deliberately advisory. If one is removed
-  // by grounding policy, reduce reliability but do not invalidate the entire
-  // Sol distribution while another grounded directional signal survives.
-  // Medium/large removed directional claims can materially change the model
-  // distribution and therefore still fail closed.
   const unsafeRemovedDirectional = removedDirectionalFactors.filter(
     (factor) => factor.magnitude !== "small",
   );
 
   const invalidationReasons = [
+    ...forcedInvalidationReasons,
     ...unsafeRemovedDirectional
       .map((factor) => factor.dimension)
       .sort()
@@ -236,7 +627,7 @@ export function applyGroundingPolicy(
       removedItems,
       removedDirectionalDimensions: [...removedDirectionalDimensions].sort(),
       nonDirectionalRemovalCount,
-      reasons: invalidationReasons,
+      reasons: [...new Set(invalidationReasons)].sort(),
     };
   }
 
