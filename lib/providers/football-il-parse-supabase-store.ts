@@ -197,7 +197,7 @@ export class SupabaseFootballIlSyncStore implements FootballIlSyncStore {
       .select("subject_team_id,captured_at,metadata")
       .eq("fixture_id", fixtureId)
       .eq("provider", "football-il-parse")
-      .eq("fact_key", "season.xg.expected")
+      .in("fact_key", ["season.xg.expected", "season.games_played"])
       .gte("captured_at", capturedAfter);
 
     if (error) {
@@ -206,22 +206,29 @@ export class SupabaseFootballIlSyncStore implements FootballIlSyncStore {
       );
     }
 
-    const teams = new Set<string>();
+    const xgTeams = new Set<string>();
+    const gamesTeams = new Set<string>();
     for (const row of data ?? []) {
       const metadata =
         row.metadata != null && typeof row.metadata === "object"
           ? (row.metadata as Record<string, unknown>)
           : {};
       if (
-        metadata.season === season &&
-        typeof row.subject_team_id === "string" &&
-        row.subject_team_id
+        metadata.season !== season ||
+        typeof row.subject_team_id !== "string" ||
+        !row.subject_team_id
       ) {
-        teams.add(row.subject_team_id);
+        continue;
+      }
+
+      if (row.fact_key === "season.xg.expected") {
+        xgTeams.add(row.subject_team_id);
+      } else if (row.fact_key === "season.games_played") {
+        gamesTeams.add(row.subject_team_id);
       }
     }
 
-    return teams.size >= 2;
+    return xgTeams.size >= 2 && gamesTeams.size >= 2;
   }
 
   async saveResolvedFixture(
