@@ -90,6 +90,32 @@ function card() {
           sources: [],
         },
       },
+      providerAnalytics: {
+        provider: "football-il-parse",
+        sourceVersion: "football-il-parse-v11",
+        capturedAt: "2026-10-29T11:30:00Z",
+        season: "26/27",
+        home: {
+          team_id: "home",
+          xg_expected: 14.4,
+          games_played: 8,
+          xg_per_match: 1.8,
+          goals_scored: 18,
+          shots_total: 110,
+          shots_on_target: 42,
+          possession: 55.2,
+        },
+        away: {
+          team_id: "away",
+          xg_expected: 9.6,
+          games_played: 8,
+          xg_per_match: 1.2,
+          goals_scored: 11,
+          shots_total: 85,
+          shots_on_target: 30,
+          possession: 48.1,
+        },
+      },
       prior: {
         type: "market",
         snapshotId: "market-1",
@@ -188,4 +214,46 @@ test("structured refs cannot support unsupported V1 dimensions", () => {
   );
   assert.equal(result.valid, false);
   assert.equal(result.reason, "wrong_dimension");
+});
+
+
+test("paired normalized attack xG refs support a small baseline-form factor", () => {
+  assert.deepEqual(
+    validateStructuredRefs(
+      ["home.attack_xg", "away.attack_xg"],
+      card(),
+    ),
+    ["away.attack_xg", "home.attack_xg"],
+  );
+
+  const result = verifyStructuredFactor(
+    factor(
+      "baseline_form",
+      "home",
+      ["home.attack_xg", "away.attack_xg"],
+    ),
+    card(),
+  );
+
+  assert.equal(result.valid, true);
+
+  const opposite = verifyStructuredFactor(
+    factor(
+      "baseline_form",
+      "away",
+      ["home.attack_xg", "away.attack_xg"],
+    ),
+    card(),
+  );
+  assert.equal(opposite.valid, false);
+  assert.equal(opposite.reason, "direction_mismatch");
+});
+
+test("attack xG structured factors require both sides", () => {
+  const result = verifyStructuredFactor(
+    factor("baseline_form", "home", ["home.attack_xg"]),
+    card(),
+  );
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, "insufficient_pair");
 });
