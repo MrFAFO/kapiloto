@@ -91,6 +91,31 @@ export async function GET(request: Request): Promise<Response> {
       return Response.json({ ok: false, ...detail }, { status: 503 });
     }
 
+    const result = await syncKapilotoStructuredRound(
+      admin,
+      currentRound.roundId,
+      { sportmonks, apiFootball },
+    );
+    const primaryFinishedAt = new Date().toISOString();
+    const saved = result.fixtures.filter((fixture) =>
+      fixture.status.startsWith("saved_"),
+    ).length;
+
+    await persistControl(
+      admin,
+      saved > 0 ? "structured_ok" : "structured_no_data",
+      startedAt,
+      primaryFinishedAt,
+      {
+        kind: "structured_sync",
+        roundId: currentRound.roundId,
+        externalRoundNumber: currentRound.externalRoundNumber,
+        saved,
+        footballIlParse: { skipped: "pending" },
+        result,
+      },
+    );
+
     const parseApiKey = process.env.PARSE_API_KEY?.trim();
     let footballIlParse:
       | Awaited<ReturnType<typeof syncFootballIlRoundAnalytics>>
@@ -114,16 +139,7 @@ export async function GET(request: Request): Promise<Response> {
         });
       }
     }
-
-    const result = await syncKapilotoStructuredRound(
-      admin,
-      currentRound.roundId,
-      { sportmonks, apiFootball },
-    );
     const finishedAt = new Date().toISOString();
-    const saved = result.fixtures.filter((fixture) =>
-      fixture.status.startsWith("saved_"),
-    ).length;
     const detail = {
       kind: "structured_sync",
       roundId: currentRound.roundId,

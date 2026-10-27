@@ -223,3 +223,56 @@ test("trusted Sportmonks provider names still become research aliases", async ()
   assert.deepEqual(inputs[0].home.aliases, ["Hapoel Jerusalem"]);
   assert.deepEqual(inputs[0].away.aliases, ["Hapoel Tel Aviv"]);
 });
+
+
+test("provider analytics are exposed only after both teams have five validated matches", () => {
+  const snapshots = [4, 5].map((played, index) => {
+    const game = games[index];
+    return {
+      fixture_id: game.fixture_id,
+      provider: "football-il-parse" as const,
+      source_version: "football-il-parse-v11",
+      captured_at: "2026-10-18T11:50:00Z",
+      season: "26/27",
+      teams: [
+        {
+          team_id: game.home_team_id,
+          xg_expected: played * 1.5,
+          games_played: played,
+          xg_per_match: 1.5,
+          goals_scored: played * 2,
+          shots_total: played * 10,
+          shots_on_target: played * 4,
+          possession: 55,
+        },
+        {
+          team_id: game.away_team_id,
+          xg_expected: played * 1.1,
+          games_played: played,
+          xg_per_match: 1.1,
+          goals_scored: played,
+          shots_total: played * 8,
+          shots_on_target: played * 3,
+          possession: 45,
+        },
+      ],
+    };
+  });
+
+  const inputs = assembleFixtureCardInputs(
+    {
+      games,
+      teams,
+      teamAliases: [],
+      teamMappings: [],
+      marketSnapshots: [],
+      providerAnalyticsSnapshots: snapshots,
+    },
+    "2026-10-18T12:00:00Z",
+  );
+
+  assert.equal(inputs[0].providerAnalytics, null);
+  assert.ok(inputs[1].providerAnalytics);
+  assert.equal(inputs[1].providerAnalytics?.home.xg_per_match, 1.5);
+  assert.equal(inputs[1].providerAnalytics?.away.xg_per_match, 1.1);
+});

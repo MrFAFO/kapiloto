@@ -43,10 +43,13 @@ Non-negotiable rules:
    quotes, injuries, lineup claims or source dates.
 
 7a. Factors may cite server-authoritative structured facts through
-    structured_refs. The only permitted V1 refs are home.form, away.form,
-    home.rest, away.rest, home.table and away.table, and only when the frozen
-    card contains that feature with available or partial coverage. Structured
-    refs are not web evidence and must never be copied into the evidence array.
+    structured_refs. The permitted refs are home.form, away.form, home.rest,
+    away.rest, home.table, away.table, home.attack_xg and away.attack_xg.
+    Form/rest/table refs require the frozen structured snapshot feature with
+    available or partial coverage. attack_xg refs require provider_analytics
+    with non-null xg_per_match and at least 5 validated games for BOTH teams.
+    Structured refs are not web evidence and must never be copied into the
+    evidence array.
 
 7b. A structured-only factor must be small. Comparative structured factors
     should cite both teams' matching refs (for example home.form + away.form,

@@ -58,8 +58,12 @@ test("post-cutoff facts are ignored", () => {
     [
       row("fixture-1", "home", "season.xg.expected", 12, "2026-10-27T08:00:00Z"),
       row("fixture-1", "away", "season.xg.expected", 10, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "home", "season.games_played", 8, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "away", "season.games_played", 8, "2026-10-27T08:00:00Z"),
       row("fixture-1", "home", "season.xg.expected", 99, "2026-10-27T12:00:00Z"),
       row("fixture-1", "away", "season.xg.expected", 99, "2026-10-27T12:00:00Z"),
+      row("fixture-1", "home", "season.games_played", 8, "2026-10-27T12:00:00Z"),
+      row("fixture-1", "away", "season.games_played", 8, "2026-10-27T12:00:00Z"),
     ],
     "2026-10-27T09:00:00Z",
   );
@@ -72,7 +76,7 @@ test("post-cutoff facts are ignored", () => {
   );
 });
 
-test("xG per match stays null when validated games played is absent", () => {
+test("incomplete captures are not exposed as provider analytics", () => {
   const snapshots = assembleProviderAnalyticsSnapshots(
     [
       row("fixture-1", "home", "season.xg.expected", 12, "2026-10-27T08:00:00Z"),
@@ -81,10 +85,7 @@ test("xG per match stays null when validated games played is absent", () => {
     "2026-10-27T09:00:00Z",
   );
 
-  const snapshot = snapshots.get("fixture-1");
-  assert.ok(snapshot);
-  assert.equal(snapshot.teams[0]?.xg_per_match, null);
-  assert.equal(snapshot.teams[1]?.xg_per_match, null);
+  assert.equal(snapshots.has("fixture-1"), false);
 });
 
 test("requires xG for both teams before exposing a fixture analytics snapshot", () => {
@@ -97,4 +98,53 @@ test("requires xG for both teams before exposing a fixture analytics snapshot", 
   );
 
   assert.equal(snapshots.has("fixture-1"), false);
+});
+
+
+test("a partial newest capture falls back to the latest complete capture", () => {
+  const snapshots = assembleProviderAnalyticsSnapshots(
+    [
+      row("fixture-1", "home", "season.xg.expected", 12, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "away", "season.xg.expected", 10, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "home", "season.games_played", 8, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "away", "season.games_played", 8, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "home", "season.xg.expected", 13, "2026-10-27T09:00:00Z"),
+      row("fixture-1", "away", "season.xg.expected", 11, "2026-10-27T09:00:00Z"),
+    ],
+    "2026-10-27T10:00:00Z",
+  );
+
+  const snapshot = snapshots.get("fixture-1");
+  assert.ok(snapshot);
+  assert.equal(snapshot.captured_at, "2026-10-27T08:00:00Z");
+  assert.equal(
+    snapshot.teams.find((team) => team.team_id === "home")?.xg_per_match,
+    1.5,
+  );
+});
+
+
+test("conflicting duplicate facts invalidate a capture instead of overwriting silently", () => {
+  const snapshots = assembleProviderAnalyticsSnapshots(
+    [
+      row("fixture-1", "home", "season.xg.expected", 12, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "home", "season.xg.expected", 13, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "away", "season.xg.expected", 10, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "home", "season.games_played", 8, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "away", "season.games_played", 8, "2026-10-27T08:00:00Z"),
+      row("fixture-1", "home", "season.xg.expected", 11, "2026-10-26T08:00:00Z"),
+      row("fixture-1", "away", "season.xg.expected", 9, "2026-10-26T08:00:00Z"),
+      row("fixture-1", "home", "season.games_played", 8, "2026-10-26T08:00:00Z"),
+      row("fixture-1", "away", "season.games_played", 8, "2026-10-26T08:00:00Z"),
+    ],
+    "2026-10-27T09:00:00Z",
+  );
+
+  const snapshot = snapshots.get("fixture-1");
+  assert.ok(snapshot);
+  assert.equal(snapshot.captured_at, "2026-10-26T08:00:00Z");
+  assert.equal(
+    snapshot.teams.find((team) => team.team_id === "home")?.xg_expected,
+    11,
+  );
 });

@@ -190,6 +190,8 @@ test("normalizes season aggregates as fixture-scoped pre-match team facts", asyn
           stats: [
             row(teamId, {
               seasonName: season,
+              tournamentId: 902,
+              stage: "totalStage",
               expectedGoals: teamId === 4539 ? 18.4651 : 20.25,
               Goal: teamId === 4539 ? 20 : 24,
               ballPossession: teamId === 4539 ? 58.84 : 55.2,
@@ -206,6 +208,7 @@ test("normalizes season aggregates as fixture-scoped pre-match team facts", asyn
     },
     context,
     "26/27",
+    902,
   );
 
   assert.equal(result.rawRows, 2);
@@ -241,6 +244,7 @@ test("season ingestion rejects invalid provider team ids before any API call", a
           home: { ...context.home, providerTeamId: "invalid" },
         },
         "26/27",
+        902,
       ),
     /positive integers/,
   );
@@ -277,30 +281,6 @@ test("standing facts are emitted only from validator-approved stages", () => {
           goalsScored: 24,
           goalsReceived: 8,
           gamesCount: 8,
-        },
-      ],
-      ChampionshipRound: [
-        {
-          id: 4539,
-          position: 1,
-          points: 168,
-          wins: 49,
-          draws: 21,
-          losses: 25,
-          goalsScored: 153,
-          goalsReceived: 107,
-          gamesCount: 95,
-        },
-        {
-          id: 4536,
-          position: 2,
-          points: 213,
-          wins: 64,
-          draws: 21,
-          losses: 11,
-          goalsScored: 185,
-          goalsReceived: 80,
-          gamesCount: 96,
         },
       ],
     },
@@ -356,4 +336,160 @@ test("season facts snapshot identical values at distinct capture times", () => {
     firstXg.source_fingerprint,
     secondXg.source_fingerprint,
   );
+});
+
+
+test("season ingestion rejects ambiguous or cross-tournament aggregate rows", async () => {
+  const saved: unknown[] = [];
+
+  await assert.rejects(
+    () =>
+      ingestFootballIlSeasonAnalytics(
+        {
+          async getTeamStatistics(season, teamId) {
+            return {
+              stats: [
+                row(teamId, {
+                  seasonName: season,
+                  tournamentId: 902,
+                  stage: "totalStage",
+                  expectedGoals: 12,
+                }),
+                row(teamId, {
+                  seasonName: season,
+                  tournamentId: 902,
+                  stage: "totalStage",
+                  expectedGoals: 13,
+                }),
+                row(teamId, {
+                  seasonName: season,
+                  tournamentId: 999,
+                  stage: "totalStage",
+                  expectedGoals: 99,
+                }),
+              ],
+            };
+          },
+        },
+        {
+          async saveFacts(facts) {
+            saved.push(...facts);
+            return facts.length;
+          },
+        },
+        context,
+        "26/27",
+        902,
+      ),
+    /season stats are ambiguous/,
+  );
+
+  assert.equal(saved.length, 0);
+});
+
+test("standing facts are withheld when more than one stage is independently trustworthy", () => {
+  const stage = [
+    {
+      id: 4539,
+      position: 2,
+      points: 18,
+      wins: 5,
+      draws: 3,
+      losses: 0,
+      goalsScored: 20,
+      goalsReceived: 14,
+      gamesCount: 8,
+    },
+    {
+      id: 4536,
+      position: 1,
+      points: 20,
+      wins: 6,
+      draws: 2,
+      losses: 0,
+      goalsScored: 24,
+      goalsReceived: 8,
+      gamesCount: 8,
+    },
+  ];
+
+  const facts = buildFootballIlStandingFacts(
+    context,
+    "26/27",
+    902,
+    {
+      RegularSeason: stage,
+      ChampionshipRound: stage.map((item) => ({
+        ...item,
+        gamesCount: 6,
+        points: Math.min(item.points, 18),
+      })),
+    },
+  );
+
+  assert.equal(
+    facts.some((fact) => fact.fact_key === "season.games_played"),
+    false,
+  );
+});
+
+
+test("standing facts are withheld when an additional active stage exists even if it is invalid", () => {
+  const facts = buildFootballIlStandingFacts(
+    context,
+    "26/27",
+    902,
+    {
+      RegularSeason: [
+        {
+          id: 4539,
+          position: 2,
+          points: 18,
+          wins: 5,
+          draws: 3,
+          losses: 0,
+          goalsScored: 20,
+          goalsReceived: 14,
+          gamesCount: 26,
+        },
+        {
+          id: 4536,
+          position: 1,
+          points: 20,
+          wins: 6,
+          draws: 2,
+          losses: 0,
+          goalsScored: 24,
+          goalsReceived: 8,
+          gamesCount: 26,
+        },
+      ],
+      ChampionshipRound: [
+        {
+          id: 4539,
+          position: 1,
+          points: 168,
+          wins: 49,
+          draws: 21,
+          losses: 25,
+          goalsScored: 153,
+          goalsReceived: 107,
+          gamesCount: 95,
+        },
+        {
+          id: 4536,
+          position: 2,
+          points: 213,
+          wins: 64,
+          draws: 21,
+          losses: 11,
+          goalsScored: 185,
+          goalsReceived: 80,
+          gamesCount: 96,
+        },
+      ],
+    },
+  );
+
+  assert.equal(facts.length, 0);
 });

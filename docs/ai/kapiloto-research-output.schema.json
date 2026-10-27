@@ -242,7 +242,9 @@
                 "home.rest",
                 "away.rest",
                 "home.table",
-                "away.table"
+                "away.table",
+                "home.attack_xg",
+                "away.attack_xg"
               ]
             }
           }

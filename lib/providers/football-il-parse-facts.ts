@@ -272,6 +272,7 @@ export async function ingestFootballIlSeasonAnalytics(
   store: FootballIlFactStore,
   context: FootballIlFactContext,
   season: string,
+  tournamentId: number,
 ): Promise<{
   rawRows: number;
   factsWritten: number;
@@ -297,11 +298,31 @@ export async function ingestFootballIlSeasonAnalytics(
       response: await source.getTeamStatistics(season, teamId),
     })),
   );
-  const rows = responses.flatMap(({ teamId, response }) =>
-    response.stats.filter(
-      (row) => row.teamId === teamId && row.seasonName === season,
-    ),
-  );
+
+  const rows: FootballIlTeamStatistics[] = [];
+  for (const { teamId, response } of responses) {
+    const candidates = response.stats.filter(
+      (row) =>
+        row.teamId === teamId &&
+        row.seasonName === season &&
+        row.tournamentId === tournamentId &&
+        row.stage === "totalStage",
+    );
+
+    if (candidates.length !== 1) {
+      throw new Error(
+        "football.co.il Parse season stats are ambiguous for team " +
+          teamId +
+          " in " +
+          season +
+          " tournament " +
+          tournamentId +
+          ".",
+      );
+    }
+
+    rows.push(candidates[0]);
+  }
 
   const facts = buildFootballIlSeasonFacts(context, rows);
   const factsWritten = await store.saveFacts(facts);
@@ -316,24 +337,20 @@ function trustedStandingForTeam(
   standings: FootballIlStandings,
   teamId: number,
 ): { stage: string; row: FootballIlStandingRow } | null {
-  const candidates: Array<{ stage: string; row: FootballIlStandingRow }> = [];
+  const activeStages = Object.entries(standings).filter(([, rows]) =>
+    rows.some((item) => item.id === teamId && item.gamesCount > 0),
+  );
+  if (activeStages.length !== 1) return null;
 
-  for (const [stage, rows] of Object.entries(standings)) {
-    const validation = validateFootballIlStandings(
-      { [stage]: rows },
-      { requirePlayedMatches: true },
-    );
-    if (!validation.trustworthy) continue;
+  const [stage, rows] = activeStages[0];
+  const validation = validateFootballIlStandings(
+    { [stage]: rows },
+    { requirePlayedMatches: true },
+  );
+  if (!validation.trustworthy) return null;
 
-    const row = rows.find((item) => item.id === teamId);
-    if (row) candidates.push({ stage, row });
-  }
-
-  return candidates.sort(
-    (a, b) =>
-      b.row.gamesCount - a.row.gamesCount ||
-      b.row.points - a.row.points,
-  )[0] ?? null;
+  const row = rows.find((item) => item.id === teamId);
+  return row ? { stage, row } : null;
 }
 
 export function buildFootballIlStandingFacts(
