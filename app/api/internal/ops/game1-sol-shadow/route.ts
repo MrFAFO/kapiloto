@@ -58,6 +58,7 @@ export async function GET(): Promise<Response> {
   const capturedAt = new Date().toISOString();
   const quotes: BookmakerThreeWayQuote[] = [
     {
+      provider: "sportmonks",
       providerFixtureId: "manual-web-264301-1",
       bookmakerId: "sportsbet",
       bookmakerName: "Sportsbet",
@@ -65,6 +66,7 @@ export async function GET(): Promise<Response> {
       odds: { home: 1.99, draw: 3.60, away: 2.85 },
     },
     {
+      provider: "sportmonks",
       providerFixtureId: "manual-web-264301-1",
       bookmakerId: "meridian",
       bookmakerName: "Meridian",
