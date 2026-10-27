@@ -187,6 +187,7 @@ export function buildFootballIlMatchFacts(
           row.teamId,
           metric.field,
           value,
+          context.capturedAt,
         ]),
         metadata: {
           provider_team_id: row.teamId,
@@ -407,6 +408,7 @@ export function buildFootballIlStandingFacts(
           teamId,
           rawField,
           value,
+          context.capturedAt,
         ]),
         metadata: {
           provider_team_id: teamId,
