@@ -417,6 +417,7 @@ export async function researchFixtureWithSol(
         parsed,
         card,
         sourceUrls,
+        "kapiloto-research-v3",
       );
     } catch (error) {
       throw new SolFixtureResearchError(
