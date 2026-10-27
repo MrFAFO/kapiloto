@@ -277,7 +277,7 @@ export function validateStructuredRefs(
     !card.structured.provider_analytics
   ) {
     throw new Error(
-      "Structured references require frozen structured inputs.",
+      "Structured references require a frozen Fixture Card v3 snapshot.",
     );
   }
 
