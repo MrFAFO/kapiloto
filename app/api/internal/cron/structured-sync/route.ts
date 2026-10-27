@@ -96,6 +96,25 @@ export async function GET(request: Request): Promise<Response> {
       currentRound.roundId,
       { sportmonks, apiFootball },
     );
+    const primaryFinishedAt = new Date().toISOString();
+    const saved = result.fixtures.filter((fixture) =>
+      fixture.status.startsWith("saved_"),
+    ).length;
+
+    await persistControl(
+      admin,
+      saved > 0 ? "structured_ok" : "structured_no_data",
+      startedAt,
+      primaryFinishedAt,
+      {
+        kind: "structured_sync",
+        roundId: currentRound.roundId,
+        externalRoundNumber: currentRound.externalRoundNumber,
+        saved,
+        footballIlParse: { skipped: "pending" },
+        result,
+      },
+    );
 
     const parseApiKey = process.env.PARSE_API_KEY?.trim();
     let footballIlParse:
@@ -121,9 +140,6 @@ export async function GET(request: Request): Promise<Response> {
       }
     }
     const finishedAt = new Date().toISOString();
-    const saved = result.fixtures.filter((fixture) =>
-      fixture.status.startsWith("saved_"),
-    ).length;
     const detail = {
       kind: "structured_sync",
       roundId: currentRound.roundId,
