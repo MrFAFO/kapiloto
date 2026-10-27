@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildFootballIlMatchFacts,
   ingestFootballIlMatchAnalytics,
+  ingestFootballIlSeasonAnalytics,
   type FootballIlFactContext,
   type FootballIlFactStore,
 } from "./football-il-parse-facts";
@@ -171,6 +172,75 @@ test("ingestion rejects non-numeric provider game ids before calling the provide
         badContext,
       ),
     /positive integer/,
+  );
+
+  assert.equal(called, false);
+});
+
+
+test("normalizes season aggregates as fixture-scoped pre-match team facts", async () => {
+  const saved: any[] = [];
+  const result = await ingestFootballIlSeasonAnalytics(
+    {
+      async getTeamStatistics(season, teamId) {
+        assert.equal(season, "26/27");
+        return {
+          stats: [
+            row(teamId, {
+              seasonName: season,
+              expectedGoals: teamId === 4539 ? 18.4651 : 20.25,
+              Goal: teamId === 4539 ? 20 : 24,
+              ballPossession: teamId === 4539 ? 58.84 : 55.2,
+            }),
+          ],
+        };
+      },
+    },
+    {
+      async saveFacts(facts) {
+        saved.push(...facts);
+        return facts.length;
+      },
+    },
+    context,
+    "26/27",
+  );
+
+  assert.equal(result.rawRows, 2);
+  assert.ok(result.factsWritten > 0);
+
+  const homeSeasonXg = saved.find(
+    (fact) =>
+      fact.subject_team_id === "canonical-home" &&
+      fact.fact_key === "season.xg.expected",
+  );
+
+  assert.equal(homeSeasonXg?.value_numeric, 18.4651);
+  assert.equal(homeSeasonXg?.metadata.scope, "season");
+  assert.equal(homeSeasonXg?.metadata.season, "26/27");
+  assert.match(homeSeasonXg?.provider_endpoint ?? "", /get_team_statistics/);
+});
+
+test("season ingestion rejects invalid provider team ids before any API call", async () => {
+  let called = false;
+
+  await assert.rejects(
+    () =>
+      ingestFootballIlSeasonAnalytics(
+        {
+          async getTeamStatistics() {
+            called = true;
+            return { stats: [] };
+          },
+        },
+        { async saveFacts() { return 0; } },
+        {
+          ...context,
+          home: { ...context.home, providerTeamId: "invalid" },
+        },
+        "26/27",
+      ),
+    /positive integers/,
   );
 
   assert.equal(called, false);
