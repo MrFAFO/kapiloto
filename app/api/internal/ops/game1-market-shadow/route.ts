@@ -8,7 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-export async function POST(): Promise<Response> {
+export async function GET(): Promise<Response> {
   if (process.env.VERCEL_ENV !== "preview") {
     return Response.json({ ok: false, error: "preview_only" }, { status: 403 });
   }
