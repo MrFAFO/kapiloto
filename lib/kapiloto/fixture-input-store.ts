@@ -224,7 +224,18 @@ export function assembleFixtureCardInputs(
         const awayMetrics = snapshot.teams.find(
           (team) => team.team_id === game.away_team_id,
         );
-        if (!homeMetrics || !awayMetrics) return null;
+        if (
+          !homeMetrics ||
+          !awayMetrics ||
+          homeMetrics.xg_per_match == null ||
+          awayMetrics.xg_per_match == null ||
+          homeMetrics.games_played == null ||
+          awayMetrics.games_played == null ||
+          homeMetrics.games_played < 5 ||
+          awayMetrics.games_played < 5
+        ) {
+          return null;
+        }
         return {
           provider: snapshot.provider,
           sourceVersion: snapshot.source_version,
