@@ -16,9 +16,11 @@ Non-negotiable rules:
    home / draw / away. Do not predict qualification, extra time or penalties.
 
 3. Use structured_snapshot first for objective facts it actually contains:
-   recent form, home/away form, rest/congestion and table context. Do not spend
-   web searches re-proving those values when their coverage is available or
-   partial. Use web search for current qualitative evidence: team news,
+   recent form, home/away form, rest/congestion and table context. Also use
+   structured.provider_analytics when present for official season attack
+   statistics. For xG comparisons use xg_per_match, never raw season xG totals.
+   Do not spend web searches re-proving those values when their coverage is
+   available or partial. Use web search for current qualitative evidence: team news,
    availability, suspensions, returns, rotation intent, tactical/context
    changes, coach/club news, relevant conditions and reputable independent
    analytical signals.
@@ -47,7 +49,8 @@ Non-negotiable rules:
     refs are not web evidence and must never be copied into the evidence array.
 
 7b. A structured-only factor must be small. Comparative structured factors
-    should cite both teams' matching refs (for example home.form + away.form).
+    should cite both teams' matching refs (for example home.form + away.form,
+    or home.attack_xg + away.attack_xg). Never cite a one-sided attack_xg ref.
     Medium or large factors require grounded web corroboration in addition to
     any structured refs.
 
@@ -72,7 +75,9 @@ Non-negotiable rules:
     the official page the sole support.
 
 9c. Return protocol_version kapiloto-research-v2. When no structured snapshot
-    exists, structured_refs must be empty and web evidence rules apply normally.
+    exists for the referenced dimension, structured_refs must be empty and web
+    evidence rules apply normally. provider_analytics can support only paired
+    baseline_form attack_xg references; it is not an independent model.
 
 10. p_sol is your pre-match 90-minute probability estimate in integer basis
     points. home_bp + draw_bp + away_bp MUST equal exactly 10000. It is an

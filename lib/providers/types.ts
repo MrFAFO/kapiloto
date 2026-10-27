@@ -1,4 +1,4 @@
-export type ProviderName = "api-football" | "sportmonks";
+export type ProviderName = "api-football" | "sportmonks" | "football-il-parse";
 
 export type ThreeWayBasisPoints = {
   home: number;
@@ -89,6 +89,13 @@ export type ProviderSpikeFixtureInput = {
   };
   apiFootballFixtureId?: number;
   sportmonksFixtureId?: number;
+  /** Confirmed provider team ids for the resolving provider; they outrank names. */
+  providerTeamIds?: {
+    home?: string | null;
+    away?: string | null;
+  };
+  /** Confirmed provider competition id for the resolving provider. */
+  providerCompetitionId?: string | null;
 };
 
 export type ProviderCapabilities = {
@@ -113,7 +120,13 @@ export type ProviderFixtureCoverage = {
   gameNumber: number;
   input: ProviderSpikeFixtureInput;
   resolvedFixture: ProviderFixture | null;
-  fixtureResolution: "provided_id" | "name_match" | "not_found" | "ambiguous";
+  fixtureResolution:
+    | "provided_id"
+    | "provider_team_ids"
+    | "name_match"
+    | "not_found"
+    | "ambiguous"
+    | "orientation_mismatch";
   capabilities: ProviderCapabilities;
   lineupEntries: number;
   injuryEntries: number;

@@ -25,7 +25,7 @@ const MIGRATION = join(
   process.cwd(),
   "supabase",
   "migrations",
-  "20261021090000_kapiloto_finalization_lifecycle_v1.sql",
+  "20261022083017_kapiloto_finalization_lifecycle_v1.sql",
 );
 
 /**

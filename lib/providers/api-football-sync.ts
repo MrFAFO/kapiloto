@@ -3,6 +3,7 @@ import type {
   BookmakerThreeWayQuote,
   MarketPrior,
   ProviderFixture,
+  ProviderFixtureCoverage,
   ProviderSpikeFixtureInput,
 } from "./types";
 
@@ -23,6 +24,8 @@ export type ApiFootballRoundGame = {
   home: ApiFootballRoundTeam;
   away: ApiFootballRoundTeam;
   providerFixtureId: number | null;
+  /** Confirmed API-Football league id for the game competition, when mapped. */
+  providerCompetitionId?: string | null;
 };
 
 export type ApiFootballResolvedSnapshot = {
@@ -30,8 +33,41 @@ export type ApiFootballResolvedSnapshot = {
   fixture: ProviderFixture;
   marketPrior: MarketPrior;
   capturedAt: string;
-  resolution: "provided_id" | "name_match";
+  resolution: "provided_id" | "provider_team_ids" | "name_match";
 };
+
+export type MappingEvidence = "confirmed" | "unverified";
+
+/**
+ * Which mappings a resolved snapshot may confirm. Only provider-id evidence
+ * confirms: a fixture is confirmed when it came from a trusted fixture mapping
+ * or both mapped team ids matched; a team or competition is confirmed when the
+ * fixture is, or when its own trusted id matched. Anything resting on a name
+ * bootstrap stays `unverified`, which resolution ignores, so one fuzzy match
+ * cannot steer later runs.
+ */
+export function mappingEvidence(snapshot: ApiFootballResolvedSnapshot): {
+  fixture: MappingEvidence;
+  home: MappingEvidence;
+  away: MappingEvidence;
+  competition: MappingEvidence;
+} {
+  const { game, fixture } = snapshot;
+  const homeById = game.home.providerTeamId != null && game.home.providerTeamId === fixture.home.id;
+  const awayById = game.away.providerTeamId != null && game.away.providerTeamId === fixture.away.id;
+  const fixtureConfirmed = snapshot.resolution === "provided_id" || (homeById && awayById);
+  const level = (byId: boolean): MappingEvidence =>
+    fixtureConfirmed || byId ? "confirmed" : "unverified";
+  return {
+    fixture: level(false),
+    home: level(homeById),
+    away: level(awayById),
+    competition: level(
+      game.providerCompetitionId != null &&
+        game.providerCompetitionId === fixture.competition.id,
+    ),
+  };
+}
 
 export interface ApiFootballSyncStore {
   loadRoundGames(roundId: string): Promise<ApiFootballRoundGame[]>;
@@ -41,7 +77,7 @@ export interface ApiFootballSyncStore {
 export interface ApiFootballSyncClient {
   resolveFixture(input: ProviderSpikeFixtureInput): Promise<{
     fixture: ProviderFixture | null;
-    resolution: "provided_id" | "name_match" | "not_found" | "ambiguous";
+    resolution: ProviderFixtureCoverage["fixtureResolution"];
   }>;
   getThreeWayQuotes(
     fixture: ProviderFixture,
@@ -162,19 +198,30 @@ export async function syncApiFootballRoundMarket(
           away: game.away.aliases,
         },
         apiFootballFixtureId: game.providerFixtureId ?? undefined,
+        providerTeamIds: {
+          home: game.home.providerTeamId,
+          away: game.away.providerTeamId,
+        },
+        providerCompetitionId: game.providerCompetitionId ?? null,
       };
 
       const resolved = await client.resolveFixture(input);
 
       if (!resolved.fixture) {
+        const reversed = resolved.resolution === "orientation_mismatch";
         fixtures.push({
           gameNumber: game.gameNumber,
           roundGameId: game.roundGameId,
-          status:
-            resolved.resolution === "ambiguous" ? "ambiguous" : "not_found",
+          status: reversed
+            ? "error"
+            : resolved.resolution === "ambiguous"
+              ? "ambiguous"
+              : "not_found",
           providerFixtureId: null,
           bookmakerCount: 0,
-          error: null,
+          error: reversed
+            ? `Provider lists Toto game ${game.gameNumber} with home and away reversed.`
+            : null,
         });
         continue;
       }
@@ -204,7 +251,10 @@ export async function syncApiFootballRoundMarket(
         marketPrior,
         capturedAt,
         resolution:
-          resolved.resolution === "provided_id" ? "provided_id" : "name_match",
+          resolved.resolution === "provided_id" ||
+          resolved.resolution === "provider_team_ids"
+            ? resolved.resolution
+            : "name_match",
       });
 
       fixtures.push({

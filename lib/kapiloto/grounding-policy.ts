@@ -4,7 +4,7 @@ import type { GroundedEvidence, GroundingResult } from "./source-grounding";
 import { verifyStructuredFactor } from "./structured-refs";
 
 export const KAPILOTO_GROUNDING_POLICY_VERSION =
-  "kapiloto-grounding-policy-v5" as const;
+  "kapiloto-grounding-policy-v7" as const;
 
 type ResearchFactor = SolFixtureResearchOutput["factors"][number];
 
@@ -61,40 +61,67 @@ export function applyGroundingPolicy(
   const removedDirectionalDimensions = new Set<string>();
   let nonDirectionalRemovalCount = 0;
 
-  const fullyUsable = (ids: string[]) =>
-    ids.length > 0 && ids.every((id) => usableById.has(id));
+  const usableEvidenceIds = (ids: string[]) =>
+    ids.filter((id) => usableById.has(id));
 
-  output.availability = output.availability.filter((item) => {
-    const keep = fullyUsable(item.evidence_ids);
-    if (!keep) {
+  output.availability = output.availability.flatMap((item) => {
+    const evidenceIds = usableEvidenceIds(item.evidence_ids);
+    if (evidenceIds.length === 0) {
       removedItems.push(`availability:${item.player_name}`);
       nonDirectionalRemovalCount += 1;
+      return [];
     }
-    return keep;
+    if (evidenceIds.length !== item.evidence_ids.length) {
+      removedItems.push(`availability_evidence_pruned:${item.player_name}`);
+    }
+    return [{ ...item, evidence_ids: evidenceIds }];
   });
 
-  output.conflicts = output.conflicts.filter((item) => {
-    const keep =
-      fullyUsable(item.evidence_ids_a) &&
-      fullyUsable(item.evidence_ids_b);
-    if (!keep) {
+  output.conflicts = output.conflicts.flatMap((item) => {
+    const evidenceIdsA = usableEvidenceIds(item.evidence_ids_a);
+    const evidenceIdsB = usableEvidenceIds(item.evidence_ids_b);
+    if (evidenceIdsA.length === 0 || evidenceIdsB.length === 0) {
       removedItems.push(`conflict:${item.topic}`);
       nonDirectionalRemovalCount += 1;
+      return [];
     }
-    return keep;
+    if (
+      evidenceIdsA.length !== item.evidence_ids_a.length ||
+      evidenceIdsB.length !== item.evidence_ids_b.length
+    ) {
+      removedItems.push(`conflict_evidence_pruned:${item.topic}`);
+    }
+    return [{
+      ...item,
+      evidence_ids_a: evidenceIdsA,
+      evidence_ids_b: evidenceIdsB,
+    }];
   });
 
-  if (
-    output.market_deviation &&
-    !fullyUsable(output.market_deviation.evidence_ids)
-  ) {
-    output.market_deviation = null;
-    removedItems.push("market_deviation");
-    nonDirectionalRemovalCount += 1;
+  if (output.market_deviation) {
+    const evidenceIds = usableEvidenceIds(
+      output.market_deviation.evidence_ids,
+    );
+    if (evidenceIds.length === 0) {
+      output.market_deviation = null;
+      removedItems.push("market_deviation");
+      nonDirectionalRemovalCount += 1;
+    } else {
+      if (evidenceIds.length !== output.market_deviation.evidence_ids.length) {
+        removedItems.push("market_deviation_evidence_pruned");
+      }
+      output.market_deviation = {
+        ...output.market_deviation,
+        evidence_ids: evidenceIds,
+      };
+    }
   }
 
-  output.factors = output.factors.filter((factor) => {
-    const supporting = factor.evidence_ids
+  const removedDirectionalFactors: ResearchFactor[] = [];
+  output.factors = output.factors.flatMap((rawFactor) => {
+    const evidenceIds = usableEvidenceIds(rawFactor.evidence_ids);
+    const factor = { ...rawFactor, evidence_ids: evidenceIds };
+    const supporting = evidenceIds
       .map((id) => usableById.get(id))
       .filter((item): item is GroundedEvidence => item != null);
     const structured =
@@ -102,37 +129,41 @@ export function applyGroundingPolicy(
         ? verifyStructuredFactor(factor, card)
         : null;
 
-    const allWebEvidenceUsable =
-      supporting.length === factor.evidence_ids.length;
     const structuredUsable =
       structured == null || structured.valid;
     const hasVerifiedSupport =
       supporting.length > 0 || structured?.valid === true;
     const directionalEntailmentPassed =
       factor.favors === "none" ||
-      factor.evidence_ids.length === 0 ||
+      structured?.valid === true ||
       supporting.every((item) => item.entailment === "supported");
     const corroborationPassed =
       factor.magnitude === "small" ||
+      structured?.valid === true ||
       (supporting.length > 0 &&
         materialCorroboration(factor, supporting));
 
     const keep =
-      allWebEvidenceUsable &&
       structuredUsable &&
       hasVerifiedSupport &&
       directionalEntailmentPassed &&
       corroborationPassed;
 
-    if (keep) return true;
+    if (keep) {
+      if (evidenceIds.length !== rawFactor.evidence_ids.length) {
+        removedItems.push(`factor_evidence_pruned:${factor.dimension}`);
+      }
+      return [factor];
+    }
 
     removedItems.push(`factor:${factor.dimension}`);
     if (factor.favors === "none") {
       nonDirectionalRemovalCount += 1;
     } else {
       removedDirectionalDimensions.add(factor.dimension);
+      removedDirectionalFactors.push(rawFactor);
     }
-    return false;
+    return [];
   });
 
   const removedDimensions = new Set(
@@ -177,8 +208,18 @@ export function applyGroundingPolicy(
     (factor) => factor.favors !== "none",
   );
 
+  // Small directional claims are deliberately advisory. If one is removed
+  // by grounding policy, reduce reliability but do not invalidate the entire
+  // Sol distribution while another grounded directional signal survives.
+  // Medium/large removed directional claims can materially change the model
+  // distribution and therefore still fail closed.
+  const unsafeRemovedDirectional = removedDirectionalFactors.filter(
+    (factor) => factor.magnitude !== "small",
+  );
+
   const invalidationReasons = [
-    ...[...removedDirectionalDimensions]
+    ...unsafeRemovedDirectional
+      .map((factor) => factor.dimension)
       .sort()
       .map((dimension) => `p_sol_invalidated:${dimension}`),
     ...(survivingDirectional.length === 0
@@ -207,6 +248,13 @@ export function applyGroundingPolicy(
     removedDirectionalDimensions: [],
     nonDirectionalRemovalCount,
     reasons:
-      removedItems.length > 0 ? ["secondary_items_removed"] : [],
+      removedItems.length > 0
+        ? [
+            ...(removedDirectionalFactors.length > 0
+              ? ["directional_items_pruned"]
+              : []),
+            "secondary_items_removed",
+          ]
+        : [],
   };
 }

@@ -101,7 +101,7 @@ test("15 supported fixtures use Sol while one unsupported fixture falls back to 
   assert.deepEqual(withheld.factors, []);
   assert.ok(
     (withheld.reliability_reasons as string[]).includes(
-      "p_sol_invalidated:baseline_form",
+      "p_sol_invalidated:no_grounded_directional_signal",
     ),
   );
   const withheldEvidence = withheld.evidence as Array<Record<string, unknown>>;

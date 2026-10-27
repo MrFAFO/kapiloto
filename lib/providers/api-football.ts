@@ -1,5 +1,6 @@
 import { aggregateMarketPrior } from "./market";
-import { bestAliasSimilarity, normalizeTeamName } from "./match";
+import { kickoffWindowDates, selectApiFootballFixture } from "./api-football-resolution";
+import { normalizeTeamName } from "./match";
 import type {
   BookmakerThreeWayQuote,
   ProviderFixture,
@@ -14,10 +15,27 @@ const DEFAULT_BASE_URL = "https://v3.football.api-sports.io";
 const DEFAULT_MIN_REQUEST_INTERVAL_MS = 6_500;
 const MATCH_WINNER_BET_ID = 1;
 
+export type ApiFootballResponseInfo = {
+  path: string;
+  status: number;
+  dailyLimit: number | null;
+  dailyRemaining: number | null;
+  minuteRemaining: number | null;
+};
+
 export type ApiFootballClientOptions = {
   baseUrl?: string;
   minRequestIntervalMs?: number;
+  /** Called once per HTTP response, including errors. */
+  onResponse?: (info: ApiFootballResponseInfo) => void;
 };
+
+function headerNumber(headers: Headers, name: string): number | null {
+  const raw = headers.get(name);
+  if (raw == null || raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
 
 type ApiFootballEnvelope<T> = {
   errors?: Record<string, string> | string[];
@@ -300,46 +318,13 @@ export function parseApiFootballThreeWayQuotes(
   return quotes;
 }
 
-function fixtureMatchScore(
-  input: ProviderSpikeFixtureInput,
-  fixture: ProviderFixture,
-): number {
-  const home = bestAliasSimilarity(
-    fixture.home.name,
-    input.homeTeam,
-    input.aliases?.home,
-  );
-  const away = bestAliasSimilarity(
-    fixture.away.name,
-    input.awayTeam,
-    input.aliases?.away,
-  );
-
-  if (home < 0.6 || away < 0.6) return 0;
-
-  const targetTime = Date.parse(input.kickoffAt);
-  const candidateTime = Date.parse(fixture.kickoffAt);
-  const kickoffDiffHours =
-    Number.isFinite(targetTime) && Number.isFinite(candidateTime)
-      ? Math.abs(candidateTime - targetTime) / 3_600_000
-      : 24;
-  const kickoffScore = Math.max(0, 1 - kickoffDiffHours / 12);
-
-  const competitionScore =
-    input.competition &&
-    normalizeTeamName(fixture.competition.name) ===
-      normalizeTeamName(input.competition)
-      ? 1
-      : 0;
-
-  return home * 0.4 + away * 0.4 + kickoffScore * 0.15 + competitionScore * 0.05;
-}
-
 export class ApiFootballClient {
   private readonly fixturesByDateCache = new Map<string, ProviderFixture[]>();
+  private readonly refusedDates = new Map<string, string>();
   private nextRequestAt = 0;
   private readonly baseUrl: string;
   private readonly minRequestIntervalMs: number;
+  private readonly onResponse: ApiFootballClientOptions["onResponse"];
 
   constructor(
     private readonly apiKey: string,
@@ -347,6 +332,7 @@ export class ApiFootballClient {
   ) {
     if (!apiKey) throw new Error("API_FOOTBALL_API_KEY is required.");
 
+    this.onResponse = options.onResponse;
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
     this.minRequestIntervalMs =
       options.minRequestIntervalMs ?? DEFAULT_MIN_REQUEST_INTERVAL_MS;
@@ -389,6 +375,14 @@ export class ApiFootballClient {
       cache: "no-store",
     });
 
+    this.onResponse?.({
+      path: url.pathname,
+      status: response.status,
+      dailyLimit: headerNumber(response.headers, "x-ratelimit-requests-limit"),
+      dailyRemaining: headerNumber(response.headers, "x-ratelimit-requests-remaining"),
+      minuteRemaining: headerNumber(response.headers, "x-ratelimit-remaining"),
+    });
+
     if (!response.ok) {
       const remainingMinute = response.headers.get("x-ratelimit-remaining");
       const remainingDaily = response.headers.get("x-ratelimit-requests-remaining");
@@ -400,6 +394,30 @@ export class ApiFootballClient {
     }
 
     return (await response.json()) as ApiFootballEnvelope<T>;
+  }
+
+  /** Account plan and daily usage; API-Football does not count this call. */
+  async getAccountStatus(): Promise<{
+    plan: string | null;
+    active: boolean | null;
+    subscriptionEnd: string | null;
+    requestsToday: number | null;
+    dailyLimit: number | null;
+  }> {
+    const envelope = (await this.request<unknown>("/status", {})) as unknown as {
+      response?: {
+        subscription?: { plan?: string; end?: string; active?: boolean };
+        requests?: { current?: number; limit_day?: number };
+      };
+    };
+    const status = Array.isArray(envelope.response) ? undefined : envelope.response;
+    return {
+      plan: status?.subscription?.plan ?? null,
+      active: status?.subscription?.active ?? null,
+      subscriptionEnd: status?.subscription?.end ?? null,
+      requestsToday: status?.requests?.current ?? null,
+      dailyLimit: status?.requests?.limit_day ?? null,
+    };
   }
 
   async getFixtureById(fixtureId: number): Promise<ProviderFixture | null> {
@@ -421,44 +439,78 @@ export class ApiFootballClient {
     fixture: ProviderFixture | null;
     resolution: ProviderFixtureCoverage["fixtureResolution"];
   }> {
+    const [kickoffDate, ...adjacentDates] = kickoffWindowDates(input.kickoffAt);
+
     if (input.apiFootballFixtureId != null) {
+      // A known fixture is looked up in the day lists this client already
+      // fetched (one request per date, shared by every fixture that day) and
+      // fetched by id only when it is not listed there.
+      const knownId = String(input.apiFootballFixtureId);
+      for (const date of kickoffDate ? [kickoffDate, ...adjacentDates] : []) {
+        try {
+          const listed = (await this.fixturesOnDate(date)).find(
+            (fixture) => fixture.providerFixtureId === knownId,
+          );
+          if (listed) return { fixture: listed, resolution: "provided_id" };
+        } catch {
+          // An unreadable day falls through to the by-id lookup.
+        }
+      }
       return {
         fixture: await this.getFixtureById(input.apiFootballFixtureId),
         resolution: "provided_id",
       };
     }
 
-    const date = new Date(input.kickoffAt).toISOString().slice(0, 10);
-    let dateFixtures = this.fixturesByDateCache.get(date);
+    if (!kickoffDate) return { fixture: null, resolution: "not_found" };
 
-    if (!dateFixtures) {
-      const envelope = await this.request<ApiFootballFixtureRow>("/fixtures", {
-        date,
-        timezone: "UTC",
-      });
-      dateFixtures = requireResponse(envelope, "fixture resolution")
-        .map(toProviderFixture)
-        .filter((fixture): fixture is ProviderFixture => fixture != null);
-      this.fixturesByDateCache.set(date, dateFixtures);
+    const candidates = new Map<string, ProviderFixture>();
+    for (const fixture of await this.fixturesOnDate(kickoffDate)) {
+      candidates.set(fixture.providerFixtureId, fixture);
+    }
+    let complete = true;
+    for (const date of adjacentDates) {
+      try {
+        for (const fixture of await this.fixturesOnDate(date)) {
+          candidates.set(fixture.providerFixtureId, fixture);
+        }
+      } catch {
+        complete = false;
+      }
     }
 
-    const candidates = dateFixtures
-      .map((fixture) => ({ fixture, score: fixtureMatchScore(input, fixture) }))
-      .filter(({ score }) => score >= 0.72)
-      .sort((a, b) => b.score - a.score);
-
-    if (candidates.length === 0) {
-      return { fixture: null, resolution: "not_found" };
-    }
-
-    if (
-      candidates.length > 1 &&
-      Math.abs(candidates[0].score - candidates[1].score) < 0.04
-    ) {
+    const selection = selectApiFootballFixture(input, [...candidates.values()]);
+    // An unreadable adjacent date may hide a second candidate: provider ids can
+    // still decide, but a name-only match cannot be shown to be unique.
+    if (!complete && selection.resolution === "name_match") {
       return { fixture: null, resolution: "ambiguous" };
     }
+    return selection;
+  }
 
-    return { fixture: candidates[0].fixture, resolution: "name_match" };
+  /** One provider day of fixtures, cached per client; plan refusals are cached too. */
+  private async fixturesOnDate(date: string): Promise<ProviderFixture[]> {
+    const cached = this.fixturesByDateCache.get(date);
+    if (cached) return cached;
+    const refused = this.refusedDates.get(date);
+    if (refused) throw new Error(refused);
+
+    const envelope = await this.request<ApiFootballFixtureRow>("/fixtures", {
+      date,
+      timezone: "UTC",
+    });
+    let rows: ApiFootballFixtureRow[];
+    try {
+      rows = requireResponse(envelope, "fixture resolution");
+    } catch (error) {
+      this.refusedDates.set(date, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    const fixtures = rows
+      .map(toProviderFixture)
+      .filter((fixture): fixture is ProviderFixture => fixture != null);
+    this.fixturesByDateCache.set(date, fixtures);
+    return fixtures;
   }
 
   async getTeamCompletedMatches(

@@ -1,4 +1,5 @@
 import type { FixtureStructuredFeaturesV1 } from "@/lib/football-features/v1";
+import type { ProviderAnalyticsTeamMetrics } from "./provider-analytics";
 
 export const KAPILOTO_FIXTURE_CARD_V2_VERSION =
   "kapiloto-fixture-card-v2" as const;
@@ -57,6 +58,14 @@ export type FixtureCardInput = {
     cutoffAt: string;
     features: FixtureStructuredFeaturesV1;
   } | null;
+  providerAnalytics?: {
+    provider: "football-il-parse";
+    sourceVersion: string;
+    capturedAt: string;
+    season: string | null;
+    home: ProviderAnalyticsTeamMetrics;
+    away: ProviderAnalyticsTeamMetrics;
+  } | null;
   prior: FixturePriorInput | null;
 };
 
@@ -99,6 +108,14 @@ export type KapilotoFixtureCard = {
       computed_at: string;
       cutoff_at: string;
       features: FixtureStructuredFeaturesV1;
+    };
+    provider_analytics?: {
+      provider: "football-il-parse";
+      source_version: string;
+      captured_at: string;
+      season: string | null;
+      home: ProviderAnalyticsTeamMetrics;
+      away: ProviderAnalyticsTeamMetrics;
     };
     prior: {
       type: FixturePriorInput["type"];
@@ -342,6 +359,20 @@ export function buildKapilotoFixtureCard(
                 input.structuredSnapshot.cutoffAt,
               ).toISOString(),
               features: input.structuredSnapshot.features,
+            },
+          }),
+      ...(input.providerAnalytics == null
+        ? {}
+        : {
+            provider_analytics: {
+              provider: input.providerAnalytics.provider,
+              source_version: input.providerAnalytics.sourceVersion,
+              captured_at: new Date(
+                input.providerAnalytics.capturedAt,
+              ).toISOString(),
+              season: input.providerAnalytics.season,
+              home: input.providerAnalytics.home,
+              away: input.providerAnalytics.away,
             },
           }),
       prior: {

@@ -33,7 +33,7 @@ revoke all on table private.kapiloto_scheduler_desired_state
 from public, anon, authenticated;
 
 -- Seed with the concurrency-guard command from
--- 20261020115000_kapiloto_research_worker_concurrency_guard_v1.sql,
+-- 20261020120216_kapiloto_research_worker_concurrency_guard_v1.sql,
 -- copied verbatim when this draft is promoted. Desired state: PAUSED.
 insert into private.kapiloto_scheduler_desired_state (
   jobname, desired_enabled, schedule, command, paused_reason
@@ -42,7 +42,7 @@ values (
   'kapiloto-research-worker-every-2-min',
   false,
   '*/2 * * * *',
-  '<<copy the $cron$ body from 20261020115000 verbatim>>',
+  '<<copy the $cron$ body from 20261020120216 verbatim>>',
   'Incident 264201: paused pending Sol provider/schema fixes.'
 )
 on conflict (jobname) do nothing;
@@ -197,7 +197,7 @@ grant execute on function public.kapiloto_set_scheduler_desired_enabled(text, bo
 -- call kapiloto_scheduler_reconcile(..., true, 'reconcile:<job>') only when the
 -- desired state is enabled. Never call cron.unschedule directly in a migration.
 
--- Finalization correctness (after 20261021090000_kapiloto_finalization_lifecycle_v1):
+-- Finalization correctness (after 20261022083017_kapiloto_finalization_lifecycle_v1):
 -- the scheduler no longer has to guarantee a single finalizer. The concurrency
 -- guard's "slot 1 sends finalizeRuns=true" remains a cost optimisation only.
 -- kapiloto_claim_run_finalization admits one owner per run (run-row lock +

@@ -309,7 +309,9 @@ test("unsupported directional evidence invalidates p_sol for only that fixture; 
   assert.equal(withheld.evidence[0].status, "rejected");
   assert.equal(withheld.evidence[0].entailment, "unsupported");
   assert.equal(
-    withheld.reliability_reasons.includes("p_sol_invalidated:baseline_form"),
+    withheld.reliability_reasons.includes(
+      "p_sol_invalidated:no_grounded_directional_signal",
+    ),
     true,
   );
   assert.equal(

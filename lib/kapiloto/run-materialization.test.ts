@@ -175,7 +175,7 @@ test("materializes 16 grounded fixtures and assigns a unique deterministic doubl
   assert.equal(first.orientation_verified, true);
 });
 
-test("directional factor with rejected evidence invalidates p_sol and falls back to market only", () => {
+test("rejected secondary evidence is pruned without discarding a still-grounded directional factor", () => {
   const fixtures = round();
   fixtures[0].output.evidence.push({
     evidence_id: "e2",
@@ -214,15 +214,82 @@ test("directional factor with rejected evidence invalidates p_sol and falls back
   const first = result.analyses[0];
 
   assert.equal(first.outcome, "analyzed");
-  assert.equal(first.blend_weight, 0);
-  assert.equal(first.p_sol_1_bp, null);
-  assert.equal(first.p_final_1_bp, first.p_prior_1_bp);
-  assert.deepEqual(first.factors, []);
+  assert.notEqual(first.blend_weight, 0);
+  assert.notEqual(first.p_sol_1_bp, null);
+  assert.notEqual(first.p_final_1_bp, null);
+  assert.deepEqual(first.factors[0].evidence_model_ids, ["e1"]);
   assert.deepEqual(first.availability, []);
   assert.deepEqual(first.conflicts, []);
-  assert.equal(first.double_priority_rank, null);
+  assert.notEqual(first.double_priority_rank, null);
   assert.equal(
-    first.reliability_reasons.includes("p_sol_invalidated:baseline_form"),
+    first.reliability_reasons.includes("secondary_items_removed"),
+    false,
+  );
+});
+
+test("rejected small directional factor in another direction does not invalidate a surviving grounded signal", () => {
+  const fixtures = round();
+  fixtures[0].output.evidence.push({
+    evidence_id: "e2",
+    url: "https://example.com/rejected-draw",
+    quote: "Rejected draw signal",
+    claim: "A weak draw signal was reported.",
+    claim_type: "home_away",
+    about_team: "both",
+    event_time: null,
+  });
+  fixtures[0].output.factors.push({
+    dimension: "home_away_draw",
+    favors: "draw",
+    magnitude: "small",
+    evidence_ids: ["e2"],
+    rationale: "A weak draw signal.",
+  });
+  fixtures[0].grounding = {
+    ...grounding(),
+    rejected: [{ evidenceId: "e2", reason: "document_missing" }],
+  };
+
+  const result = materializeValidatedResearchRound(fixtures);
+  const first = result.analyses[0];
+
+  assert.equal(first.outcome, "analyzed");
+  assert.notEqual(first.p_sol_1_bp, null);
+  assert.notEqual(first.p_final_1_bp, null);
+});
+
+test("rejected medium directional factor still invalidates p_sol", () => {
+  const fixtures = round();
+  fixtures[0].output.evidence.push({
+    evidence_id: "e2",
+    url: "https://example.com/rejected-material",
+    quote: "Rejected material signal",
+    claim: "A material away signal was reported.",
+    claim_type: "availability",
+    about_team: "away",
+    event_time: null,
+  });
+  fixtures[0].output.factors.push({
+    dimension: "availability",
+    favors: "away",
+    magnitude: "medium",
+    evidence_ids: ["e2"],
+    rationale: "A material away signal.",
+  });
+  fixtures[0].grounding = {
+    ...grounding(),
+    rejected: [{ evidenceId: "e2", reason: "document_missing" }],
+  };
+
+  const result = materializeValidatedResearchRound(fixtures);
+  const first = result.analyses[0];
+
+  assert.equal(first.outcome, "analyzed");
+  assert.equal(first.p_sol_1_bp, null);
+  assert.equal(first.blend_weight, 0);
+  assert.equal(first.p_final_1_bp, first.p_prior_1_bp);
+  assert.equal(
+    first.reliability_reasons.includes("p_sol_invalidated:availability"),
     true,
   );
 });
