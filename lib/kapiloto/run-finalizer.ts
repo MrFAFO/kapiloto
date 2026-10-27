@@ -636,10 +636,20 @@ export async function prepareKapilotoRunPublication(
     );
   }
 
+  const researchedIds = new Set(
+    researched.map((fixture) => fixture.fixtureId),
+  );
+  const actuallyDowngradedFixtureIds = materialized.analyses
+    .filter(
+      (analysis) =>
+        researchedIds.has(analysis.fixture_id) &&
+        unsupportedByFixture.has(analysis.fixture_id) &&
+        analysis.p_sol_1_bp == null,
+    )
+    .map((analysis) => analysis.fixture_id)
+    .sort();
+
   if (entailment.checkedEvidenceCount > 0) {
-    const researchedIds = new Set(
-      researched.map((fixture) => fixture.fixtureId),
-    );
     materialized.analyses
       .filter((analysis) => researchedIds.has(analysis.fixture_id))
       .forEach((analysis) => {
@@ -653,12 +663,22 @@ export async function prepareKapilotoRunPublication(
             model: entailment.provenance.model,
             checked_claims: entailment.checkedEvidenceCount,
             unsupported_claims: entailment.unsupported.length,
+            downgraded_fixture_ids: actuallyDowngradedFixtureIds,
           },
         });
       });
   }
 
-  return { materialized, entailment };
+  return {
+    materialized,
+    entailment: {
+      ...entailment,
+      // The verifier only knows that an entailment check failed. V3 policy
+      // decides whether that failure merely prunes a descriptive item or
+      // actually disables Sol for the fixture.
+      downgradedFixtureIds: actuallyDowngradedFixtureIds,
+    },
+  };
 }
 
 /**
