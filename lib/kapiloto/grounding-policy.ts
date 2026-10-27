@@ -4,7 +4,7 @@ import type { GroundedEvidence, GroundingResult } from "./source-grounding";
 import { verifyStructuredFactor } from "./structured-refs";
 
 export const KAPILOTO_GROUNDING_POLICY_VERSION =
-  "kapiloto-grounding-policy-v7" as const;
+  "kapiloto-grounding-policy-v8" as const;
 
 type ResearchFactor = SolFixtureResearchOutput["factors"][number];
 
@@ -135,11 +135,11 @@ export function applyGroundingPolicy(
       supporting.length > 0 || structured?.valid === true;
     const directionalEntailmentPassed =
       factor.favors === "none" ||
-      structured?.valid === true ||
-      supporting.every((item) => item.entailment === "supported");
+      (supporting.length === 0
+        ? structured?.valid === true
+        : supporting.every((item) => item.entailment === "supported"));
     const corroborationPassed =
       factor.magnitude === "small" ||
-      structured?.valid === true ||
       (supporting.length > 0 &&
         materialCorroboration(factor, supporting));
 
