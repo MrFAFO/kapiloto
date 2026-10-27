@@ -198,6 +198,12 @@ Player/coach claims must be consistent with the server's current squad/coach ide
 ### 5. Tactical matchup
 Use only current, evidence-supported tactical characteristics that materially affect 1/X/2.
 
+Research v3 (`kapiloto-research-v3`, see `KAPILOTO-RESEARCH-V3.md`) expresses
+this dimension through sparse enum tactical facts and at most three
+descriptive matchups. A matchup never moves probabilities itself: a
+directional matchup must be linked from exactly one factor, and at most one
+directional `tactical_matchup` factor (max medium) may exist per fixture.
+
 ### 6. Competition context
 - title/relegation/qualification stakes;
 - cup stage;
@@ -261,7 +267,15 @@ Recency policy is versioned/configurable.
 
 Initial guidance:
 - availability: prefer <=72h when kickoff is near;
-- lineups: official current-match sources only;
+- official lineups: official current-match sources only;
+- predicted/expected lineups (research v3): dated sources at most 7 days old at
+  the cutoff and published after the team's latest known match; researched only
+  when the frozen card sets `lineup_research = enabled` (kickoff within 48h of
+  the cutoff); published as predicted, never as official;
+- tactical facts: dated sources at most 45 days old; a directional matchup
+  needs at least one source at most 14 days old;
+- coach/formation regime changes: dated sources at most 180 days old with a
+  real effective date not after the cutoff;
 - coach/club news: usually <=7d;
 - form: current season, with explicit early-season fallback;
 - H2H: recent seasons only and only with structural continuity;

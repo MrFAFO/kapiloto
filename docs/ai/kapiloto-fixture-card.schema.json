@@ -195,6 +195,11 @@
       "type": "string",
       "format": "date-time"
     },
+    "lineup_research": {
+      "type": "string",
+      "enum": ["enabled", "disabled"],
+      "description": "Research v3: enabled only when kickoff - research_cutoff <= 48h. Absent on legacy cards and treated as disabled."
+    },
     "structured": {
       "type": "object",
       "additionalProperties": false,

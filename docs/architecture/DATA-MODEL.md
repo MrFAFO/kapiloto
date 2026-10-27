@@ -578,6 +578,12 @@ Immutable fixture rows published as one complete research-run snapshot.
 - double_gain_score (display/audit value; ordering uses integer ratio comparison)
 - blend_weight
 - deviation_cap_applied
+- expected_lineups, tactical_facts, matchup_analysis, regime_changes: nullable
+  jsonb, research v3 only, written once by the materialization RPC after
+  grounding policy sanitization (null for v1/v2 and for carried-forward rows;
+  lineup status is server-derived). `availability` items may carry sanitized
+  `functions` / `function_evidence_ids` for v3. `kapiloto_factors.matchup_ids`
+  records which descriptive matchups a factor carries.
 - summary
 - main_risk
 - availability
