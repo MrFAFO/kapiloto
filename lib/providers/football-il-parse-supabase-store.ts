@@ -206,8 +206,11 @@ export class SupabaseFootballIlSyncStore implements FootballIlSyncStore {
       );
     }
 
-    const xgTeams = new Set<string>();
-    const gamesTeams = new Set<string>();
+    const captures = new Map<
+      string,
+      { xgTeams: Set<string>; gamesTeams: Set<string> }
+    >();
+
     for (const row of data ?? []) {
       const metadata =
         row.metadata != null && typeof row.metadata === "object"
@@ -216,19 +219,33 @@ export class SupabaseFootballIlSyncStore implements FootballIlSyncStore {
       if (
         metadata.season !== season ||
         typeof row.subject_team_id !== "string" ||
-        !row.subject_team_id
+        !row.subject_team_id ||
+        typeof row.captured_at !== "string" ||
+        !row.captured_at
       ) {
         continue;
       }
 
+      let capture = captures.get(row.captured_at);
+      if (!capture) {
+        capture = {
+          xgTeams: new Set<string>(),
+          gamesTeams: new Set<string>(),
+        };
+        captures.set(row.captured_at, capture);
+      }
+
       if (row.fact_key === "season.xg.expected") {
-        xgTeams.add(row.subject_team_id);
+        capture.xgTeams.add(row.subject_team_id);
       } else if (row.fact_key === "season.games_played") {
-        gamesTeams.add(row.subject_team_id);
+        capture.gamesTeams.add(row.subject_team_id);
       }
     }
 
-    return xgTeams.size >= 2 && gamesTeams.size >= 2;
+    return [...captures.values()].some(
+      (capture) =>
+        capture.xgTeams.size >= 2 && capture.gamesTeams.size >= 2,
+    );
   }
 
   async saveResolvedFixture(
