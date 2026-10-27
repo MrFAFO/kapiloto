@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { KAPILOTO_RELIABILITY_FORMULA_VERSION as DERIVATION_RELIABILITY } from "./derivation";
+import { runKapilotoResearchSchemaPreflight } from "./openai-preflight";
 import { loadPublicFixtureAnalysis } from "./public-analysis";
 import { buildFixtureEtag } from "./read-api";
 import {
@@ -71,6 +72,7 @@ const baseRow = {
 test("public read model is null-tolerant for v1/v2 rows and serializes v3 fields", async () => {
   const legacy = createFakeSupabase({ kapiloto_analyses: [baseRow] });
   const v2 = await loadPublicFixtureAnalysis(legacy.client, "run-1", "game-1", 3);
+  assert.equal(v2?.availability, null);
   assert.equal(v2?.expectedLineups, null);
   assert.equal(v2?.tacticalFacts, null);
   assert.equal(v2?.matchupAnalysis, null);
@@ -86,6 +88,16 @@ test("public read model is null-tolerant for v1/v2 rows and serializes v3 fields
     kapiloto_analyses: [
       {
         ...baseRow,
+        availability: [{
+          team: "away",
+          player_name: "Anchor",
+          status: "out",
+          role: "key_starter",
+          certainty: "confirmed",
+          evidence_ids: ["e1"],
+          functions: ["defensive_anchor"],
+          function_evidence_ids: ["e2"],
+        }],
         expected_lineups: lineups,
         tactical_facts: [],
         matchup_analysis: [],
@@ -94,10 +106,43 @@ test("public read model is null-tolerant for v1/v2 rows and serializes v3 fields
     ],
   });
   const v3 = await loadPublicFixtureAnalysis(current.client, "run-1", "game-1", 3);
+  assert.deepEqual(v3?.availability?.[0]?.functions, ["defensive_anchor"]);
   assert.deepEqual(v3?.expectedLineups, lineups);
   assert.deepEqual(v3?.tacticalFacts, []);
   assert.deepEqual(JSON.parse(JSON.stringify(v3)).expectedLineups, lineups);
   assert.deepEqual(current.forbiddenCalls, []);
+});
+
+test("schema preflight exercises the live research v3 schema", async () => {
+  let request: Record<string, unknown> | null = null;
+  const client = {
+    responses: {
+      create: async (input: Record<string, unknown>) => {
+        request = input;
+        return {
+          id: "resp-preflight",
+          model: "gpt-test",
+          status: "incomplete",
+          usage: { input_tokens: 1, output_tokens: 0 },
+        };
+      },
+    },
+  };
+
+  const result = await runKapilotoResearchSchemaPreflight(client as never, "gpt-test");
+  assert.equal(result.schemaAccepted, true);
+
+  const format = (
+    (request?.text as { format?: Record<string, unknown> } | undefined)?.format
+  ) ?? {};
+  assert.equal(format.name, "kapiloto_fixture_research_v3");
+  const schema = format.schema as {
+    properties?: { protocol_version?: { enum?: string[] } };
+  };
+  assert.deepEqual(
+    schema.properties?.protocol_version?.enum,
+    ["kapiloto-research-v3"],
+  );
 });
 
 test("ETag depends on publication identity/state, not on analysis payload size", () => {
