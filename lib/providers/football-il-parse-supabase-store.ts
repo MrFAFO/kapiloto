@@ -187,6 +187,43 @@ export class SupabaseFootballIlSyncStore implements FootballIlSyncStore {
     });
   }
 
+  async hasFreshSeasonFacts(
+    fixtureId: string,
+    season: string,
+    capturedAfter: string,
+  ): Promise<boolean> {
+    const { data, error } = await this.client
+      .from("fixture_fact_snapshots")
+      .select("subject_team_id,captured_at,metadata")
+      .eq("fixture_id", fixtureId)
+      .eq("provider", "football-il-parse")
+      .eq("fact_key", "season.xg.expected")
+      .gte("captured_at", capturedAfter);
+
+    if (error) {
+      throw new Error(
+        "Failed to inspect football.co.il season facts: " + error.message,
+      );
+    }
+
+    const teams = new Set<string>();
+    for (const row of data ?? []) {
+      const metadata =
+        row.metadata != null && typeof row.metadata === "object"
+          ? (row.metadata as Record<string, unknown>)
+          : {};
+      if (
+        metadata.season === season &&
+        typeof row.subject_team_id === "string" &&
+        row.subject_team_id
+      ) {
+        teams.add(row.subject_team_id);
+      }
+    }
+
+    return teams.size >= 2;
+  }
+
   async saveResolvedFixture(
     snapshot: FootballIlResolvedFixture,
   ): Promise<void> {
