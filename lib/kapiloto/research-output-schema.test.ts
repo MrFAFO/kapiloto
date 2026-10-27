@@ -128,6 +128,8 @@ test("v2 strict schema requires structured_refs on every factor", () => {
       "away.rest",
       "home.table",
       "away.table",
+      "home.attack_xg",
+      "away.attack_xg",
     ],
   );
 });
