@@ -31,6 +31,14 @@ function tierMap(value: Json): Record<string, number | undefined> {
       mapped[key] = raw;
     }
   }
+
+  // Research v3 claim types inherit the nearest established trust policy
+  // until the registry migration seeds explicit values.
+  mapped.lineup ??= mapped.availability ?? mapped.default;
+  mapped.formation ??= mapped.tactical ?? mapped.default;
+  mapped.tactical_setup ??= mapped.tactical ?? mapped.default;
+  mapped.coach_regime ??= mapped.club_coach_news ?? mapped.default;
+
   return mapped;
 }
 
