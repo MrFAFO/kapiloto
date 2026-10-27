@@ -17,11 +17,11 @@ function jsonResponse(body: unknown, status = 200): Response {
 test("FootballIlParseClient sends the pinned snapshot header and normalizes team statistics", async () => {
   const originalFetch = globalThis.fetch;
   let capturedUrl = "";
-  let capturedHeaders: Headers | null = null;
+  let capturedApiKey: string | null = null;\n  let capturedSnapshotVersion: string | null = null;
 
   globalThis.fetch = async (input, init) => {
     capturedUrl = String(input);
-    capturedHeaders = new Headers(init?.headers);
+    const headers = new Headers(init?.headers);\n    capturedApiKey = headers.get("X-API-Key");\n    capturedSnapshotVersion = headers.get("API-Snapshot-Version");
     return jsonResponse({
       status: "success",
       data: {
