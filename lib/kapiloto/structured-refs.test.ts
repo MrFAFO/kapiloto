@@ -257,3 +257,49 @@ test("attack xG structured factors require both sides", () => {
   assert.equal(result.valid, false);
   assert.equal(result.reason, "insufficient_pair");
 });
+
+
+test("mixed form and attack xG refs require every cited family to support the direction", () => {
+  const conflicting = card();
+  if (!conflicting.structured.provider_analytics) {
+    throw new Error("provider analytics missing in fixture");
+  }
+  conflicting.structured.provider_analytics.home.xg_per_match = 1.1;
+  conflicting.structured.provider_analytics.away.xg_per_match = 1.8;
+
+  const result = verifyStructuredFactor(
+    factor(
+      "baseline_form",
+      "home",
+      [
+        "home.form",
+        "away.form",
+        "home.attack_xg",
+        "away.attack_xg",
+      ],
+    ),
+    conflicting,
+  );
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, "direction_mismatch");
+});
+
+test("attack xG refs are rejected outside baseline_form instead of riding along", () => {
+  const result = verifyStructuredFactor(
+    factor(
+      "competition_context",
+      "home",
+      [
+        "home.table",
+        "away.table",
+        "home.attack_xg",
+        "away.attack_xg",
+      ],
+    ),
+    card(),
+  );
+
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, "wrong_dimension");
+});
