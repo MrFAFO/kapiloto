@@ -119,35 +119,36 @@ export function assembleProviderAnalyticsSnapshots(
     throw new Error("Invalid provider analytics cutoff: " + cutoffAt);
   }
 
-  const latestCaptured = new Map<string, string>();
-  for (const row of rows) {
-    const capturedMs = Date.parse(row.captured_at);
-    if (!Number.isFinite(capturedMs) || capturedMs > cutoffMs) continue;
-    const current = latestCaptured.get(row.fixture_id);
-    if (!current || Date.parse(current) < capturedMs) {
-      latestCaptured.set(row.fixture_id, row.captured_at);
-    }
-  }
-
-  const grouped = new Map<
+  const captures = new Map<
     string,
-    {
-      sourceVersion: string;
-      capturedAt: string;
-      season: string | null;
-      teams: Map<string, MutableMetrics>;
-    }
+    Map<
+      string,
+      {
+        sourceVersion: string;
+        capturedAt: string;
+        season: string | null;
+        teams: Map<string, MutableMetrics>;
+      }
+    >
   >();
 
   for (const row of rows) {
+    const capturedMs = Date.parse(row.captured_at);
     if (
       row.subject_team_id == null ||
-      latestCaptured.get(row.fixture_id) !== row.captured_at
+      !Number.isFinite(capturedMs) ||
+      capturedMs > cutoffMs
     ) {
       continue;
     }
 
-    let group = grouped.get(row.fixture_id);
+    let fixtureCaptures = captures.get(row.fixture_id);
+    if (!fixtureCaptures) {
+      fixtureCaptures = new Map();
+      captures.set(row.fixture_id, fixtureCaptures);
+    }
+
+    let group = fixtureCaptures.get(row.captured_at);
     if (!group) {
       const season =
         typeof row.metadata?.season === "string"
@@ -159,7 +160,7 @@ export function assembleProviderAnalyticsSnapshots(
         season,
         teams: new Map(),
       };
-      grouped.set(row.fixture_id, group);
+      fixtureCaptures.set(row.captured_at, group);
     }
 
     let metrics = group.teams.get(row.subject_team_id);
@@ -171,21 +172,34 @@ export function assembleProviderAnalyticsSnapshots(
   }
 
   const output = new Map<string, FixtureProviderAnalyticsSnapshot>();
-  for (const [fixtureId, group] of grouped) {
-    const teams = [...group.teams.values()]
-      .map(finalize)
-      .filter((team) => team.xg_expected != null);
 
-    if (teams.length < 2) continue;
+  for (const [fixtureId, fixtureCaptures] of captures) {
+    const ordered = [...fixtureCaptures.values()].sort(
+      (a, b) => Date.parse(b.capturedAt) - Date.parse(a.capturedAt),
+    );
 
-    output.set(fixtureId, {
-      fixture_id: fixtureId,
-      provider: "football-il-parse",
-      source_version: group.sourceVersion,
-      captured_at: group.capturedAt,
-      season: group.season,
-      teams,
-    });
+    for (const group of ordered) {
+      const teams = [...group.teams.values()].map(finalize);
+      const complete = teams.filter(
+        (team) =>
+          team.xg_expected != null &&
+          team.games_played != null &&
+          team.games_played > 0 &&
+          team.xg_per_match != null,
+      );
+
+      if (complete.length !== 2) continue;
+
+      output.set(fixtureId, {
+        fixture_id: fixtureId,
+        provider: "football-il-parse",
+        source_version: group.sourceVersion,
+        captured_at: group.capturedAt,
+        season: group.season,
+        teams: complete,
+      });
+      break;
+    }
   }
 
   return output;
