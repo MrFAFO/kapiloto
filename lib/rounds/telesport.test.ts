@@ -6,6 +6,7 @@ import {
   normalizeTelesportCompetition,
   parseTelesportWinner16Html,
   parseTelesportWinner16StateHtml,
+  TelesportWinner16Provider,
 } from "./telesport";
 
 function row(
@@ -179,4 +180,129 @@ test("treats unknown scored Telesport states as under review", () => {
   assert.equal(parsed.games[0].status, "under_review");
   assert.equal(parsed.games[0].homeScore, 3);
   assert.equal(parsed.games[0].awayScore, 0);
+});
+
+
+function modernDocument(lines: string[]): string {
+  return `
+    <html>
+      <head>
+        <style>.hidden { display: none; }</style>
+        <script>window.fake = "מחזור: 999999";</script>
+      </head>
+      <body>
+        ${lines.map((line) => `<div><span>${line}</span></div>`).join("")}
+      </body>
+    </html>
+  `;
+}
+
+function modernRoundLines(): string[] {
+  const lines = [
+    "טוטו Winner 16",
+    "מחזור נוכחי",
+    "מחזור: 264301",
+  ];
+
+  const competitions = new Map<number, string>([
+    [1, "ישראל - ליגת Winner"],
+    [5, "ישראל - ליגה לאומית"],
+    [7, "אנגליה - פרמייר ליג"],
+    [11, "ספרד - לה ליגה"],
+    [15, "איטליה - סרייה א'"],
+  ]);
+
+  for (let gameNumber = 1; gameNumber <= 16; gameNumber += 1) {
+    const competition = competitions.get(gameNumber);
+    if (competition) lines.push(competition);
+    lines.push(
+      String(gameNumber),
+      gameNumber === 1 ? "02/11 20:30" : "31/10 17:00",
+      `בית מודרני ${gameNumber}`,
+      "-",
+      `חוץ מודרני ${gameNumber}`,
+      "?",
+    );
+  }
+
+  return lines;
+}
+
+test("parses the modern Telesport Winner 16 text layout and ignores script decoys", () => {
+  const parsed = parseTelesportWinner16Html(
+    modernDocument(modernRoundLines()),
+    new Date("2026-10-27T12:00:00Z"),
+  );
+
+  assert.equal(parsed.externalRoundNumber, "264301");
+  assert.equal(parsed.games.length, 16);
+  assert.equal(parsed.games[0].homeTeam, "בית מודרני 1");
+  assert.equal(parsed.games[0].awayTeam, "חוץ מודרני 1");
+  assert.equal(parsed.games[0].competition.canonicalName, "Ligat Ha'al");
+  assert.equal(parsed.games[4].competition.sourceLabel, "ישראל - ליגה לאומית");
+  assert.equal(parsed.games[6].competition.canonicalName, "Premier League");
+  assert.equal(parsed.games[10].competition.canonicalName, "La Liga");
+  assert.equal(parsed.games[14].competition.canonicalName, "Serie A");
+  assert.equal(parsed.games[0].kickoffAt, "2026-11-02T18:30:00.000Z");
+  assert.equal(parsed.completeKickoffs, true);
+});
+
+test("parses modern live, finished and upcoming Winner 16 state", () => {
+  const lines = modernRoundLines();
+  const firstGame = lines.indexOf("1");
+  lines.splice(
+    firstGame,
+    6,
+    "1",
+    "37'",
+    "בית מודרני 1",
+    "1 - 0",
+    "חוץ מודרני 1",
+    "1",
+  );
+
+  const secondGame = lines.indexOf("2", firstGame + 1);
+  lines.splice(
+    secondGame,
+    6,
+    "2",
+    "הסתיים",
+    "בית מודרני 2",
+    "1 - 2",
+    "חוץ מודרני 2",
+    "2",
+  );
+
+  const parsed = parseTelesportWinner16StateHtml(modernDocument(lines));
+
+  assert.equal(parsed.externalRoundNumber, "264301");
+  assert.equal(parsed.games[0].status, "live");
+  assert.equal(parsed.games[0].homeScore, 1);
+  assert.equal(parsed.games[0].awayScore, 0);
+  assert.equal(parsed.games[0].outcome, "1");
+  assert.equal(parsed.games[1].status, "finished");
+  assert.equal(parsed.games[1].homeScore, 1);
+  assert.equal(parsed.games[1].awayScore, 2);
+  assert.equal(parsed.games[1].outcome, "2");
+  assert.equal(parsed.games[2].status, "upcoming");
+  assert.equal(parsed.games[2].homeScore, null);
+});
+
+test("default Telesport provider fetches the current winner-16 endpoint", async () => {
+  let requestedUrl = "";
+  const html = modernDocument(modernRoundLines());
+
+  const provider = new TelesportWinner16Provider({
+    now: () => new Date("2026-10-27T12:00:00Z"),
+    fetch: async (input) => {
+      requestedUrl = input;
+      return new Response(html, { status: 200 });
+    },
+  });
+
+  const discovery = await provider.discoverCurrent();
+
+  assert.equal(requestedUrl, "https://www.telesport.co.il/winner-16");
+  assert.equal(discovery.externalRoundNumber, "264301");
+  assert.equal(discovery.games.length, 16);
 });
