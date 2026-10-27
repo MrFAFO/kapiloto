@@ -85,6 +85,35 @@ function seasonRow(
   };
 }
 
+function validStandings() {
+  return {
+    RegularSeason: [
+      {
+        id: 4530,
+        position: 2,
+        points: 19,
+        wins: 6,
+        draws: 1,
+        losses: 1,
+        goalsScored: 18,
+        goalsReceived: 5,
+        gamesCount: 8,
+      },
+      {
+        id: 4539,
+        position: 4,
+        points: 18,
+        wins: 5,
+        draws: 3,
+        losses: 0,
+        goalsScored: 20,
+        goalsReceived: 14,
+        gamesCount: 8,
+      },
+    ],
+  };
+}
+
 test("maps supported Israeli competitions and derives the football season from kickoff", () => {
   assert.equal(footballIlTournamentId("Ligat Ha'al"), 902);
   assert.equal(footballIlTournamentId("ישראל - ליגה לאומית"), 719);
@@ -159,6 +188,11 @@ test("resolves an Israeli fixture by exact team identity plus kickoff and stores
       assert.equal(season, "26/27");
       return { stats: [seasonRow(teamId)] };
     },
+    async getLeagueStandings(season, tournamentId) {
+      assert.equal(season, "26/27");
+      assert.equal(tournamentId, 902);
+      return validStandings();
+    },
   };
 
   const result = await syncFootballIlRoundAnalytics(
@@ -232,6 +266,9 @@ test("an existing provider fixture mapping bypasses discovery calls", async () =
     async getTeamStatistics(_season, teamId) {
       return { stats: [seasonRow(teamId)] };
     },
+    async getLeagueStandings() {
+      return validStandings();
+    },
   };
 
   const result = await syncFootballIlRoundAnalytics(
@@ -296,6 +333,10 @@ test("a team that has no exact canonical or alias match is not guessed", async (
     async getTeamStatistics() {
       statsCalls += 1;
       return { stats: [] };
+    },
+    async getLeagueStandings() {
+      statsCalls += 1;
+      return validStandings();
     },
   };
 
@@ -363,6 +404,10 @@ test("fresh season facts skip all Parse calls for the fixture", async () => {
     async getTeamStatistics() {
       providerCalls += 1;
       return { stats: [] };
+    },
+    async getLeagueStandings() {
+      providerCalls += 1;
+      return validStandings();
     },
   };
 
