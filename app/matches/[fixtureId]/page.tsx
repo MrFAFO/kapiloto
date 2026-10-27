@@ -718,7 +718,7 @@ export default async function MatchPage({
                 <p className="mt-1 text-[8px] leading-4 text-[var(--muted)]">
                   מוצגים רק פרטים שעברו אימות מקורות. הרכב חלקי אינו מושלם באמצעות ניחוש.
                 </p>
-                <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="mt-3 grid grid-cols-1 gap-2 min-[410px]:grid-cols-2">
                   {[
                     [home, homeLineup],
                     [away, awayLineup],
