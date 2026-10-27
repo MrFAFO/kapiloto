@@ -194,7 +194,7 @@ export class SupabaseFootballIlSyncStore implements FootballIlSyncStore {
   ): Promise<boolean> {
     const { data, error } = await this.client
       .from("fixture_fact_snapshots")
-      .select("subject_team_id,captured_at,metadata")
+      .select("fact_key,subject_team_id,captured_at,metadata")
       .eq("fixture_id", fixtureId)
       .eq("provider", "football-il-parse")
       .in("fact_key", ["season.xg.expected", "season.games_played"])
