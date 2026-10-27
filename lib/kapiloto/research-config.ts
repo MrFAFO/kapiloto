@@ -1,0 +1,109 @@
+import { createHash } from "node:crypto";
+
+import researchOutputSchema from "@/docs/ai/kapiloto-research-output.schema.json";
+
+import { KAPILOTO_SOL_SYSTEM_PROMPT } from "./research-prompt";
+import type { KapilotoRunConfig } from "./research-request-service";
+import type { KapilotoSolReasoningEffort } from "./openai-research";
+
+export const KAPILOTO_RESEARCH_PROTOCOL_VERSION = "kapiloto-research-v2";
+export const KAPILOTO_DERIVATION_VERSION = "kapiloto-derivation-v4";
+export const KAPILOTO_SOURCE_POLICY_VERSION = "kapiloto-source-v4";
+export const KAPILOTO_RECENCY_POLICY_VERSION = "kapiloto-recency-v1";
+export const KAPILOTO_RELIABILITY_FORMULA_VERSION =
+  "kapiloto-reliability-shadow-v4";
+export const KAPILOTO_BLEND_POLICY_VERSION = "kapiloto-blend-shadow-v2";
+
+export type KapilotoEnv = Readonly<Record<string, string | undefined>>;
+
+export function sha256Text(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+export const KAPILOTO_PROMPT_TEMPLATE_SHA256 = sha256Text(
+  KAPILOTO_SOL_SYSTEM_PROMPT,
+);
+
+/**
+ * Hash of the strict output schema actually sent to Sol. Recorded per attempt
+ * because the schema can change while a frozen run is still executing.
+ */
+export const KAPILOTO_RESEARCH_SCHEMA_SHA256 = sha256Text(
+  JSON.stringify(researchOutputSchema),
+);
+
+function parsePositiveInteger(
+  raw: string | undefined,
+  fallback: number,
+  field: string,
+): number {
+  if (raw == null || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${field} must be a positive integer.`);
+  }
+  return value;
+}
+
+export function getKapilotoOpenAIModel(
+  env: KapilotoEnv = process.env,
+): string {
+  const model = env.KAPILOTO_OPENAI_MODEL?.trim();
+  if (!model) {
+    throw new Error(
+      "KAPILOTO_OPENAI_MODEL is required; the exact Sol model id is server configuration.",
+    );
+  }
+  return model;
+}
+
+export function getKapilotoReasoningEffort(
+  env: KapilotoEnv = process.env,
+): KapilotoSolReasoningEffort {
+  // Medium by default: high effort plus high-context web search and the full
+  // structured output did not fit one synchronous serverless invocation.
+  const effort = (env.KAPILOTO_OPENAI_REASONING_EFFORT ?? "medium").trim();
+  if (effort !== "low" && effort !== "medium" && effort !== "high") {
+    throw new Error(
+      "KAPILOTO_OPENAI_REASONING_EFFORT must be low, medium, or high.",
+    );
+  }
+  return effort;
+}
+
+export function getApiFootballMinRequestIntervalMs(
+  env: KapilotoEnv = process.env,
+): number {
+  const raw = env.API_FOOTBALL_MIN_REQUEST_INTERVAL_MS;
+  if (raw == null || raw.trim() === "") return 6_500;
+
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(
+      "API_FOOTBALL_MIN_REQUEST_INTERVAL_MS must be a non-negative number.",
+    );
+  }
+  return value;
+}
+
+export function getKapilotoRunConfig(
+  env: KapilotoEnv = process.env,
+): KapilotoRunConfig {
+  return {
+    modelKey: getKapilotoOpenAIModel(env),
+    researchProtocolVersion: KAPILOTO_RESEARCH_PROTOCOL_VERSION,
+    derivationVersion: KAPILOTO_DERIVATION_VERSION,
+    sourcePolicyVersion: KAPILOTO_SOURCE_POLICY_VERSION,
+    recencyPolicyVersion: KAPILOTO_RECENCY_POLICY_VERSION,
+    reliabilityFormulaVersion: KAPILOTO_RELIABILITY_FORMULA_VERSION,
+    blendPolicyVersion: KAPILOTO_BLEND_POLICY_VERSION,
+    calibrationVersion: null,
+    promptTemplateSha256: KAPILOTO_PROMPT_TEMPLATE_SHA256,
+    executionTopology: "fixture_fanout",
+    maxAttemptsPerTask: parsePositiveInteger(
+      env.KAPILOTO_MAX_ATTEMPTS_PER_TASK,
+      3,
+      "KAPILOTO_MAX_ATTEMPTS_PER_TASK",
+    ),
+  };
+}

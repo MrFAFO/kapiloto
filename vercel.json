@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/internal/cron/round-sync",
+      "schedule": "17 5 * * *"
+    },
+    {
+      "path": "/api/internal/cron/structured-sync",
+      "schedule": "22 5 * * *"
+    },
+    {
+      "path": "/api/internal/cron/market-sync",
+      "schedule": "32 5 * * *"
+    }
+  ]
+}

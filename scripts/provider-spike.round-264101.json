@@ -1,0 +1,270 @@
+[
+  {
+    "gameNumber": 1,
+    "homeTeam": "בית\"ר ירושלים",
+    "awayTeam": "מכבי תל אביב",
+    "kickoffAt": "2026-10-19T20:30:00+03:00",
+    "competition": "Ligat Ha'al",
+    "aliases": {
+      "home": [
+        "Beitar Jerusalem",
+        "Beitar Jerusalem FC"
+      ],
+      "away": [
+        "Maccabi Tel Aviv",
+        "Maccabi Tel-Aviv"
+      ]
+    }
+  },
+  {
+    "gameNumber": 2,
+    "homeTeam": "מכבי נתניה",
+    "awayTeam": "הפועל קרית שמונה",
+    "kickoffAt": "2026-10-17T19:15:00+03:00",
+    "competition": "Ligat Ha'al",
+    "aliases": {
+      "home": [
+        "Maccabi Netanya"
+      ],
+      "away": [
+        "Ironi Kiryat Shmona",
+        "Hapoel Kiryat Shmona"
+      ]
+    }
+  },
+  {
+    "gameNumber": 3,
+    "homeTeam": "בני סכנין",
+    "awayTeam": "הפועל פתח תקווה",
+    "kickoffAt": "2026-10-17T19:15:00+03:00",
+    "competition": "Ligat Ha'al",
+    "aliases": {
+      "home": [
+        "Bnei Sakhnin"
+      ],
+      "away": [
+        "Hapoel Petah Tikva",
+        "Hapoel Petach Tikva"
+      ]
+    }
+  },
+  {
+    "gameNumber": 4,
+    "homeTeam": "הפועל חיפה",
+    "awayTeam": "הפועל רמת גן",
+    "kickoffAt": "2026-10-17T19:00:00+03:00",
+    "competition": "Ligat Ha'al",
+    "aliases": {
+      "home": [
+        "Hapoel Haifa"
+      ],
+      "away": [
+        "Hapoel Ramat Gan",
+        "Hapoel Ramat-Gan"
+      ]
+    }
+  },
+  {
+    "gameNumber": 5,
+    "homeTeam": "מכבי בני ריינה",
+    "awayTeam": "הפועל ראשון לציון",
+    "kickoffAt": "2026-10-19T19:00:00+03:00",
+    "competition": "Liga Leumit",
+    "aliases": {
+      "home": [
+        "Maccabi Bnei Raina",
+        "Maccabi Bnei Reineh",
+        "Maccabi Bnei Reine"
+      ],
+      "away": [
+        "Hapoel Rishon LeZion",
+        "Hapoel Rishon Lezion"
+      ]
+    }
+  },
+  {
+    "gameNumber": 6,
+    "homeTeam": "ברנטפורד",
+    "awayTeam": "ליברפול",
+    "kickoffAt": "2026-10-17T17:00:00+03:00",
+    "competition": "Premier League",
+    "aliases": {
+      "home": [
+        "Brentford"
+      ],
+      "away": [
+        "Liverpool"
+      ]
+    }
+  },
+  {
+    "gameNumber": 7,
+    "homeTeam": "בורנמות'",
+    "awayTeam": "סנדרלנד",
+    "kickoffAt": "2026-10-18T16:00:00+03:00",
+    "competition": "Premier League",
+    "aliases": {
+      "home": [
+        "Bournemouth",
+        "AFC Bournemouth"
+      ],
+      "away": [
+        "Sunderland"
+      ]
+    }
+  },
+  {
+    "gameNumber": 8,
+    "homeTeam": "לידס",
+    "awayTeam": "מנצ'סטר יונייטד",
+    "kickoffAt": "2026-10-18T16:00:00+03:00",
+    "competition": "Premier League",
+    "aliases": {
+      "home": [
+        "Leeds",
+        "Leeds United"
+      ],
+      "away": [
+        "Manchester United",
+        "Man United"
+      ]
+    }
+  },
+  {
+    "gameNumber": 9,
+    "homeTeam": "סלטה ויגו",
+    "awayTeam": "אלאבס",
+    "kickoffAt": "2026-10-18T17:15:00+03:00",
+    "competition": "La Liga",
+    "aliases": {
+      "home": [
+        "Celta Vigo",
+        "Celta de Vigo"
+      ],
+      "away": [
+        "Alaves",
+        "Deportivo Alaves"
+      ]
+    }
+  },
+  {
+    "gameNumber": 10,
+    "homeTeam": "מלאגה",
+    "awayTeam": "ריאל סוסיאדד",
+    "kickoffAt": "2026-10-18T19:30:00+03:00",
+    "competition": "La Liga",
+    "aliases": {
+      "home": [
+        "Malaga",
+        "Malaga CF"
+      ],
+      "away": [
+        "Real Sociedad"
+      ]
+    }
+  },
+  {
+    "gameNumber": 11,
+    "homeTeam": "מונזה",
+    "awayTeam": "קליארי",
+    "kickoffAt": "2026-10-19T19:30:00+03:00",
+    "competition": "Serie A",
+    "aliases": {
+      "home": [
+        "Monza",
+        "AC Monza"
+      ],
+      "away": [
+        "Cagliari"
+      ]
+    }
+  },
+  {
+    "gameNumber": 12,
+    "homeTeam": "אלברסברג",
+    "awayTeam": "אוגסבורג",
+    "kickoffAt": "2026-10-17T16:30:00+03:00",
+    "competition": "Bundesliga",
+    "aliases": {
+      "home": [
+        "Elversberg",
+        "SV Elversberg"
+      ],
+      "away": [
+        "Augsburg",
+        "FC Augsburg"
+      ]
+    }
+  },
+  {
+    "gameNumber": 13,
+    "homeTeam": "שאלקה 04",
+    "awayTeam": "מיינץ",
+    "kickoffAt": "2026-10-17T16:30:00+03:00",
+    "competition": "Bundesliga",
+    "aliases": {
+      "home": [
+        "Schalke 04",
+        "FC Schalke 04"
+      ],
+      "away": [
+        "Mainz",
+        "Mainz 05",
+        "1. FSV Mainz 05"
+      ]
+    }
+  },
+  {
+    "gameNumber": 14,
+    "homeTeam": "מנשנגלדבאך",
+    "awayTeam": "הופנהיים",
+    "kickoffAt": "2026-10-18T18:30:00+03:00",
+    "competition": "Bundesliga",
+    "aliases": {
+      "home": [
+        "Borussia Monchengladbach",
+        "Borussia Mönchengladbach",
+        "Monchengladbach"
+      ],
+      "away": [
+        "Hoffenheim",
+        "TSG Hoffenheim"
+      ]
+    }
+  },
+  {
+    "gameNumber": 15,
+    "homeTeam": "לה האבר",
+    "awayTeam": "אוקזר",
+    "kickoffAt": "2026-10-18T18:15:00+03:00",
+    "competition": "Ligue 1",
+    "aliases": {
+      "home": [
+        "Le Havre",
+        "Le Havre AC"
+      ],
+      "away": [
+        "Auxerre",
+        "AJ Auxerre"
+      ]
+    }
+  },
+  {
+    "gameNumber": 16,
+    "homeTeam": "פאריס",
+    "awayTeam": "ראן",
+    "kickoffAt": "2026-10-18T18:15:00+03:00",
+    "competition": "Ligue 1",
+    "aliases": {
+      "home": [
+        "Paris FC",
+        "Paris"
+      ],
+      "away": [
+        "Rennes",
+        "Stade Rennais",
+        "Stade Rennais FC"
+      ]
+    }
+  }
+]

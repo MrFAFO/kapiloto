@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Kapiloto Fixture Card v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixture_card_version",
+    "fixture_key",
+    "fixture_id",
+    "round_game_id",
+    "toto_number",
+    "settlement",
+    "orientation",
+    "teams",
+    "competition",
+    "kickoff_at",
+    "neutral_venue",
+    "research_cutoff_at",
+    "structured"
+  ],
+  "properties": {
+    "fixture_card_version": {
+      "type": "string",
+      "enum": [
+        "kapiloto-fixture-card-v2"
+      ]
+    },
+    "fixture_key": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "fixture_id": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "round_game_id": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "toto_number": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16
+    },
+    "settlement": {
+      "type": "string",
+      "enum": [
+        "result_after_90_minutes_including_stoppage_time"
+      ]
+    },
+    "orientation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "1",
+        "2"
+      ],
+      "properties": {
+        "1": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "2": {
+          "type": "string",
+          "maxLength": 100
+        }
+      }
+    },
+    "teams": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "home",
+        "away"
+      ],
+      "properties": {
+        "home": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "names"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "names": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "type": "string",
+                "maxLength": 120
+              }
+            }
+          }
+        },
+        "away": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "names"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "names": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "type": "string",
+                "maxLength": 120
+              }
+            }
+          }
+        }
+      }
+    },
+    "competition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "stage",
+        "leg",
+        "aggregate"
+      ],
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "stage": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "leg": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 2
+        },
+        "aggregate": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "home",
+            "away"
+          ],
+          "properties": {
+            "home": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 99
+            },
+            "away": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 99
+            }
+          }
+        }
+      }
+    },
+    "kickoff_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "neutral_venue": {
+      "type": "boolean"
+    },
+    "research_cutoff_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "structured": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "table_snapshot_id",
+        "recent_matches",
+        "squad_snapshot_id",
+        "coach",
+        "prior"
+      ],
+      "properties": {
+        "table_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "recent_matches": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "type": "object"
+          }
+        },
+        "squad_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "coach": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 140
+        },
+        "prior": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "snapshot_id",
+            "captured_at",
+            "p_home_bp",
+            "p_draw_bp",
+            "p_away_bp"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "market",
+                "rating",
+                "league_base"
+              ]
+            },
+            "snapshot_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 100
+            },
+            "captured_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "p_home_bp": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "p_draw_bp": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "p_away_bp": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        }
+      }
+    }
+  }
+}
