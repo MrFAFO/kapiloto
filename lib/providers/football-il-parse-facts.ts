@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { FootballIlTeamStatistics } from "./football-il-parse";
+import {
+  validateFootballIlStandings,
+  type FootballIlStandingRow,
+  type FootballIlStandings,
+  type FootballIlTeamStatistics,
+} from "./football-il-parse";
 
 export type FootballIlFactTeam = {
   canonicalTeamId: string;
@@ -301,6 +306,120 @@ export async function ingestFootballIlSeasonAnalytics(
     rawRows: rows.length,
     factsWritten,
   };
+}
+
+function trustedStandingForTeam(
+  standings: FootballIlStandings,
+  teamId: number,
+): { stage: string; row: FootballIlStandingRow } | null {
+  const candidates: Array<{ stage: string; row: FootballIlStandingRow }> = [];
+
+  for (const [stage, rows] of Object.entries(standings)) {
+    const validation = validateFootballIlStandings(
+      { [stage]: rows },
+      { requirePlayedMatches: true },
+    );
+    if (!validation.trustworthy) continue;
+
+    const row = rows.find((item) => item.id === teamId);
+    if (row) candidates.push({ stage, row });
+  }
+
+  return candidates.sort(
+    (a, b) =>
+      b.row.gamesCount - a.row.gamesCount ||
+      b.row.points - a.row.points,
+  )[0] ?? null;
+}
+
+export function buildFootballIlStandingFacts(
+  context: FootballIlFactContext,
+  season: string,
+  tournamentId: number,
+  standings: FootballIlStandings,
+): FootballIlFixtureFactInsert[] {
+  const output: FootballIlFixtureFactInsert[] = [];
+  const teams = [
+    Number(context.home.providerTeamId),
+    Number(context.away.providerTeamId),
+  ];
+
+  const metrics = [
+    ["season.games_played", "gamesCount", "matches"],
+    ["season.table.position", "position", "position"],
+    ["season.table.points", "points", "points"],
+    ["season.table.goal_difference", "goalDifference", "goals"],
+  ] as const;
+
+  for (const teamId of teams) {
+    if (!Number.isInteger(teamId) || teamId <= 0) continue;
+    const selected = trustedStandingForTeam(standings, teamId);
+    if (!selected) continue;
+
+    const subject = subjectForTeam(teamId, context);
+    const values: Record<string, number> = {
+      gamesCount: selected.row.gamesCount,
+      position: selected.row.position,
+      points: selected.row.points,
+      goalDifference:
+        selected.row.goalsScored - selected.row.goalsReceived,
+    };
+
+    for (const [factKey, rawField, unit] of metrics) {
+      const value = values[rawField];
+      output.push({
+        fixture_id: context.fixtureId,
+        fact_key: factKey,
+        ...subject,
+        value_numeric: value,
+        value_text: null,
+        value_boolean: null,
+        value_json: null,
+        unit,
+        provenance_type: "provider_raw",
+        provider: "football-il-parse",
+        provider_endpoint:
+          "get_league_standings?season=" +
+          encodeURIComponent(season) +
+          "&tournament_id=" +
+          tournamentId,
+        provider_record_id: [
+          "standings",
+          season,
+          tournamentId,
+          selected.stage,
+          teamId,
+          rawField,
+        ].join(":"),
+        calculation_version: null,
+        source_observed_at: null,
+        captured_at: context.capturedAt,
+        source_version: "football-il-parse-v11",
+        source_fingerprint: fingerprint([
+          "football-il-parse",
+          "v11",
+          "standings",
+          season,
+          tournamentId,
+          selected.stage,
+          teamId,
+          rawField,
+          value,
+        ]),
+        metadata: {
+          provider_team_id: teamId,
+          raw_field: rawField,
+          season,
+          tournament_id: tournamentId,
+          stage: selected.stage,
+          scope: "season_standings",
+          validator: "football-il-standings-v1",
+        },
+      });
+    }
+  }
+
+  return output;
 }
 
 export async function ingestFootballIlMatchAnalytics(
