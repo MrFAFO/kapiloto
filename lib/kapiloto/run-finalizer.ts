@@ -311,6 +311,13 @@ function materializedSource(row: AnalysisRow): CarryForwardSource {
       summary: row.summary,
       main_risk: row.main_risk,
       availability: jsonArray(row.availability) as SolFixtureResearchOutput["availability"],
+      // Carry-forward deliberately drops time-sensitive V3 tactical detail.
+      // A stale predicted XI must never be presented as current after the
+      // source run's cutoff.
+      expected_lineups: null,
+      tactical_facts: null,
+      matchup_analysis: null,
+      regime_changes: null,
       dimension_coverage: jsonArray(row.dimension_coverage) as SolFixtureResearchOutput["dimension_coverage"],
       conflicts: jsonArray(row.conflicts) as SolFixtureResearchOutput["conflicts"],
       watch_items: jsonArray(row.watch_items) as SolFixtureResearchOutput["watch_items"],
