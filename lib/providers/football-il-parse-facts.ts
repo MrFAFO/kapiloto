@@ -46,6 +46,13 @@ export interface FootballIlMatchAnalyticsSource {
   ): Promise<{ stats: FootballIlTeamStatistics[] }>;
 }
 
+export interface FootballIlSeasonAnalyticsSource {
+  getTeamStatistics(
+    season: string,
+    teamId: number,
+  ): Promise<{ stats: FootballIlTeamStatistics[] }>;
+}
+
 export interface FootballIlFactStore {
   saveFacts(facts: FootballIlFixtureFactInsert[]): Promise<number>;
 }
@@ -189,6 +196,111 @@ export function buildFootballIlMatchFacts(
   }
 
   return facts;
+}
+
+export function buildFootballIlSeasonFacts(
+  context: FootballIlFactContext,
+  rows: FootballIlTeamStatistics[],
+): FootballIlFixtureFactInsert[] {
+  const facts: FootballIlFixtureFactInsert[] = [];
+
+  for (const row of rows) {
+    if (!Number.isFinite(row.teamId) || !row.seasonName) continue;
+
+    const subject = subjectForTeam(row.teamId, context);
+
+    for (const metric of MATCH_METRICS) {
+      const value = finiteMetric(row, metric.field);
+      if (value == null) continue;
+
+      facts.push({
+        fixture_id: context.fixtureId,
+        fact_key: `season.${metric.factKey}`,
+        ...subject,
+        value_numeric: value,
+        value_text: null,
+        value_boolean: null,
+        value_json: null,
+        unit: metric.unit,
+        provenance_type: "provider_raw",
+        provider: "football-il-parse",
+        provider_endpoint:
+          `get_team_statistics?season=${encodeURIComponent(row.seasonName)}&team_id=${row.teamId}`,
+        provider_record_id: [
+          "season",
+          row.seasonName,
+          row.teamId,
+          metric.field,
+        ].join(":"),
+        calculation_version: null,
+        source_observed_at: null,
+        captured_at: context.capturedAt,
+        source_version: "football-il-parse-v11",
+        source_fingerprint: fingerprint([
+          "football-il-parse",
+          "v11",
+          "season",
+          row.seasonName,
+          row.teamId,
+          metric.field,
+          value,
+        ]),
+        metadata: {
+          provider_team_id: row.teamId,
+          raw_field: metric.field,
+          season: row.seasonName,
+          tournament_id: row.tournamentId ?? null,
+          stage: row.stage ?? null,
+          scope: "season",
+        },
+      });
+    }
+  }
+
+  return facts;
+}
+
+export async function ingestFootballIlSeasonAnalytics(
+  source: FootballIlSeasonAnalyticsSource,
+  store: FootballIlFactStore,
+  context: FootballIlFactContext,
+  season: string,
+): Promise<{
+  rawRows: number;
+  factsWritten: number;
+}> {
+  const teamIds = [
+    Number(context.home.providerTeamId),
+    Number(context.away.providerTeamId),
+  ];
+
+  if (
+    teamIds.some(
+      (teamId) => !Number.isInteger(teamId) || teamId <= 0,
+    )
+  ) {
+    throw new Error(
+      "football.co.il Parse team ids must be positive integers.",
+    );
+  }
+
+  const rows: FootballIlTeamStatistics[] = [];
+  for (const teamId of teamIds) {
+    const response = await source.getTeamStatistics(season, teamId);
+    rows.push(
+      ...response.stats.filter(
+        (row) => row.teamId === teamId && row.seasonName === season,
+      ),
+    );
+  }
+
+  const facts = buildFootballIlSeasonFacts(context, rows);
+  const factsWritten = await store.saveFacts(facts);
+
+  return {
+    rawRows: rows.length,
+    factsWritten,
+  };
 }
 
 export async function ingestFootballIlMatchAnalytics(
