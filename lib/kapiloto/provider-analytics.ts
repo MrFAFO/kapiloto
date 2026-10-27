@@ -128,6 +128,8 @@ export function assembleProviderAnalyticsSnapshots(
         capturedAt: string;
         season: string | null;
         teams: Map<string, MutableMetrics>;
+        seenValues: Map<string, number>;
+        invalid: boolean;
       }
     >
   >();
@@ -159,8 +161,21 @@ export function assembleProviderAnalyticsSnapshots(
         capturedAt: row.captured_at,
         season,
         teams: new Map(),
+        seenValues: new Map(),
+        invalid: false,
       };
       fixtureCaptures.set(row.captured_at, group);
+    }
+
+    const value = numeric(row.value_numeric);
+    if (value != null) {
+      const valueKey = row.subject_team_id + ":" + row.fact_key;
+      const previous = group.seenValues.get(valueKey);
+      if (previous != null && previous !== value) {
+        group.invalid = true;
+      } else if (previous == null) {
+        group.seenValues.set(valueKey, value);
+      }
     }
 
     let metrics = group.teams.get(row.subject_team_id);
@@ -179,6 +194,7 @@ export function assembleProviderAnalyticsSnapshots(
     );
 
     for (const group of ordered) {
+      if (group.invalid) continue;
       const teams = [...group.teams.values()].map(finalize);
       const complete = teams.filter(
         (team) =>
