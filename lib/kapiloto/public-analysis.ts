@@ -13,10 +13,10 @@ export type KapilotoPublicFixtureAnalysis = {
   reliabilityBand: "low" | "medium" | "high" | null;
   summary: string | null;
   mainRisk: string | null;
-  expectedLineups: SolFixtureResearchOutput["expected_lineups"] | null;
-  tacticalFacts: SolFixtureResearchOutput["tactical_facts"] | null;
-  matchupAnalysis: SolFixtureResearchOutput["matchup_analysis"] | null;
-  regimeChanges: SolFixtureResearchOutput["regime_changes"] | null;
+  expectedLineups?: SolFixtureResearchOutput["expected_lineups"] | null;
+  tacticalFacts?: SolFixtureResearchOutput["tactical_facts"] | null;
+  matchupAnalysis?: SolFixtureResearchOutput["matchup_analysis"] | null;
+  regimeChanges?: SolFixtureResearchOutput["regime_changes"] | null;
   generatedAt: string;
   validUntil: string | null;
 };
