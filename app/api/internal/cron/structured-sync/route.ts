@@ -3,6 +3,9 @@ import { syncKapilotoStructuredRound } from "@/lib/kapiloto/structured-data-sync
 import { getApiFootballMinRequestIntervalMs } from "@/lib/kapiloto/research-config";
 import { ApiFootballClient } from "@/lib/providers/api-football";
 import { SportmonksClient } from "@/lib/providers/sportmonks";
+import { FootballIlParseClient } from "@/lib/providers/football-il-parse";
+import { SupabaseFootballIlSyncStore } from "@/lib/providers/football-il-parse-supabase-store";
+import { syncFootballIlRoundAnalytics } from "@/lib/providers/football-il-parse-sync";
 import { SupabaseCurrentRoundLoader } from "@/lib/rounds/current-round";
 
 export const maxDuration = 300;
@@ -88,6 +91,30 @@ export async function GET(request: Request): Promise<Response> {
       return Response.json({ ok: false, ...detail }, { status: 503 });
     }
 
+    const parseApiKey = process.env.PARSE_API_KEY?.trim();
+    let footballIlParse:
+      | Awaited<ReturnType<typeof syncFootballIlRoundAnalytics>>
+      | { error: string }
+      | { skipped: "missing_key" } = { skipped: "missing_key" };
+
+    if (parseApiKey) {
+      try {
+        footballIlParse = await syncFootballIlRoundAnalytics(
+          new SupabaseFootballIlSyncStore(admin),
+          new FootballIlParseClient(parseApiKey),
+          currentRound.roundId,
+        );
+      } catch (error) {
+        footballIlParse = {
+          error: error instanceof Error ? error.message : String(error),
+        };
+        console.error("Kapiloto football.co.il Parse sync failed", {
+          roundId: currentRound.roundId,
+          error: footballIlParse.error,
+        });
+      }
+    }
+
     const result = await syncKapilotoStructuredRound(
       admin,
       currentRound.roundId,
@@ -102,6 +129,7 @@ export async function GET(request: Request): Promise<Response> {
       roundId: currentRound.roundId,
       externalRoundNumber: currentRound.externalRoundNumber,
       saved,
+      footballIlParse,
       result,
     };
     await persistControl(
