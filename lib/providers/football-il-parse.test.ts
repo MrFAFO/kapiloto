@@ -52,8 +52,8 @@ test("FootballIlParseClient sends the pinned snapshot header and normalizes team
     assert.match(capturedUrl, /get_team_statistics/);
     assert.match(capturedUrl, /season=25%2F26/);
     assert.match(capturedUrl, /team_id=4539/);
-    assert.equal(capturedHeaders?.get("X-API-Key"), "test-key");
-    assert.equal(capturedHeaders?.get("API-Snapshot-Version"), "11");
+    assert.equal(capturedApiKey, "test-key");
+    assert.equal(capturedSnapshotVersion, "11");
   } finally {
     globalThis.fetch = originalFetch;
   }
