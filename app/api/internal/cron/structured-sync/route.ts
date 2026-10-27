@@ -91,6 +91,12 @@ export async function GET(request: Request): Promise<Response> {
       return Response.json({ ok: false, ...detail }, { status: 503 });
     }
 
+    const result = await syncKapilotoStructuredRound(
+      admin,
+      currentRound.roundId,
+      { sportmonks, apiFootball },
+    );
+
     const parseApiKey = process.env.PARSE_API_KEY?.trim();
     let footballIlParse:
       | Awaited<ReturnType<typeof syncFootballIlRoundAnalytics>>
@@ -114,12 +120,6 @@ export async function GET(request: Request): Promise<Response> {
         });
       }
     }
-
-    const result = await syncKapilotoStructuredRound(
-      admin,
-      currentRound.roundId,
-      { sportmonks, apiFootball },
-    );
     const finishedAt = new Date().toISOString();
     const saved = result.fixtures.filter((fixture) =>
       fixture.status.startsWith("saved_"),
