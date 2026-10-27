@@ -1,4 +1,5 @@
 import {
+  buildFootballIlStandingFacts,
   ingestFootballIlSeasonAnalytics,
   type FootballIlFactContext,
   type FootballIlFactStore,
@@ -6,6 +7,7 @@ import {
 } from "./football-il-parse-facts";
 import type {
   FootballIlFixture,
+  FootballIlStandings,
   FootballIlTeam,
   FootballIlTeamStatistics,
 } from "./football-il-parse";
@@ -62,6 +64,10 @@ export interface FootballIlSyncClient extends FootballIlSeasonAnalyticsSource {
     teamId: number,
   ): Promise<{ fixtures: FootballIlFixture[] } | FootballIlFixture[]>;
   getMatchDetails(gameId: number): Promise<FootballIlFixture>;
+  getLeagueStandings(
+    season: string,
+    tournamentId: number,
+  ): Promise<FootballIlStandings>;
 }
 
 export type FootballIlFixtureSyncResult = {
@@ -278,6 +284,10 @@ export async function syncFootballIlRoundAnalytics(
   const seasonStats = new Map<
     string,
     Promise<{ stats: FootballIlTeamStatistics[] }>
+  >();
+  const standingsBySeason = new Map<
+    string,
+    Promise<FootballIlStandings>
   >();
   const seasonSource: FootballIlSeasonAnalyticsSource = {
     getTeamStatistics(season, teamId) {
@@ -500,12 +510,34 @@ export async function syncFootballIlRoundAnalytics(
       }
 
       await store.saveResolvedFixture(resolved);
+      const context = factContext(game, resolved);
       const analytics = await ingestFootballIlSeasonAnalytics(
         seasonSource,
         store,
-        factContext(game, resolved),
+        context,
         season,
       );
+
+      const standingsKey = season + ":" + tournamentId;
+      let standingsPromise = standingsBySeason.get(standingsKey);
+      if (!standingsPromise) {
+        standingsPromise = client.getLeagueStandings(season, tournamentId);
+        standingsBySeason.set(standingsKey, standingsPromise);
+      }
+
+      let standingsFactsWritten = 0;
+      try {
+        const standings = await standingsPromise;
+        const standingFacts = buildFootballIlStandingFacts(
+          context,
+          season,
+          tournamentId,
+          standings,
+        );
+        standingsFactsWritten = await store.saveFacts(standingFacts);
+      } catch {
+        standingsFactsWritten = 0;
+      }
 
       fixtures.push({
         gameNumber: game.gameNumber,
@@ -516,7 +548,7 @@ export async function syncFootballIlRoundAnalytics(
         tournamentId,
         season,
         seasonRows: analytics.rawRows,
-        factsWritten: analytics.factsWritten,
+        factsWritten: analytics.factsWritten + standingsFactsWritten,
         error: null,
       });
     } catch (error) {
