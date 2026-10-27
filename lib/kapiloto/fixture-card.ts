@@ -97,7 +97,7 @@ export type KapilotoFixtureCard = {
   kickoff_at: string;
   neutral_venue: boolean;
   research_cutoff_at: string;
-  lineup_research: "enabled" | "disabled";
+  lineup_research?: "enabled" | "disabled";
   structured: {
     table_snapshot_id: string | null;
     recent_matches: Record<string, unknown>[];
