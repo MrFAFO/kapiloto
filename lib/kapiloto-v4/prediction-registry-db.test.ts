@@ -435,3 +435,51 @@ test("identity bindings keep what the live model saw after a later merge", async
   assert.deepEqual(rebound.rows, [{ player_id: b, observed_player_id: a }]);
   await db.close();
 });
+
+test("an observed id must resolve to the bound canonical id (players and coaches)", async () => {
+  const ctx = await setup();
+  const { db, seed } = ctx;
+  const bind = (identities: NonNullable<PredictionSnapshotInput["inputs"]["identities"]>) =>
+    recordPrediction(db, basePrediction(ctx.fixture.fixtureId, { inputs: { identities } }), RECORDED);
+
+  const survivor = seed.home.playerIds[10];
+  const unrelated = seed.home.playerIds[9];
+  const duplicate = "63000000-0000-4000-8000-0000000b0002";
+  await db.query("insert into public.players (id, canonical_name) values ($1, 'Striker (old record)')", [duplicate]);
+  const coachSurvivor = seed.home.coachId;
+  const coachDuplicate = "62000000-0000-4000-8000-0000000b0002";
+  await db.query("insert into public.coaches (id, canonical_name) values ($1, 'Coach (old record)')", [coachDuplicate]);
+
+  // Before any merge: observed = bound is valid; an unrelated id never is.
+  assert.equal((await bind([{ entityType: "player", entityId: survivor, observedEntityId: survivor, bindingRole: "starter" }])).status, "recorded");
+  await assert.rejects(bind([{ entityType: "player", entityId: survivor, observedEntityId: unrelated, bindingRole: "starter" }]), /observed player .* does not resolve to bound player/);
+  await assert.rejects(bind([{ entityType: "coach", entityId: coachSurvivor, observedEntityId: seed.away.coachId, bindingRole: "home_head_coach" }]), /observed coach .* does not resolve to bound coach/);
+  // The duplicate is not yet merged, so it is a different person.
+  await assert.rejects(bind([{ entityType: "player", entityId: survivor, observedEntityId: duplicate, bindingRole: "starter" }]), /does not resolve to bound player/);
+  const beforeMerge = await bind([{ entityType: "player", entityId: duplicate, bindingRole: "rotation" }, { entityType: "coach", entityId: coachDuplicate, bindingRole: "home_head_coach" }]);
+
+  await db.query("update public.players set identity_status = 'merged', merged_into_player_id = $2 where id = $1", [duplicate, survivor]);
+  await db.query("update public.coaches set identity_status = 'merged', merged_into_coach_id = $2 where id = $1", [coachDuplicate, coachSurvivor]);
+
+  // Survivor + old merged observed id is valid, for players and coaches.
+  assert.equal((await bind([
+    { entityType: "player", entityId: survivor, observedEntityId: duplicate, bindingRole: "starter" },
+    { entityType: "coach", entityId: coachSurvivor, observedEntityId: coachDuplicate, bindingRole: "home_head_coach" },
+  ])).status, "recorded");
+  // Binding the merged id itself (even as its own observed id) is refused,
+  // and the supplied canonical id is never silently rewritten.
+  await assert.rejects(bind([{ entityType: "player", entityId: duplicate, observedEntityId: duplicate, bindingRole: "starter" }]), /bind the surviving id the prediction used/);
+  await assert.rejects(bind([{ entityType: "coach", entityId: coachDuplicate, observedEntityId: coachDuplicate, bindingRole: "home_head_coach" }]), /bind the surviving id the prediction used/);
+  await assert.rejects(bind([{ entityType: "coach", entityId: coachSurvivor, observedEntityId: seed.away.coachId, bindingRole: "home_head_coach" }]), /does not resolve to bound coach/);
+
+  // The prediction recorded before the merge is not mutated by it.
+  const frozen = await db.query(
+    "select entity_type, player_id, coach_id, observed_player_id, observed_coach_id from public.prediction_identity_bindings where snapshot_id = $1 order by entity_type",
+    [beforeMerge.snapshot_id],
+  );
+  assert.deepEqual(frozen.rows, [
+    { entity_type: "coach", player_id: null, coach_id: coachDuplicate, observed_player_id: null, observed_coach_id: null },
+    { entity_type: "player", player_id: duplicate, coach_id: null, observed_player_id: null, observed_coach_id: null },
+  ]);
+  await db.close();
+});

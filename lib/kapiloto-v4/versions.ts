@@ -42,3 +42,6 @@ export const PREDICTION_SNAPSHOT_CONTRACT_VERSION = "kapiloto-prediction-snapsho
 
 /** Shape of prediction_snapshots.uncertainty. */
 export const UNCERTAINTY_DECOMPOSITION_VERSION = "kapiloto-uncertainty-v1";
+
+/** Merge-aware claim identity (knowledge_canonical_claims). */
+export const CANONICAL_CLAIM_RULE_VERSION = "kapiloto-canonical-claim-v1";

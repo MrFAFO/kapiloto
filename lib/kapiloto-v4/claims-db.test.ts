@@ -331,6 +331,96 @@ test("observations and resolutions are never known before what they depend on", 
   await db.close();
 });
 
+test("derived claims and relations are never visible before the premises and claims they connect", async () => {
+  const { db, seed, fixture } = await setup();
+  const premise = await recordClaim(db, availability(seed, fixture.fixtureId, "doubtful"), OCT_29);
+  const derived = (premises: string[]): ClaimInput => ({
+    claimKind: "derived_inference",
+    claimType: "expected_lineup",
+    predicate: "starts",
+    fixtureId: fixture.fixtureId,
+    playerId: seed.home.playerIds[10],
+    objectValue: { likelihood: "low" },
+    temporalScope: "fixture",
+    premises,
+    assertedByVersion: "lineup-reasoner-test-v1",
+  });
+
+  // The clock steps back between the premise (Oct 29) and the derived claim
+  // (Oct 28): the atomic recording is refused, nothing is stored.
+  const claimsBefore = await count(db, "knowledge_claims");
+  await assert.rejects(recordClaim(db, derived([premise.claim_id]), OCT_28), /would precede one of its claims|visible before one of its premises/);
+  assert.equal(await count(db, "knowledge_claims"), claimsBefore);
+  assert.equal(await count(db, "knowledge_claim_relations"), 0);
+
+  // A direct writer that stamps the derived claim early and its premise
+  // relation late is refused when the transaction commits.
+  await db.exec("begin");
+  await setClock(db, OCT_28);
+  await db.query(
+    `insert into public.knowledge_claims (contract_version, claim_kind, claim_type, predicate, fixture_id, player_id, temporal_scope, claim_fingerprint)
+     values ('kapiloto-claim-v1', 'derived_inference', 'expected_lineup', 'starts', $1, $2, 'fixture', $3)`,
+    [fixture.fixtureId, seed.home.playerIds[9], "0".repeat(64)],
+  );
+  const early = await db.query<{ id: string }>("select id from public.knowledge_claims where player_id = $1", [seed.home.playerIds[9]]);
+  await setClock(db, OCT_30);
+  await db.query(
+    "insert into public.knowledge_claim_relations (from_claim_id, to_claim_id, relation_type, asserted_by_kind, asserted_by_version) values ($1, $2, 'derived_from', 'derivation', 'test')",
+    [early.rows[0].id, premise.claim_id],
+  );
+  await assert.rejects(db.exec("commit"), /would be visible before one of its premises/);
+  assert.equal(await count(db, "knowledge_claims"), claimsBefore);
+
+  // In clock order the derived claim is accepted and is never earlier than
+  // its premise, so any cutoff that sees it also sees the premise.
+  const valid = await recordClaim(db, derived([premise.claim_id]), OCT_30);
+  const times = await db.query<{ derived_seen: Date; premise_seen: Date; relation_seen: Date }>(
+    `select d.first_seen_at as derived_seen, p.first_seen_at as premise_seen, r.first_seen_at as relation_seen
+     from public.knowledge_claim_relations r
+     join public.knowledge_claims d on d.id = r.from_claim_id
+     join public.knowledge_claims p on p.id = r.to_claim_id
+     where r.from_claim_id = $1`,
+    [valid.claim_id],
+  );
+  assert.ok(times.rows[0].derived_seen >= times.rows[0].premise_seen);
+  assert.ok(times.rows[0].relation_seen >= times.rows[0].derived_seen);
+
+  // Every relation type obeys endpoint ordering, supersedes and refines too.
+  const newer = await recordClaim(db, availability(seed, fixture.fixtureId, "out"), "2026-10-31T09:00:00.000Z");
+  await setClock(db, "2026-10-30T18:00:00.000Z");
+  for (const relationType of ["supersedes", "refines", "contradicts"]) {
+    await assert.rejects(
+      db.query(
+        "insert into public.knowledge_claim_relations (from_claim_id, to_claim_id, relation_type, asserted_by_kind, asserted_by_version) values ($1, $2, $3, 'manual', 'test')",
+        [newer.claim_id, premise.claim_id, relationType],
+      ),
+      /would precede one of its claims/,
+      relationType,
+    );
+  }
+  await db.close();
+});
+
+test("claim support counts every observation row but corroboration only once per independent source", async () => {
+  const { db, seed, fixture } = await setup();
+  const claim = await recordClaim(db, availability(seed, fixture.fixtureId, "doubtful"), OCT_28);
+  const article = articleInput();
+  const v1 = await recordDocument(db, article, OCT_28);
+  const v2 = await recordDocument(db, { ...article, extractedText: `${article.extractedText} Updated at noon.` }, OCT_29);
+  // Two extractor versions on version 1 and one extraction of version 2.
+  await addObservation(db, { claimId: claim.claim_id, documentVersionId: v1.document_version_id, relationship: "supports", extractorVersion: "extractor-a" }, OCT_28);
+  await addObservation(db, { claimId: claim.claim_id, documentVersionId: v1.document_version_id, relationship: "supports", extractorVersion: "extractor-b" }, OCT_28);
+  await addObservation(db, { claimId: claim.claim_id, documentVersionId: v2.document_version_id, relationship: "supports" }, OCT_29);
+  // A syndicated reprint of version 2 is a second document, not a second source.
+  const reprint = await recordDocument(db, { ...articleInput({ canonicalUrl: "https://www.one.co.il/a/77", domain: "one.co.il", publisher: "ONE" }), extractedText: `${article.extractedText} Updated at noon.` }, OCT_29);
+  await addObservation(db, { claimId: claim.claim_id, documentVersionId: reprint.document_version_id, relationship: "supports" }, OCT_29);
+
+  assert.deepEqual(await support(db, claim.claim_id, OCT_30), {
+    supports: { observation_count: 4, document_count: 2, independent_source_count: 1 },
+  });
+  await db.close();
+});
+
 async function count(db: PGlite, table: string): Promise<number> {
   return (await db.query<{ n: number }>(`select count(*)::int as n from public.${table}`)).rows[0].n;
 }

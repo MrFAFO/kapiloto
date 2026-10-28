@@ -4475,14 +4475,26 @@ export type Database = {
           coach_id: string
         }[]
       }
+      knowledge_canonical_claims: {
+        Args: { p_claim_ids: string[] }
+        Returns: {
+          canonical_claim_id: string
+          claim_id: string
+          collision: boolean
+          member_claim_ids: string[]
+        }[]
+      }
       knowledge_claim_resolutions_as_of: {
         Args: { p_claim_ids: string[]; p_cutoff: string }
         Returns: {
+          canonical_claim_id: string
           claim_id: string
           confidence: number | null
           first_seen_at: string | null
+          member_claim_ids: string[]
           quality_flags: string[]
           reason_code: string | null
+          resolution_claim_id: string | null
           resolution_id: string | null
           resolution_version: number | null
           resolver_kind: string | null

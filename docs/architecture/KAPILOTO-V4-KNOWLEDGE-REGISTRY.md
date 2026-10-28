@@ -29,9 +29,9 @@ Nothing in V1/V2/V3 reads these tables. No existing table is altered.
 
 The RPCs (service_role only) are `knowledge_record_document_version`,
 `knowledge_record_claim`, `knowledge_record_claim_resolution` and
-`prediction_record_snapshot`. The as-of reads are
-`knowledge_document_version_as_of`, `knowledge_claim_resolutions_as_of` and
-`knowledge_claim_support_as_of`. Claim observations and claim relations are
+`prediction_record_snapshot`. The reads are
+`knowledge_document_version_as_of`, `knowledge_claim_resolutions_as_of`,
+`knowledge_claim_support_as_of` and `knowledge_canonical_claims`. Claim observations and claim relations are
 single-row writes; their triggers enforce the rules below.
 
 ## Document archive
@@ -104,6 +104,32 @@ are the same claim only when all of them match:
 
 Claims name surviving canonical players/coaches (D-050).
 
+**Canonical claims after identity merges (D-052,
+`kapiloto-canonical-claim-v1`).** A merge is a data-quality correction, so
+the knowledge layer must not fragment into duplicate propositions:
+
+- Raw claim rows are immutable and keep the fingerprint they were recorded
+  with. Prediction snapshots keep the exact raw claim and resolution ids they
+  used.
+- The current canonical proposition is the group of raw claims whose
+  fingerprints coincide once player/coach subjects resolve to their current
+  survivors. Kind, type, predicate, fixture, team, value, polarity and scope
+  must still match exactly, so genuinely different claims never collapse.
+- Recording a proposition that already exists, including through a survivor
+  after a merge, returns the group's representative (`existing`) instead of
+  creating a second claim. The representative is the earliest member
+  (`first_seen_at`, then id).
+- If A and B both had otherwise identical claims before A → B, both raw
+  claims remain and form one group. `knowledge_canonical_claims` and the
+  record result expose every member and `collision = true`; nothing is
+  hidden, and the merge is not blocked.
+- Model-facing reads aggregate the group:
+  `knowledge_claim_resolutions_as_of` returns the latest visible
+  adjudication of any member (with `resolution_claim_id` for provenance),
+  limited to members first seen by the cutoff;
+  `knowledge_claim_support_as_of` counts observations of every member.
+- Un-merging restores the previous groups, because nothing is rewritten.
+
 **Observations.** An observation links one document version to one claim.
 The verbatim `quote` is rights-gated, and `quote_found` records whether the
 quote occurs in the retained text: a signal for fabrication review, not a
@@ -113,18 +139,36 @@ observation twice. An observation is never first seen before its document
 version or claim (this guards a backwards clock step), so no as-of read can
 count it early.
 
-**Independence.** Syndicated copies are distinct documents but never
-independent confirmation. `knowledge_claim_support_as_of` counts each
-document once, at its latest visible version, and counts as one source all
-documents that share a syndication cluster or identical content, whichever
-was labeled first. An unlabeled exact copy also inherits an existing cluster
-when it is recorded.
+**Independence and support counts.** Syndicated copies are distinct
+documents but never independent confirmation. `knowledge_claim_support_as_of`
+returns, per relationship:
+
+| Count | Meaning |
+| --- | --- |
+| `observation_count` | Every visible observation row: each extraction, extractor version and document version counts (raw extraction volume, for extraction audits) |
+| `document_count` | Distinct documents |
+| `independent_source_count` | Distinct independence keys over each document's latest visible observation |
+
+Documents that share a syndication cluster or identical content count as one
+source, whichever was labeled first. An unlabeled exact copy also inherits an
+existing cluster when it is recorded. Corroboration logic must use
+`independent_source_count`.
 
 **Relations.** `derived_from`, `supersedes` and `refines` are acyclic:
 inserts are serialized per relation type and checked by reachability, so
 neither one insert nor two concurrent ones can close a cycle.
 `supports`/`contradicts` may be mutual. Relations carry `first_seen_at`, so
 a graph read can be cut at a cutoff.
+
+**Provenance information time.** Every relation, of every type, is
+information about both claims, so it is never first seen before either
+endpoint. A derived claim is never first seen before any premise it was
+created with: this is checked at commit, so neither the RPC nor a direct
+writer can make it visible early. Consequently any cutoff that sees a derived
+claim also sees its creation premises. A premise added to an existing derived
+claim later is later provenance, visible from its relation's own
+`first_seen_at`. A backwards clock step fails the write; timestamps are never
+rewritten.
 
 ## Resolution lattice
 
@@ -294,7 +338,11 @@ not. 1B freezes identity per prediction:
   the raw observed id when it differed, a role, context team and provider id;
 - the bound id must be an active canonical entity when the prediction is
   recorded (under the shared identity lock), so the binding proves which ids
-  the model treated as separate people;
+  the model treated as separate people. It is never silently canonicalized;
+- an observed id must resolve to the bound id:
+  `surviving_player_id(observed_player_id) = player_id` (coaches likewise).
+  B with observed B, or B with observed A after A → B, is valid. B with an
+  unrelated C, or A with observed A once A is merged, is refused;
 - bindings are immutable.
 
 Example: on Oct 30 the live model binds A (doubtful starter) and B (rotation

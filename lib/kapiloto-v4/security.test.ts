@@ -60,6 +60,7 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.knowledge_document_version_as_of(uuid, timestamptz)",
   "public.knowledge_claim_resolutions_as_of(uuid[], timestamptz)",
   "public.knowledge_claim_support_as_of(uuid, timestamptz)",
+  "public.knowledge_canonical_claims(uuid[])",
 ];
 
 const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
@@ -76,6 +77,7 @@ const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.kapiloto_v4_assert_keys(jsonb, text[], text)",
   "private.knowledge_document_version_fingerprint(text, text, text, text, text, timestamptz, text, boolean, boolean, boolean)",
   "private.knowledge_claim_fingerprint(text, text, text, text, uuid, uuid, uuid, uuid, jsonb, text, text, date, date)",
+  "private.knowledge_claim_group(text, text, text, text, uuid, uuid, uuid, uuid, jsonb, text, text, date, date)",
   "private.prediction_output_sha256(text, text, smallint, smallint, smallint, numeric, jsonb, text, jsonb)",
   "private.prediction_canonical_inputs(jsonb)",
   "private.prediction_input_bundle_sha256(jsonb)",

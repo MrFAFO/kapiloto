@@ -381,6 +381,81 @@ as $$
   )::text, 'UTF8')), 'hex')
 $$;
 
+-- Current canonical claim group (D-050 survivor semantics). Raw claims keep
+-- the fingerprint they were recorded with; the CURRENT proposition groups
+-- every raw claim whose fingerprint coincides once player/coach subjects are
+-- resolved to their current survivors. Every other structured dimension
+-- (kind, type, predicate, fixture, team, value, polarity, scope) must match
+-- exactly. Members are ordered by first_seen_at, id; the first member is the
+-- group's representative.
+create or replace function private.knowledge_claim_group(
+  p_contract_version text,
+  p_claim_kind text,
+  p_claim_type text,
+  p_predicate text,
+  p_fixture_id uuid,
+  p_team_id uuid,
+  p_player_id uuid,
+  p_coach_id uuid,
+  p_object_value jsonb,
+  p_polarity text,
+  p_temporal_scope text,
+  p_scope_starts_on date,
+  p_scope_ends_on date
+)
+returns table (claim_id uuid, first_seen_at timestamptz)
+language sql
+stable
+set search_path = ''
+as $$
+  with target as (
+    select
+      private.surviving_player_id(p_player_id) as player_id,
+      private.surviving_coach_id(p_coach_id) as coach_id
+  ),
+  canonical as (
+    select
+      t.player_id,
+      t.coach_id,
+      private.knowledge_claim_fingerprint(
+        p_contract_version, p_claim_kind, p_claim_type, p_predicate,
+        p_fixture_id, p_team_id, t.player_id, t.coach_id, p_object_value,
+        p_polarity, p_temporal_scope, p_scope_starts_on, p_scope_ends_on
+      ) as fingerprint
+    from target t
+  )
+  select c.id, c.first_seen_at
+  from public.knowledge_claims c
+  cross join canonical k
+  where c.claim_type = p_claim_type
+    and c.predicate = p_predicate
+    and c.fixture_id is not distinct from p_fixture_id
+    and c.team_id is not distinct from p_team_id
+    and (
+      (k.player_id is null and c.player_id is null)
+      or c.player_id in (
+        select k.player_id
+        union all
+        select pl.id from public.players pl where pl.merged_into_player_id = k.player_id
+      )
+    )
+    and (
+      (k.coach_id is null and c.coach_id is null)
+      or c.coach_id in (
+        select k.coach_id
+        union all
+        select co.id from public.coaches co where co.merged_into_coach_id = k.coach_id
+      )
+    )
+    and private.knowledge_claim_fingerprint(
+      c.contract_version, c.claim_kind, c.claim_type, c.predicate,
+      c.fixture_id, c.team_id, private.surviving_player_id(c.player_id),
+      private.surviving_coach_id(c.coach_id), c.object_value, c.polarity,
+      c.temporal_scope, c.scope_starts_on, c.scope_ends_on
+    ) = k.fingerprint
+  order by c.first_seen_at, c.id
+$$;
+
 -- Claims name surviving canonical players/coaches (D-050): a claim about a
 -- since-merged id is found through survivor resolution, never re-created.
 create or replace function private.stamp_knowledge_claim()
@@ -559,6 +634,10 @@ create index knowledge_claim_relations_to_idx
 -- derived_from, supersedes and refines are acyclic. Each is serialized by
 -- one graph lock per relation type and checked by reachability, so no
 -- cycle can be formed by one insert or by two concurrent ones.
+--
+-- Endpoint ordering (every relation type): a relation is information about
+-- both claims, so it is never first seen before either endpoint. A backwards
+-- clock step fails the write instead of making provenance visible early.
 create or replace function private.stamp_knowledge_claim_relation()
 returns trigger
 language plpgsql
@@ -569,6 +648,10 @@ declare
   v_cycle boolean;
 begin
   new.first_seen_at := private.kapiloto_information_clock();
+  if new.first_seen_at < (select c.first_seen_at from public.knowledge_claims c where c.id = new.from_claim_id)
+    or new.first_seen_at < (select c.first_seen_at from public.knowledge_claims c where c.id = new.to_claim_id) then
+    raise exception 'claim relation information time would precede one of its claims';
+  end if;
   if new.relation_type in ('derived_from', 'supersedes', 'refines') then
     perform private.kapiloto_require_read_committed('claim graph writes');
     perform pg_advisory_xact_lock(hashtextextended('kapiloto_claim_graph:' || new.relation_type, 0));
@@ -609,7 +692,11 @@ before insert on public.knowledge_claim_relations
 for each row execute function private.stamp_knowledge_claim_relation();
 
 -- Every derived claim cites at least one premise by the end of the writing
--- transaction (knowledge_record_claim forces the check before returning).
+-- transaction (knowledge_record_claim forces the check before returning),
+-- and none of the premises it was created with is newer than the claim. So a
+-- derived claim visible at a cutoff always has its creation premises
+-- visible too. Premises added later are later provenance, visible from their
+-- relation's own first_seen_at.
 create or replace function private.check_knowledge_claim_premises()
 returns trigger
 language plpgsql
@@ -622,6 +709,16 @@ begin
       where r.from_claim_id = new.id and r.relation_type = 'derived_from'
     ) then
     raise exception 'derived claim % must cite at least one derived_from premise', new.id;
+  end if;
+  if exists (
+    select 1
+    from public.knowledge_claim_relations r
+    join public.knowledge_claims premise on premise.id = r.to_claim_id
+    where r.from_claim_id = new.id
+      and r.relation_type = 'derived_from'
+      and premise.first_seen_at > new.first_seen_at
+  ) then
+    raise exception 'derived claim % would be visible before one of its premises', new.id;
   end if;
   return null;
 end;
@@ -1347,6 +1444,14 @@ begin
         raise exception 'player % is merged into %; bind the surviving id the prediction used',
           new.player_id, private.surviving_player_id(new.player_id);
       end if;
+      -- An observed id is a raw id of the SAME person: it must resolve to the
+      -- bound survivor (itself, or a duplicate merged into it). Checked under
+      -- the identity lock, so a concurrent merge cannot invalidate it.
+      if new.observed_player_id is not null
+        and private.surviving_player_id(new.observed_player_id) <> new.player_id then
+        raise exception 'observed player % does not resolve to bound player %',
+          new.observed_player_id, new.player_id;
+      end if;
     elsif new.coach_id is not null then
       perform private.lock_canonical_identity('coaches', false);
       if exists (
@@ -1355,6 +1460,11 @@ begin
       ) then
         raise exception 'coach % is merged into %; bind the surviving id the prediction used',
           new.coach_id, private.surviving_coach_id(new.coach_id);
+      end if;
+      if new.observed_coach_id is not null
+        and private.surviving_coach_id(new.observed_coach_id) <> new.coach_id then
+        raise exception 'observed coach % does not resolve to bound coach %',
+          new.observed_coach_id, new.coach_id;
       end if;
     end if;
   end if;
@@ -1687,9 +1797,12 @@ begin
 end;
 $$;
 
--- A claim is created once per structured proposition; recording an existing
--- proposition returns it ("existing"). Derived claims carry their premises
--- in the same call.
+-- A claim is created once per CURRENT canonical proposition: recording a
+-- proposition that already exists, also through a since-merged player or
+-- coach, returns the group's representative ("existing") instead of
+-- creating a second claim. Derived claims carry their premises in the same
+-- call. The result lists every raw member, so a pre-merge collision (two raw
+-- claims that became one proposition) is visible, never hidden.
 create or replace function public.knowledge_record_claim(p_claim jsonb)
 returns jsonb
 language plpgsql
@@ -1702,6 +1815,7 @@ declare
   v_id uuid;
   v_first_seen timestamptz;
   v_status text := 'recorded';
+  v_members uuid[];
 begin
   if p_claim is null or jsonb_typeof(p_claim) <> 'object' then
     raise exception 'claim must be a JSON object';
@@ -1730,8 +1844,37 @@ begin
     raise exception 'claim premises require asserted_by_version';
   end if;
 
+  -- Writes name survivors (D-050), checked before the group lookup so a
+  -- stale id is an error rather than an "existing" match. The shared
+  -- identity locks serialize this lookup against merges.
+  if v.player_id is not null then
+    perform private.lock_canonical_identity('players', false);
+    if exists (select 1 from public.players p where p.id = v.player_id and p.identity_status = 'merged') then
+      raise exception 'player % is merged into %; claims reference surviving canonical ids',
+        v.player_id, private.surviving_player_id(v.player_id);
+    end if;
+  end if;
+  if v.coach_id is not null then
+    perform private.lock_canonical_identity('coaches', false);
+    if exists (select 1 from public.coaches c where c.id = v.coach_id and c.identity_status = 'merged') then
+      raise exception 'coach % is merged into %; claims reference surviving canonical ids',
+        v.coach_id, private.surviving_coach_id(v.coach_id);
+    end if;
+  end if;
+
   set constraints public.knowledge_claims_premises deferred;
 
+  select g.claim_id, g.first_seen_at into v_id, v_first_seen
+  from private.knowledge_claim_group(
+    'kapiloto-claim-v1', v.claim_kind, v.claim_type, v.predicate,
+    v.fixture_id, v.team_id, v.player_id, v.coach_id,
+    coalesce(v.object_value, '{}'::jsonb), coalesce(v.polarity, 'affirmed'),
+    v.temporal_scope, v.scope_starts_on, v.scope_ends_on
+  ) g
+  limit 1;
+  if v_id is not null then
+    v_status := 'existing';
+  else
   -- claim_fingerprint and first_seen_at are assigned by the stamp trigger.
   insert into public.knowledge_claims (
     contract_version, claim_kind, claim_type, predicate, fixture_id, team_id,
@@ -1748,6 +1891,7 @@ begin
   returning id, first_seen_at into v_id, v_first_seen;
 
   if v_id is null then
+    -- A concurrent writer recorded the same proposition first.
     v_fingerprint := private.knowledge_claim_fingerprint(
       'kapiloto-claim-v1', v.claim_kind, v.claim_type, v.predicate,
       v.fixture_id, v.team_id, v.player_id, v.coach_id,
@@ -1757,6 +1901,7 @@ begin
     select c.id, c.first_seen_at into v_id, v_first_seen
     from public.knowledge_claims c where c.claim_fingerprint = v_fingerprint;
     v_status := 'existing';
+  end if;
   end if;
 
   insert into public.knowledge_claim_relations (
@@ -1768,10 +1913,20 @@ begin
 
   set constraints public.knowledge_claims_premises immediate;
 
+  select array_agg(g.claim_id order by g.first_seen_at, g.claim_id) into v_members
+  from private.knowledge_claim_group(
+    'kapiloto-claim-v1', v.claim_kind, v.claim_type, v.predicate,
+    v.fixture_id, v.team_id, v.player_id, v.coach_id,
+    coalesce(v.object_value, '{}'::jsonb), coalesce(v.polarity, 'affirmed'),
+    v.temporal_scope, v.scope_starts_on, v.scope_ends_on
+  ) g;
+
   return jsonb_build_object(
     'status', v_status,
     'claim_id', v_id,
-    'first_seen_at', v_first_seen
+    'first_seen_at', v_first_seen,
+    'member_claim_ids', to_jsonb(v_members),
+    'collision', cardinality(v_members) > 1
   );
 end;
 $$;
@@ -2131,17 +2286,58 @@ begin
 end;
 $$;
 
--- What Kapiloto believed about each claim at the cutoff. A claim not yet
--- known at the cutoff is omitted; a known claim without a visible resolution
--- is "unresolved". Later resolutions (post-match truth included) are
--- invisible to earlier cutoffs.
+-- The current canonical group of each claim: its representative, every raw
+-- member and whether a merge made several raw claims one proposition. Raw
+-- claims and their histories are never rewritten.
+create or replace function public.knowledge_canonical_claims(p_claim_ids uuid[])
+returns table (
+  claim_id uuid,
+  canonical_claim_id uuid,
+  member_claim_ids uuid[],
+  collision boolean
+)
+language plpgsql
+stable
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if p_claim_ids is null then
+    raise exception 'claims are required';
+  end if;
+  return query
+  select c.id, g.ids[1], g.ids, cardinality(g.ids) > 1
+  from public.knowledge_claims c
+  cross join lateral (
+    select array_agg(m.claim_id order by m.first_seen_at, m.claim_id) as ids
+    from private.knowledge_claim_group(
+      c.contract_version, c.claim_kind, c.claim_type, c.predicate,
+      c.fixture_id, c.team_id, c.player_id, c.coach_id, c.object_value,
+      c.polarity, c.temporal_scope, c.scope_starts_on, c.scope_ends_on
+    ) m
+  ) g
+  where c.id = any (p_claim_ids)
+  order by c.id;
+end;
+$$;
+
+-- What Kapiloto believed about each requested claim's CURRENT canonical
+-- proposition at the cutoff. The group is limited to members first seen by
+-- the cutoff; a proposition not yet known is omitted; a known one without a
+-- visible resolution is "unresolved". The belief is the latest visible
+-- adjudication of any member (first_seen_at, then version, then claim id),
+-- and resolution_claim_id says which raw claim it belongs to. Later
+-- resolutions (post-match truth included) are invisible to earlier cutoffs.
 create or replace function public.knowledge_claim_resolutions_as_of(
   p_claim_ids uuid[],
   p_cutoff timestamptz
 )
 returns table (
   claim_id uuid,
+  canonical_claim_id uuid,
+  member_claim_ids uuid[],
   resolution_id uuid,
+  resolution_claim_id uuid,
   resolution_version integer,
   status text,
   confidence numeric,
@@ -2160,9 +2356,27 @@ begin
     raise exception 'claims and cutoff are required';
   end if;
   return query
+  with requested as (
+    select c.id as requested_id, g.ids
+    from public.knowledge_claims c
+    cross join lateral (
+      select array_agg(m.claim_id order by m.first_seen_at, m.claim_id) as ids
+      from private.knowledge_claim_group(
+        c.contract_version, c.claim_kind, c.claim_type, c.predicate,
+        c.fixture_id, c.team_id, c.player_id, c.coach_id, c.object_value,
+        c.polarity, c.temporal_scope, c.scope_starts_on, c.scope_ends_on
+      ) m
+      where m.first_seen_at <= p_cutoff
+    ) g
+    where c.id = any (p_claim_ids)
+      and g.ids is not null
+  )
   select
-    c.id,
+    rq.requested_id,
+    rq.ids[1],
+    rq.ids,
     r.id,
+    r.claim_id,
     r.resolution_version,
     coalesce(r.status, 'unresolved'),
     r.confidence,
@@ -2170,25 +2384,30 @@ begin
     r.reason_code,
     coalesce(r.quality_flags, '{}'::text[]),
     r.first_seen_at
-  from public.knowledge_claims c
+  from requested rq
   left join lateral (
     select kr.*
     from public.knowledge_claim_resolutions kr
-    where kr.claim_id = c.id
+    where kr.claim_id = any (rq.ids)
       and kr.first_seen_at <= p_cutoff
-    order by kr.resolution_version desc
+    order by kr.first_seen_at desc, kr.resolution_version desc, kr.claim_id
     limit 1
   ) r on true
-  where c.id = any (p_claim_ids)
-    and c.first_seen_at <= p_cutoff
-  order by c.id;
+  order by rq.requested_id;
 end;
 $$;
 
--- Support and contradiction for one claim as of a cutoff. Each document
--- counts once (its latest visible observation per relationship), and
--- documents sharing a syndication cluster or identical content count as one
--- independent source, whichever of them was labeled first.
+-- Support and contradiction for one claim's CURRENT canonical proposition
+-- (all raw members after survivor resolution) as of a cutoff. Contract:
+--   observation_count        every visible observation row: each extraction,
+--                            extractor version and document version counts
+--                            (raw extraction volume, for extraction audits);
+--   document_count           distinct documents;
+--   independent_source_count distinct independence keys over each document's
+--                            latest visible observation: documents sharing a
+--                            syndication cluster or identical content count
+--                            once, whichever was labeled first.
+-- Corroboration logic must use independent_source_count.
 create or replace function public.knowledge_claim_support_as_of(
   p_claim_id uuid,
   p_cutoff timestamptz
@@ -2228,7 +2447,16 @@ begin
       o.first_seen_at
     from public.knowledge_claim_observations o
     join public.knowledge_document_versions dv on dv.id = o.document_version_id
-    where o.claim_id = p_claim_id
+    where o.claim_id in (
+        select m.claim_id
+        from public.knowledge_claims c
+        cross join lateral private.knowledge_claim_group(
+          c.contract_version, c.claim_kind, c.claim_type, c.predicate,
+          c.fixture_id, c.team_id, c.player_id, c.coach_id, c.object_value,
+          c.polarity, c.temporal_scope, c.scope_starts_on, c.scope_ends_on
+        ) m
+        where c.id = p_claim_id
+      )
       and o.first_seen_at <= p_cutoff
   ),
   per_document as (
@@ -2289,6 +2517,7 @@ revoke all on function private.knowledge_document_version_fingerprint(text, text
 revoke all on function private.stamp_knowledge_document_version() from public, anon, authenticated;
 revoke all on function private.knowledge_claim_fingerprint(text, text, text, text, uuid, uuid, uuid, uuid, jsonb, text, text, date, date) from public, anon, authenticated;
 revoke all on function private.stamp_knowledge_claim() from public, anon, authenticated;
+revoke all on function private.knowledge_claim_group(text, text, text, text, uuid, uuid, uuid, uuid, jsonb, text, text, date, date) from public, anon, authenticated;
 revoke all on function private.stamp_knowledge_claim_observation() from public, anon, authenticated;
 revoke all on function private.stamp_knowledge_claim_relation() from public, anon, authenticated;
 revoke all on function private.check_knowledge_claim_premises() from public, anon, authenticated;
@@ -2308,6 +2537,7 @@ revoke all on function public.knowledge_record_claim_resolution(jsonb) from publ
 revoke all on function public.prediction_record_snapshot(jsonb) from public, anon, authenticated;
 revoke all on function public.knowledge_document_version_as_of(uuid, timestamptz) from public, anon, authenticated;
 revoke all on function public.knowledge_claim_resolutions_as_of(uuid[], timestamptz) from public, anon, authenticated;
+revoke all on function public.knowledge_canonical_claims(uuid[]) from public, anon, authenticated;
 revoke all on function public.knowledge_claim_support_as_of(uuid, timestamptz) from public, anon, authenticated;
 
 -- Triggers and RPCs run as the invoking service_role and call these helpers
@@ -2315,6 +2545,7 @@ revoke all on function public.knowledge_claim_support_as_of(uuid, timestamptz) f
 grant execute on function private.kapiloto_v4_assert_keys(jsonb, text[], text) to service_role;
 grant execute on function private.knowledge_document_version_fingerprint(text, text, text, text, text, timestamptz, text, boolean, boolean, boolean) to service_role;
 grant execute on function private.knowledge_claim_fingerprint(text, text, text, text, uuid, uuid, uuid, uuid, jsonb, text, text, date, date) to service_role;
+grant execute on function private.knowledge_claim_group(text, text, text, text, uuid, uuid, uuid, uuid, jsonb, text, text, date, date) to service_role;
 grant execute on function private.prediction_output_sha256(text, text, smallint, smallint, smallint, numeric, jsonb, text, jsonb) to service_role;
 grant execute on function private.prediction_canonical_inputs(jsonb) to service_role;
 grant execute on function private.prediction_input_bundle_sha256(jsonb) to service_role;
@@ -2325,6 +2556,7 @@ grant execute on function public.knowledge_record_claim_resolution(jsonb) to ser
 grant execute on function public.prediction_record_snapshot(jsonb) to service_role;
 grant execute on function public.knowledge_document_version_as_of(uuid, timestamptz) to service_role;
 grant execute on function public.knowledge_claim_resolutions_as_of(uuid[], timestamptz) to service_role;
+grant execute on function public.knowledge_canonical_claims(uuid[]) to service_role;
 grant execute on function public.knowledge_claim_support_as_of(uuid, timestamptz) to service_role;
 
 comment on table public.knowledge_documents is
@@ -2332,7 +2564,7 @@ comment on table public.knowledge_documents is
 comment on table public.knowledge_document_versions is
   'Immutable observations of a document: content hash, bounded text, rights provenance and database-stamped first_seen_at. Raw media live in external storage.';
 comment on table public.knowledge_claims is
-  'Canonical structured propositions, deduplicated by a fingerprint of every structured dimension; prose is a label, never identity.';
+  'Structured propositions, deduplicated by a fingerprint of every structured dimension (prose is a label, never identity). Raw rows are immutable; the current canonical proposition groups raw claims whose player/coach subjects resolve to the same survivors (knowledge_canonical_claims).';
 comment on table public.knowledge_claim_observations is
   'What one document version appears to say about a claim (supports/contradicts/mentions), with rights-gated quotes and a syndication-aware independence key.';
 comment on table public.knowledge_claim_relations is

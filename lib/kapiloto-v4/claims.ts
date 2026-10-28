@@ -9,7 +9,17 @@ import { CLAIM_CONTRACT_VERSION, CLAIM_RESOLUTION_CONTRACT_VERSION } from "./ver
  * CLAIM OBSERVATION: what one document version appears to say about a claim.
  * CLAIM RESOLUTION: Kapiloto's versioned adjudication of a claim.
  * DERIVED claims (inference, hypothesis, scenario, adjustment) are not
- * reported by sources; they cite derived_from premises.
+ * reported by sources; they cite derived_from premises, which are never newer
+ * than the derived claim.
+ *
+ * Canonical claims after identity merges (kapiloto-canonical-claim-v1): raw
+ * claim rows are immutable and keep the fingerprint they were recorded with.
+ * The CURRENT canonical proposition groups raw claims whose fingerprints
+ * coincide once player/coach subjects resolve to their survivors (every other
+ * dimension matches exactly). Recording joins the group instead of creating a
+ * duplicate, model-facing as-of reads aggregate the group, and its
+ * representative is the earliest member. A merge that makes two raw claims
+ * one proposition is a visible collision, never hidden and never blocked.
  */
 
 export const CLAIM_KINDS = [
@@ -129,7 +139,14 @@ export type ClaimInput = {
   assertedByVersion?: string | null;
 };
 
-export type RecordClaimResult = { status: "recorded" | "existing"; claim_id: string; first_seen_at: string };
+/** claim_id is the canonical group's representative. */
+export type RecordClaimResult = {
+  status: "recorded" | "existing";
+  claim_id: string;
+  first_seen_at: string;
+  member_claim_ids: string[];
+  collision: boolean;
+};
 
 /** Exactly one cited row per evidence item. */
 export type ResolutionEvidenceInput = {
@@ -273,10 +290,26 @@ export function independentSourceCount(
   return new Set(perDocument.values()).size;
 }
 
-/** Rows returned by the knowledge as-of functions. */
+/** Row returned by public.knowledge_canonical_claims. */
+export type CanonicalClaimRow = {
+  claim_id: string;
+  canonical_claim_id: string;
+  member_claim_ids: string[];
+  collision: boolean;
+};
+
+/**
+ * Rows returned by the knowledge as-of functions. Resolutions and support are
+ * for the requested claim's current canonical proposition; resolution_claim_id
+ * is the raw member the chosen resolution belongs to (a prediction links that
+ * pair).
+ */
 export type ClaimResolutionAsOfRow = {
   claim_id: string;
+  canonical_claim_id: string;
+  member_claim_ids: string[];
   resolution_id: string | null;
+  resolution_claim_id: string | null;
   resolution_version: number | null;
   status: ResolutionStatus;
   confidence: number | null;
@@ -286,6 +319,12 @@ export type ClaimResolutionAsOfRow = {
   first_seen_at: string | null;
 };
 
+/**
+ * observation_count: every visible observation row (extraction volume).
+ * document_count: distinct documents.
+ * independent_source_count: distinct syndication/content keys over each
+ * document's latest observation; corroboration must use this one.
+ */
 export type ClaimSupportAsOfRow = {
   relationship: ObservationRelationship;
   observation_count: number;
@@ -297,6 +336,7 @@ export const KNOWLEDGE_FUNCTIONS = {
   recordDocumentVersion: "knowledge_record_document_version",
   recordClaim: "knowledge_record_claim",
   recordClaimResolution: "knowledge_record_claim_resolution",
+  canonicalClaims: "knowledge_canonical_claims",
   documentVersionAsOf: "knowledge_document_version_as_of",
   claimResolutionsAsOf: "knowledge_claim_resolutions_as_of",
   claimSupportAsOf: "knowledge_claim_support_as_of",
