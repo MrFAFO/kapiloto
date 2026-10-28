@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import test from "node:test";
 
 const ROOT = process.cwd();
-const V4_MIGRATION = /_kapiloto_v4_entities_match_ledger\.sql$/;
+const V4_MIGRATIONS = [/_kapiloto_v4_entities_match_ledger\.sql$/, /_kapiloto_v4_knowledge_prediction_registry\.sql$/];
 const V4_TABLES = new Set([
   "players",
   "player_aliases",
@@ -21,6 +21,20 @@ const V4_TABLES = new Set([
   "match_ledger_stat_definitions",
   "match_ledger_team_stats",
   "match_ledger_game_state_segments",
+  "knowledge_documents",
+  "knowledge_document_versions",
+  "knowledge_claims",
+  "knowledge_claim_observations",
+  "knowledge_claim_relations",
+  "knowledge_claim_resolutions",
+  "knowledge_resolution_evidence",
+  "prediction_snapshots",
+  "prediction_ledger_inputs",
+  "prediction_document_inputs",
+  "prediction_claim_inputs",
+  "prediction_claim_observation_inputs",
+  "prediction_reference_inputs",
+  "prediction_identity_bindings",
 ]);
 
 function sourceFiles(dir: string): string[] {
@@ -49,22 +63,33 @@ test("V4 runtime modules depend on nothing in V3 research", () => {
   assert.deepEqual(offenders, []);
 });
 
-test("the V4 migration is the latest and strictly additive", () => {
+test("the V4 migrations are the latest, in order, and strictly additive", () => {
   const dir = join(ROOT, "supabase", "migrations");
   const files = readdirSync(dir).filter((name) => name.endsWith(".sql")).sort();
-  const v4 = files.filter((file) => V4_MIGRATION.test(file));
-  assert.equal(v4.length, 1);
-  assert.equal(files[files.length - 1], v4[0]);
-  const sql = readFileSync(join(dir, v4[0]), "utf8").toLowerCase();
+  const v4 = V4_MIGRATIONS.map((pattern) => {
+    const matches = files.filter((file) => pattern.test(file));
+    assert.equal(matches.length, 1, String(pattern));
+    return matches[0];
+  });
+  // 1A then 1B, and nothing after them.
+  assert.deepEqual(files.slice(-v4.length), v4);
+  for (const file of v4) {
+    const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
 
-  assert.doesNotMatch(sql, /\bdrop\s+(table|column|function|index|trigger|policy|schema|view)\b/);
-  assert.doesNotMatch(sql, /\bcreate\s+policy\b/);
-  assert.doesNotMatch(sql, /\bsecurity\s+definer\b/);
-  assert.doesNotMatch(sql, /\bgrant\s+(select|insert|update|delete|all)\b[^;]*\bto\s+(anon|authenticated|public)\b/);
-  for (const match of sql.matchAll(/\balter\s+table\s+public\.([a-z_]+)/g)) {
-    assert.ok(V4_TABLES.has(match[1]), `alters existing table ${match[1]}`);
+    assert.doesNotMatch(sql, /\bdrop\s+(table|column|function|index|trigger|policy|schema|view)\b/, file);
+    assert.doesNotMatch(sql, /\bcreate\s+policy\b/, file);
+    assert.doesNotMatch(sql, /\bsecurity\s+definer\b/, file);
+    assert.doesNotMatch(sql, /\bgrant\s+(select|insert|update|delete|all)\b[^;]*\bto\s+(anon|authenticated|public)\b/, file);
+    for (const match of sql.matchAll(/\balter\s+table\s+public\.([a-z_]+)/g)) {
+      assert.ok(V4_TABLES.has(match[1]), `${file} alters existing table ${match[1]}`);
+    }
+    for (const match of sql.matchAll(/\bcreate\s+table\s+public\.([a-z_]+)/g)) {
+      assert.ok(V4_TABLES.has(match[1]), `${file} creates unexpected table ${match[1]}`);
+    }
   }
-  for (const match of sql.matchAll(/\bcreate\s+table\s+public\.([a-z_]+)/g)) {
-    assert.ok(V4_TABLES.has(match[1]), `unexpected table ${match[1]}`);
+  // 1B adds no trigger, constraint or index to an existing (pre-V4) table.
+  const knowledge = readFileSync(join(dir, v4[1]), "utf8").toLowerCase();
+  for (const match of knowledge.matchAll(/\bon\s+public\.([a-z_]+)/g)) {
+    assert.ok(V4_TABLES.has(match[1]), `1B attaches to existing table ${match[1]}`);
   }
 });
