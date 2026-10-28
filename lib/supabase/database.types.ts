@@ -55,6 +55,91 @@ export type Database = {
           },
         ]
       }
+      coach_aliases: {
+        Row: {
+          alias: string
+          alias_kind: string
+          coach_id: string
+          created_at: string
+          id: string
+          language_code: string | null
+          normalized_alias: string | null
+          provider: string | null
+          source: string
+        }
+        Insert: {
+          alias: string
+          alias_kind: string
+          coach_id: string
+          created_at?: string
+          id?: string
+          language_code?: string | null
+          normalized_alias?: never
+          provider?: string | null
+          source?: string
+        }
+        Update: {
+          alias?: string
+          alias_kind?: string
+          coach_id?: string
+          created_at?: string
+          id?: string
+          language_code?: string | null
+          normalized_alias?: never
+          provider?: string | null
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coach_aliases_coach_id_fkey"
+            columns: ["coach_id"]
+            isOneToOne: false
+            referencedRelation: "coaches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      coaches: {
+        Row: {
+          canonical_name: string
+          created_at: string
+          date_of_birth: string | null
+          id: string
+          identity_status: string
+          merged_into_coach_id: string | null
+          nationality_code: string | null
+          updated_at: string
+        }
+        Insert: {
+          canonical_name: string
+          created_at?: string
+          date_of_birth?: string | null
+          id?: string
+          identity_status?: string
+          merged_into_coach_id?: string | null
+          nationality_code?: string | null
+          updated_at?: string
+        }
+        Update: {
+          canonical_name?: string
+          created_at?: string
+          date_of_birth?: string | null
+          id?: string
+          identity_status?: string
+          merged_into_coach_id?: string | null
+          nationality_code?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coaches_merged_into_coach_id_fkey"
+            columns: ["merged_into_coach_id"]
+            isOneToOne: false
+            referencedRelation: "coaches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       competitions: {
         Row: {
           canonical_name: string
@@ -1832,6 +1917,670 @@ export type Database = {
         }
         Relationships: []
       }
+      match_ledger_events: {
+        Row: {
+          coach_id: string | null
+          detail: Json
+          event_type: string
+          id: string
+          minute: number | null
+          observation_id: string
+          period: string | null
+          player_id: string | null
+          provider_event_id: string | null
+          provider_event_type: string | null
+          related_player_id: string | null
+          second: number | null
+          sequence_no: number
+          staff_role: string | null
+          stoppage_minute: number | null
+          team_id: string
+        }
+        Insert: {
+          coach_id?: string | null
+          detail?: Json
+          event_type: string
+          id?: string
+          minute?: number | null
+          observation_id: string
+          period?: string | null
+          player_id?: string | null
+          provider_event_id?: string | null
+          provider_event_type?: string | null
+          related_player_id?: string | null
+          second?: number | null
+          sequence_no: number
+          staff_role?: string | null
+          stoppage_minute?: number | null
+          team_id: string
+        }
+        Update: {
+          coach_id?: string | null
+          detail?: Json
+          event_type?: string
+          id?: string
+          minute?: number | null
+          observation_id?: string
+          period?: string | null
+          player_id?: string | null
+          provider_event_id?: string | null
+          provider_event_type?: string | null
+          related_player_id?: string | null
+          second?: number | null
+          sequence_no?: number
+          staff_role?: string | null
+          stoppage_minute?: number | null
+          team_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_events_coach_id_fkey"
+            columns: ["coach_id"]
+            isOneToOne: false
+            referencedRelation: "coaches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_ledger_events_observation_id_related_player_id_fkey"
+            columns: ["observation_id", "related_player_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_players"
+            referencedColumns: ["observation_id", "player_id"]
+          },
+          {
+            foreignKeyName: "match_ledger_events_observation_id_team_id_fkey"
+            columns: ["observation_id", "team_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_team_records"
+            referencedColumns: ["observation_id", "team_id"]
+          },
+          {
+            foreignKeyName: "match_ledger_events_observation_id_team_id_player_id_fkey"
+            columns: ["observation_id", "team_id", "player_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_players"
+            referencedColumns: ["observation_id", "team_id", "player_id"]
+          },
+        ]
+      }
+      match_ledger_game_state_segments: {
+        Row: {
+          derivation_version: string
+          derived_at: string
+          from_minute: number
+          from_stoppage_minute: number
+          goals_against: number
+          goals_for: number
+          id: string
+          men_against: number
+          men_diff: number | null
+          men_for: number
+          observation_id: string
+          period: string
+          score_diff: number | null
+          segment_index: number
+          team_id: string
+          to_minute: number
+          to_stoppage_minute: number
+        }
+        Insert: {
+          derivation_version: string
+          derived_at?: string
+          from_minute: number
+          from_stoppage_minute?: number
+          goals_against: number
+          goals_for: number
+          id?: string
+          men_against: number
+          men_diff?: never
+          men_for: number
+          observation_id: string
+          period: string
+          score_diff?: never
+          segment_index: number
+          team_id: string
+          to_minute: number
+          to_stoppage_minute?: number
+        }
+        Update: {
+          derivation_version?: string
+          derived_at?: string
+          from_minute?: number
+          from_stoppage_minute?: number
+          goals_against?: number
+          goals_for?: number
+          id?: string
+          men_against?: number
+          men_diff?: never
+          men_for?: number
+          observation_id?: string
+          period?: string
+          score_diff?: never
+          segment_index?: number
+          team_id?: string
+          to_minute?: number
+          to_stoppage_minute?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_game_state_segments_observation_id_team_id_fkey"
+            columns: ["observation_id", "team_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_team_records"
+            referencedColumns: ["observation_id", "team_id"]
+          },
+        ]
+      }
+      match_ledger_observations: {
+        Row: {
+          away_goals_90: number | null
+          away_goals_aet: number | null
+          away_penalties: number | null
+          capture_mode: string
+          content_sha256: string
+          contract_version: string
+          first_seen_at: string
+          fixture_id: string
+          home_goals_90: number | null
+          home_goals_aet: number | null
+          home_penalties: number | null
+          id: string
+          ingest_statement_at: string
+          ingest_version: string
+          kickoff_at: string | null
+          match_status: string | null
+          neutral_venue: boolean | null
+          observation_kind: string
+          observation_version: number
+          provider: string
+          provider_endpoint: string | null
+          provider_fixture_id: string
+          raw_observation_id: string | null
+          raw_payload_sha256: string | null
+          retrieved_at: string
+          source_updated_at: string | null
+          source_version: string | null
+          withdrawal_reason: string | null
+        }
+        Insert: {
+          away_goals_90?: number | null
+          away_goals_aet?: number | null
+          away_penalties?: number | null
+          capture_mode: string
+          content_sha256: string
+          contract_version: string
+          first_seen_at?: string
+          fixture_id: string
+          home_goals_90?: number | null
+          home_goals_aet?: number | null
+          home_penalties?: number | null
+          id?: string
+          ingest_statement_at?: string
+          ingest_version: string
+          kickoff_at?: string | null
+          match_status?: string | null
+          neutral_venue?: boolean | null
+          observation_kind?: string
+          observation_version: number
+          provider: string
+          provider_endpoint?: string | null
+          provider_fixture_id: string
+          raw_observation_id?: string | null
+          raw_payload_sha256?: string | null
+          retrieved_at: string
+          source_updated_at?: string | null
+          source_version?: string | null
+          withdrawal_reason?: string | null
+        }
+        Update: {
+          away_goals_90?: number | null
+          away_goals_aet?: number | null
+          away_penalties?: number | null
+          capture_mode?: string
+          content_sha256?: string
+          contract_version?: string
+          first_seen_at?: string
+          fixture_id?: string
+          home_goals_90?: number | null
+          home_goals_aet?: number | null
+          home_penalties?: number | null
+          id?: string
+          ingest_statement_at?: string
+          ingest_version?: string
+          kickoff_at?: string | null
+          match_status?: string | null
+          neutral_venue?: boolean | null
+          observation_kind?: string
+          observation_version?: number
+          provider?: string
+          provider_endpoint?: string | null
+          provider_fixture_id?: string
+          raw_observation_id?: string | null
+          raw_payload_sha256?: string | null
+          retrieved_at?: string
+          source_updated_at?: string | null
+          source_version?: string | null
+          withdrawal_reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_observations_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      match_ledger_players: {
+        Row: {
+          appeared: boolean | null
+          data_completeness: string
+          entered_minute: number | null
+          exited_minute: number | null
+          first_seen_at: string
+          formation_field: string | null
+          formation_position: number | null
+          id: string
+          is_captain: boolean | null
+          kickoff_at: string
+          lineup_role: string
+          minutes_played: number | null
+          observation_id: string
+          player_id: string
+          position_code: string | null
+          provider_player_id: string | null
+          provider_player_name: string | null
+          provider_position: string | null
+          shirt_number: number | null
+          team_id: string
+        }
+        Insert: {
+          appeared?: boolean | null
+          data_completeness: string
+          entered_minute?: number | null
+          exited_minute?: number | null
+          first_seen_at: string
+          formation_field?: string | null
+          formation_position?: number | null
+          id?: string
+          is_captain?: boolean | null
+          kickoff_at: string
+          lineup_role: string
+          minutes_played?: number | null
+          observation_id: string
+          player_id: string
+          position_code?: string | null
+          provider_player_id?: string | null
+          provider_player_name?: string | null
+          provider_position?: string | null
+          shirt_number?: number | null
+          team_id: string
+        }
+        Update: {
+          appeared?: boolean | null
+          data_completeness?: string
+          entered_minute?: number | null
+          exited_minute?: number | null
+          first_seen_at?: string
+          formation_field?: string | null
+          formation_position?: number | null
+          id?: string
+          is_captain?: boolean | null
+          kickoff_at?: string
+          lineup_role?: string
+          minutes_played?: number | null
+          observation_id?: string
+          player_id?: string
+          position_code?: string | null
+          provider_player_id?: string | null
+          provider_player_name?: string | null
+          provider_position?: string | null
+          shirt_number?: number | null
+          team_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_players_observation_id_team_id_fkey"
+            columns: ["observation_id", "team_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_team_records"
+            referencedColumns: ["observation_id", "team_id"]
+          },
+          {
+            foreignKeyName: "match_ledger_players_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      match_ledger_stat_definitions: {
+        Row: {
+          created_at: string
+          definition_version: string
+          description: string | null
+          id: string
+          provider: string
+          provider_stat_name: string | null
+          provider_stat_type: string
+          stat_key: string
+          unit: string
+        }
+        Insert: {
+          created_at?: string
+          definition_version: string
+          description?: string | null
+          id?: string
+          provider: string
+          provider_stat_name?: string | null
+          provider_stat_type: string
+          stat_key: string
+          unit: string
+        }
+        Update: {
+          created_at?: string
+          definition_version?: string
+          description?: string | null
+          id?: string
+          provider?: string
+          provider_stat_name?: string | null
+          provider_stat_type?: string
+          stat_key?: string
+          unit?: string
+        }
+        Relationships: [
+
+        ]
+      }
+      match_ledger_substitutions: {
+        Row: {
+          id: string
+          minute: number | null
+          observation_id: string
+          period: string | null
+          player_off_id: string
+          player_on_id: string
+          provider_event_id: string | null
+          reason: string | null
+          sequence_no: number
+          stoppage_minute: number | null
+          team_id: string
+        }
+        Insert: {
+          id?: string
+          minute?: number | null
+          observation_id: string
+          period?: string | null
+          player_off_id: string
+          player_on_id: string
+          provider_event_id?: string | null
+          reason?: string | null
+          sequence_no: number
+          stoppage_minute?: number | null
+          team_id: string
+        }
+        Update: {
+          id?: string
+          minute?: number | null
+          observation_id?: string
+          period?: string | null
+          player_off_id?: string
+          player_on_id?: string
+          provider_event_id?: string | null
+          reason?: string | null
+          sequence_no?: number
+          stoppage_minute?: number | null
+          team_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_substitutions_observation_id_team_id_fkey"
+            columns: ["observation_id", "team_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_team_records"
+            referencedColumns: ["observation_id", "team_id"]
+          },
+          {
+            foreignKeyName: "match_ledger_substitutions_observation_id_team_id_player__fkey1"
+            columns: ["observation_id", "team_id", "player_on_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_players"
+            referencedColumns: ["observation_id", "team_id", "player_id"]
+          },
+          {
+            foreignKeyName: "match_ledger_substitutions_observation_id_team_id_player_o_fkey"
+            columns: ["observation_id", "team_id", "player_off_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_players"
+            referencedColumns: ["observation_id", "team_id", "player_id"]
+          },
+        ]
+      }
+      match_ledger_team_records: {
+        Row: {
+          coach_id: string | null
+          events_status: string
+          first_seen_at: string
+          fixture_id: string
+          formation_nominal: string | null
+          id: string
+          kickoff_at: string
+          lineup_status: string
+          observation_id: string
+          opponent_team_id: string
+          provider_coach_id: string | null
+          provider_coach_name: string | null
+          side: string
+          statistics_status: string
+          substitutions_status: string
+          team_id: string
+        }
+        Insert: {
+          coach_id?: string | null
+          events_status: string
+          first_seen_at: string
+          fixture_id: string
+          formation_nominal?: string | null
+          id?: string
+          kickoff_at: string
+          lineup_status: string
+          observation_id: string
+          opponent_team_id: string
+          provider_coach_id?: string | null
+          provider_coach_name?: string | null
+          side: string
+          statistics_status: string
+          substitutions_status: string
+          team_id: string
+        }
+        Update: {
+          coach_id?: string | null
+          events_status?: string
+          first_seen_at?: string
+          fixture_id?: string
+          formation_nominal?: string | null
+          id?: string
+          kickoff_at?: string
+          lineup_status?: string
+          observation_id?: string
+          opponent_team_id?: string
+          provider_coach_id?: string | null
+          provider_coach_name?: string | null
+          side?: string
+          statistics_status?: string
+          substitutions_status?: string
+          team_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_team_records_coach_id_fkey"
+            columns: ["coach_id"]
+            isOneToOne: false
+            referencedRelation: "coaches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_ledger_team_records_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_ledger_team_records_observation_id_fkey"
+            columns: ["observation_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_observations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_ledger_team_records_opponent_team_id_fkey"
+            columns: ["opponent_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_ledger_team_records_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      match_ledger_team_stats: {
+        Row: {
+          id: string
+          observation_id: string
+          period: string
+          stat_definition_id: string
+          team_id: string
+          value_numeric: number
+        }
+        Insert: {
+          id?: string
+          observation_id: string
+          period?: string
+          stat_definition_id: string
+          team_id: string
+          value_numeric: number
+        }
+        Update: {
+          id?: string
+          observation_id?: string
+          period?: string
+          stat_definition_id?: string
+          team_id?: string
+          value_numeric?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_team_stats_observation_id_team_id_fkey"
+            columns: ["observation_id", "team_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_team_records"
+            referencedColumns: ["observation_id", "team_id"]
+          },
+          {
+            foreignKeyName: "match_ledger_team_stats_stat_definition_id_fkey"
+            columns: ["stat_definition_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_stat_definitions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      player_aliases: {
+        Row: {
+          alias: string
+          alias_kind: string
+          created_at: string
+          id: string
+          language_code: string | null
+          normalized_alias: string | null
+          player_id: string
+          provider: string | null
+          source: string
+        }
+        Insert: {
+          alias: string
+          alias_kind: string
+          created_at?: string
+          id?: string
+          language_code?: string | null
+          normalized_alias?: never
+          player_id: string
+          provider?: string | null
+          source?: string
+        }
+        Update: {
+          alias?: string
+          alias_kind?: string
+          created_at?: string
+          id?: string
+          language_code?: string | null
+          normalized_alias?: never
+          player_id?: string
+          provider?: string | null
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "player_aliases_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      players: {
+        Row: {
+          canonical_name: string
+          created_at: string
+          date_of_birth: string | null
+          height_cm: number | null
+          id: string
+          identity_status: string
+          merged_into_player_id: string | null
+          nationality_code: string | null
+          updated_at: string
+        }
+        Insert: {
+          canonical_name: string
+          created_at?: string
+          date_of_birth?: string | null
+          height_cm?: number | null
+          id?: string
+          identity_status?: string
+          merged_into_player_id?: string | null
+          nationality_code?: string | null
+          updated_at?: string
+        }
+        Update: {
+          canonical_name?: string
+          created_at?: string
+          date_of_birth?: string | null
+          height_cm?: number | null
+          id?: string
+          identity_status?: string
+          merged_into_player_id?: string | null
+          nationality_code?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "players_merged_into_player_id_fkey"
+            columns: ["merged_into_player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -1858,6 +2607,50 @@ export type Database = {
           username?: string
         }
         Relationships: []
+      }
+      provider_coach_mappings: {
+        Row: {
+          coach_id: string
+          created_at: string
+          last_verified_at: string | null
+          mapping_confidence: number | null
+          mapping_status: string
+          provider: string
+          provider_coach_id: string
+          provider_name: string | null
+          updated_at: string
+        }
+        Insert: {
+          coach_id: string
+          created_at?: string
+          last_verified_at?: string | null
+          mapping_confidence?: number | null
+          mapping_status?: string
+          provider: string
+          provider_coach_id: string
+          provider_name?: string | null
+          updated_at?: string
+        }
+        Update: {
+          coach_id?: string
+          created_at?: string
+          last_verified_at?: string | null
+          mapping_confidence?: number | null
+          mapping_status?: string
+          provider?: string
+          provider_coach_id?: string
+          provider_name?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_coach_mappings_coach_id_fkey"
+            columns: ["coach_id"]
+            isOneToOne: false
+            referencedRelation: "coaches"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       provider_competition_mappings: {
         Row: {
@@ -1938,6 +2731,50 @@ export type Database = {
             columns: ["round_game_id"]
             isOneToOne: false
             referencedRelation: "round_games"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      provider_player_mappings: {
+        Row: {
+          created_at: string
+          last_verified_at: string | null
+          mapping_confidence: number | null
+          mapping_status: string
+          player_id: string
+          provider: string
+          provider_name: string | null
+          provider_player_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          last_verified_at?: string | null
+          mapping_confidence?: number | null
+          mapping_status?: string
+          player_id: string
+          provider: string
+          provider_name?: string | null
+          provider_player_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          last_verified_at?: string | null
+          mapping_confidence?: number | null
+          mapping_status?: string
+          player_id?: string
+          provider?: string
+          provider_name?: string | null
+          provider_player_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_player_mappings_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
             referencedColumns: ["id"]
           },
         ]
@@ -2200,6 +3037,90 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "team_aliases_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      team_coach_tenures: {
+        Row: {
+          assertion_status: string
+          coach_id: string
+          ends_on_earliest: string | null
+          ends_on_latest: string | null
+          first_seen_at: string
+          id: string
+          ingest_version: string
+          provider: string | null
+          provider_record_id: string | null
+          raw_observation_id: string | null
+          retrieved_at: string | null
+          role: string
+          source_fingerprint: string | null
+          source_kind: string
+          source_reference: string | null
+          starts_on_earliest: string
+          starts_on_latest: string
+          team_id: string
+          tenure_key: string
+          tenure_version: number
+        }
+        Insert: {
+          assertion_status?: string
+          coach_id: string
+          ends_on_earliest?: string | null
+          ends_on_latest?: string | null
+          first_seen_at?: string
+          id?: string
+          ingest_version: string
+          provider?: string | null
+          provider_record_id?: string | null
+          raw_observation_id?: string | null
+          retrieved_at?: string | null
+          role?: string
+          source_fingerprint?: string | null
+          source_kind: string
+          source_reference?: string | null
+          starts_on_earliest: string
+          starts_on_latest: string
+          team_id: string
+          tenure_key: string
+          tenure_version: number
+        }
+        Update: {
+          assertion_status?: string
+          coach_id?: string
+          ends_on_earliest?: string | null
+          ends_on_latest?: string | null
+          first_seen_at?: string
+          id?: string
+          ingest_version?: string
+          provider?: string | null
+          provider_record_id?: string | null
+          raw_observation_id?: string | null
+          retrieved_at?: string | null
+          role?: string
+          source_fingerprint?: string | null
+          source_kind?: string
+          source_reference?: string | null
+          starts_on_earliest?: string
+          starts_on_latest?: string
+          team_id?: string
+          tenure_key?: string
+          tenure_version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_coach_tenures_coach_id_fkey"
+            columns: ["coach_id"]
+            isOneToOne: false
+            referencedRelation: "coaches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "team_coach_tenures_team_id_fkey"
             columns: ["team_id"]
             isOneToOne: false
             referencedRelation: "teams"
@@ -2584,6 +3505,137 @@ export type Database = {
       toto_import_round_snapshot_v2: {
         Args: { p_snapshot: Json }
         Returns: Json
+      }
+      coach_alias_candidates: {
+        Args: { p_alias: string }
+        Returns: {
+          canonical_coach_id: string
+          coach_id: string
+        }[]
+      }
+      match_ledger_mapping_conflicts: {
+        Args: { p_provider: string }
+        Returns: {
+          conflict_kind: string
+          fixture_id: string
+          mapped_canonical_id: string | null
+          observation_id: string
+          provider_entity_id: string
+          stored_canonical_id: string
+        }[]
+      }
+      match_ledger_observation_as_of: {
+        Args: { p_cutoff: string; p_fixture_id: string; p_provider: string }
+        Returns: string
+      }
+      match_ledger_provider_player_matches_as_of: {
+        Args: {
+          p_cutoff: string
+          p_limit?: number
+          p_player_id: string
+          p_provider: string
+        }
+        Returns: {
+          appeared: boolean | null
+          canonical_player_id: string
+          data_completeness: string
+          entered_minute: number | null
+          exited_minute: number | null
+          first_seen_at: string
+          fixture_id: string
+          formation_position: number | null
+          is_captain: boolean | null
+          kickoff_at: string
+          lineup_role: string
+          minutes_played: number | null
+          observation_id: string
+          observation_version: number
+          observed_player_id: string
+          position_code: string | null
+          provider: string
+          team_id: string
+        }[]
+      }
+      match_ledger_provider_team_matches_as_of: {
+        Args: {
+          p_cutoff: string
+          p_limit?: number
+          p_provider: string
+          p_team_id: string
+        }
+        Returns: {
+          canonical_coach_id: string | null
+          events_status: string
+          first_seen_at: string
+          fixture_id: string
+          formation_nominal: string | null
+          goals_against_90: number | null
+          goals_for_90: number | null
+          kickoff_at: string
+          lineup_status: string
+          neutral_venue: boolean | null
+          observation_id: string
+          observation_version: number
+          observed_coach_id: string | null
+          opponent_team_id: string
+          provider: string
+          side: string
+          statistics_status: string
+          substitutions_status: string
+        }[]
+      }
+      match_ledger_record_observation: {
+        Args: { p_observation: Json }
+        Returns: Json
+      }
+      player_alias_candidates: {
+        Args: { p_alias: string }
+        Returns: {
+          canonical_player_id: string
+          player_id: string
+        }[]
+      }
+      resolve_provider_coach_ids: {
+        Args: { p_provider: string; p_provider_coach_ids: string[] }
+        Returns: {
+          canonical_coach_id: string
+          mapped_coach_id: string
+          provider_coach_id: string
+        }[]
+      }
+      resolve_provider_player_ids: {
+        Args: { p_provider: string; p_provider_player_ids: string[] }
+        Returns: {
+          canonical_player_id: string
+          mapped_player_id: string
+          provider_player_id: string
+        }[]
+      }
+      team_coach_tenures_as_of: {
+        Args: { p_cutoff: string; p_team_id: string }
+        Returns: {
+          assertion_status: string
+          canonical_coach_id: string
+          coach_id: string
+          ends_on_earliest: string | null
+          ends_on_latest: string | null
+          first_seen_at: string
+          id: string
+          ingest_version: string
+          provider: string | null
+          provider_record_id: string | null
+          raw_observation_id: string | null
+          retrieved_at: string | null
+          role: string
+          source_fingerprint: string | null
+          source_kind: string
+          source_reference: string | null
+          starts_on_earliest: string
+          starts_on_latest: string
+          team_id: string
+          tenure_key: string
+          tenure_version: number
+        }[]
       }
       toto_save_ticket_draft: {
         Args: {
