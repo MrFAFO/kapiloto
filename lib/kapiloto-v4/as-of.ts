@@ -5,7 +5,8 @@ import type { MatchLedgerObservation, TeamSide } from "./match-ledger";
  *
  * "What did Kapiloto know at cutoff T?" is answered ONLY by information time:
  *   1. keep versions with firstSeenAt <= T;
- *   2. per (fixture, provider) take the highest surviving version;
+ *   2. per (fixture, provider) take the highest surviving version; if it is a
+ *      withdrawal, the pair contributes nothing;
  *   3. only then apply event-time filters (kickoff before T, status).
  *
  * Event time never admits a row: a provider record about an Oct 30 match that
@@ -13,16 +14,18 @@ import type { MatchLedgerObservation, TeamSide } from "./match-ledger";
  * event-time filter before step 2 would be wrong too: it could resurrect an
  * older version that a visible newer version had corrected.
  *
- * The SQL functions public.match_ledger_observation_as_of,
- * public.match_ledger_team_matches_as_of and public.team_coach_tenures_as_of
- * implement the same rule in the database; this module mirrors it for
- * in-memory replay and tests.
+ * Multi-provider contract: every history API is PROVIDER-SCOPED. It takes one
+ * provider and returns at most one row per canonical fixture, so a last-N
+ * window can never count a match twice. There is deliberately no API that
+ * unions providers; a fused canonical history needs an explicit provider
+ * precedence/fusion policy and will be a separate, named API. Never merge the
+ * results of two provider-scoped calls into one last-N list.
  */
 
 export const MATCH_LEDGER_AS_OF_FUNCTIONS = {
   observation: "match_ledger_observation_as_of",
-  teamMatches: "match_ledger_team_matches_as_of",
-  playerMatches: "match_ledger_player_matches_as_of",
+  providerTeamMatches: "match_ledger_provider_team_matches_as_of",
+  providerPlayerMatches: "match_ledger_provider_player_matches_as_of",
   coachTenures: "team_coach_tenures_as_of",
 } as const;
 
@@ -37,17 +40,21 @@ type Versioned = Pick<
   Partial<Pick<MatchLedgerObservation, "observationKind">>;
 
 /**
- * Latest version per (fixture, provider) among versions known at the cutoff.
- * A latest version that is a withdrawal hides the pair entirely.
+ * One provider's latest version per fixture among versions known at the
+ * cutoff (at most one per fixture). A latest version that is a withdrawal
+ * hides the fixture.
  */
-export function latestObservationsAsOf<T extends Versioned>(observations: readonly T[], cutoff: string): T[] {
+export function latestProviderObservationsAsOf<T extends Versioned>(
+  observations: readonly T[],
+  provider: string,
+  cutoff: string,
+): T[] {
   const latest = new Map<string, T>();
   for (const observation of observations) {
-    if (!isKnownAsOf(observation, cutoff)) continue;
-    const key = `${observation.fixtureId}|${observation.provider}`;
-    const current = latest.get(key);
+    if (observation.provider !== provider || !isKnownAsOf(observation, cutoff)) continue;
+    const current = latest.get(observation.fixtureId);
     if (!current || observation.observationVersion > current.observationVersion) {
-      latest.set(key, observation);
+      latest.set(observation.fixtureId, observation);
     }
   }
   return [...latest.values()].filter((observation) => observation.observationKind !== "withdrawal");
@@ -66,8 +73,8 @@ export function tenuresAsOf<
   return [...latest.values()].filter((tenure) => tenure.assertionStatus === "asserted");
 }
 
-/** Row returned by public.match_ledger_player_matches_as_of. */
-export type PlayerMatchAsOfRow = {
+/** Row returned by public.match_ledger_provider_player_matches_as_of. */
+export type ProviderPlayerMatchAsOfRow = {
   observation_id: string;
   fixture_id: string;
   provider: string;
@@ -86,8 +93,8 @@ export type PlayerMatchAsOfRow = {
   data_completeness: string;
 };
 
-/** Row returned by public.match_ledger_team_matches_as_of. */
-export type TeamMatchAsOfRow = {
+/** Row returned by public.match_ledger_provider_team_matches_as_of. */
+export type ProviderTeamMatchAsOfRow = {
   observation_id: string;
   fixture_id: string;
   provider: string;

@@ -12,18 +12,18 @@ import {
 } from "../match-ledger";
 
 /**
- * Test-only information clock. Production stamps first_seen_at with now();
- * tests replace the (owner-only) clock function so a test can simulate
- * observations first seen on specific historical dates.
+ * Test-only information clock. Production stamps first_seen_at with
+ * clock_timestamp(); tests replace the (owner-only) clock function so a test
+ * can simulate observations first seen on specific historical dates.
  */
 const TEST_CLOCK = `
 create or replace function private.kapiloto_information_clock()
 returns timestamptz
 language sql
-stable
+volatile
 set search_path = ''
 as $$
-  select coalesce(nullif(current_setting('kapiloto.test_clock', true), '')::timestamptz, now())
+  select coalesce(nullif(current_setting('kapiloto.test_clock', true), '')::timestamptz, clock_timestamp())
 $$;
 `;
 
@@ -251,7 +251,7 @@ export function realisticObservation(
     sentOff.exitedMinute = 80;
     sentOff.minutesPlayed = 80;
   }
-  events.push({ ...event(8, home, "yellow_card", 0, 88, "second_half"), playerId: null, coachId: home.coachId });
+  events.push({ ...event(8, home, "yellow_card", 0, 88, "second_half"), playerId: null, coachId: home.coachId, staffRole: "head_coach" });
 
   const stats: TeamStatObservation[] = [
     [home, 54, 14, 5, 1.82, 6],

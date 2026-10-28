@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { latestObservationsAsOf, tenuresAsOf } from "./as-of";
+import { latestProviderObservationsAsOf, tenuresAsOf } from "./as-of";
 import {
   buildMatchLedgerObservationPayload,
   scoringTeamId,
@@ -70,6 +70,36 @@ test("validator reports bundle inconsistencies before the database does", () => 
   assert.ok(validateMatchLedgerObservation(badFormation).some((issue) => issue.includes("invalid nominal formation")));
 });
 
+test("validator mirrors the database completeness, staff and related-player rules", () => {
+  const issuesFor = (mutate: (input: ReturnType<typeof observation>) => void) => {
+    const input = observation();
+    mutate(input);
+    return validateMatchLedgerObservation(input);
+  };
+  assert.ok(issuesFor((i) => { i.homeGoals90 = null; i.awayGoals90 = null; }).some((x) => x.includes("90-minute score")));
+  assert.ok(issuesFor((i) => { i.teams[1].substitutionsStatus = "not_provided"; }).some((x) => x.includes("substitutions are marked not_provided")));
+  assert.ok(issuesFor((i) => { i.teams[0].eventsStatus = "not_provided"; }).some((x) => x.includes("events are marked not_provided")));
+  assert.ok(issuesFor((i) => { i.teams[0].statisticsStatus = "not_provided"; }).some((x) => x.includes("statistics are marked not_provided")));
+  assert.ok(issuesFor((i) => { i.events![7].staffRole = null; }).some((x) => x.includes("staffRole is required")));
+  assert.ok(issuesFor((i) => { i.events![0].relatedPlayerId = "c9000000-0000-4000-8000-000000000001"; }).some((x) => x.includes("not in the matchday squad")));
+  assert.ok(issuesFor((i) => { i.events![1].relatedPlayerId = seed.home.playerIds[2]; }).some((x) => x.includes("cannot name a related player")));
+  // "complete" does not require at least one child.
+  assert.deepEqual(issuesFor((i) => { i.substitutions = i.substitutions!.filter((s) => s.teamId !== seed.away.teamId);
+    i.players!.filter((p) => p.teamId === seed.away.teamId && p.lineupRole === "bench").forEach((p) => { p.appeared = false; p.enteredMinute = null; });
+  }), []);
+});
+
+test("provider-scoped as-of never returns one fixture twice", () => {
+  const versions = [
+    { fixtureId: "f1", provider: "sportmonks", observationVersion: 1, firstSeenAt: "2026-10-31T09:00:00Z" },
+    { fixtureId: "f1", provider: "ifa", observationVersion: 1, firstSeenAt: "2026-10-31T10:00:00Z" },
+  ];
+  for (const provider of ["sportmonks", "ifa"]) {
+    const rows = latestProviderObservationsAsOf(versions, provider, "2026-11-01T00:00:00Z");
+    assert.deepEqual(rows.map((row) => `${row.fixtureId}:${row.provider}`), [`f1:${provider}`]);
+  }
+});
+
 test("own goals credit the opponent of the acting team", () => {
   const record = { teamId: seed.away.teamId, opponentTeamId: seed.home.teamId };
   assert.equal(scoringTeamId({ eventType: "own_goal", teamId: seed.away.teamId }, record), seed.home.teamId);
@@ -83,16 +113,16 @@ test("in-memory as-of selection uses information time, not event time", () => {
     { fixtureId: "f1", provider: "sportmonks", observationVersion: 2, firstSeenAt: "2026-11-03T09:00:00Z", kickoffAt: "2026-10-30T18:00:00Z" },
     { fixtureId: "f2", provider: "sportmonks", observationVersion: 1, firstSeenAt: "2026-11-03T09:00:00Z", kickoffAt: "2026-10-30T18:00:00Z" },
   ];
-  const nov1 = latestObservationsAsOf(versions, "2026-11-01T00:00:00Z");
+  const nov1 = latestProviderObservationsAsOf(versions, "sportmonks", "2026-11-01T00:00:00Z");
   assert.deepEqual(nov1.map((v) => `${v.fixtureId}:v${v.observationVersion}`), ["f1:v1"]);
-  const nov4 = latestObservationsAsOf(versions, "2026-11-04T00:00:00Z");
+  const nov4 = latestProviderObservationsAsOf(versions, "sportmonks", "2026-11-04T00:00:00Z");
   assert.deepEqual(nov4.map((v) => `${v.fixtureId}:v${v.observationVersion}`).sort(), ["f1:v2", "f2:v1"]);
   const withdrawn = [
     ...versions,
     { fixtureId: "f1", provider: "sportmonks", observationVersion: 3, firstSeenAt: "2026-11-05T09:00:00Z", kickoffAt: null, observationKind: "withdrawal" as const },
   ];
-  assert.deepEqual(latestObservationsAsOf(withdrawn, "2026-11-04T00:00:00Z").length, 2);
-  assert.deepEqual(latestObservationsAsOf(withdrawn, "2026-11-06T00:00:00Z").map((v) => v.fixtureId), ["f2"]);
+  assert.deepEqual(latestProviderObservationsAsOf(withdrawn, "sportmonks", "2026-11-04T00:00:00Z").length, 2);
+  assert.deepEqual(latestProviderObservationsAsOf(withdrawn, "sportmonks", "2026-11-06T00:00:00Z").map((v) => v.fixtureId), ["f2"]);
 
   const tenures = [
     { tenureKey: "t", tenureVersion: 1, firstSeenAt: "2026-09-01T00:00:00Z", assertionStatus: "asserted", end: null },

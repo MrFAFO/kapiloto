@@ -74,6 +74,17 @@ export const CARD_EVENT_TYPES: readonly MatchEventType[] = [
   "red_card",
 ];
 
+/** Event types that may name a related player (assist, penalty goalkeeper). */
+export const RELATED_PLAYER_EVENT_TYPES: readonly MatchEventType[] = [
+  "goal",
+  "penalty_goal",
+  "penalty_missed",
+];
+
+/** Required with a coach card, relative to the team record's head coach. */
+export const STAFF_ROLES = ["head_coach", "assistant_coach", "other_staff", "unknown"] as const;
+export type StaffRole = (typeof STAFF_ROLES)[number];
+
 export const STAT_UNITS = [
   "count",
   "percent",
@@ -118,6 +129,8 @@ export type MatchMinute = {
 /** Provenance and information time shared by every observation version. */
 export type MatchLedgerObservation = {
   id: string;
+  /** Payload contract the version was written under. */
+  contractVersion: typeof MATCH_LEDGER_OBSERVATION_CONTRACT_VERSION;
   fixtureId: string;
   provider: string;
   providerFixtureId: string;
@@ -132,8 +145,10 @@ export type MatchLedgerObservation = {
   /** When the ingester fetched the source. Never used for as-of filtering. */
   retrievedAt: string;
   sourceUpdatedAt: string | null;
-  /** Information time, stamped by the database. */
+  /** Information time: database clock when the header row was written. */
   firstSeenAt: string;
+  /** Sealing key (writing statement's timestamp). Never use for as-of. */
+  ingestStatementAt: string;
   observationKind: ObservationKind;
   withdrawalReason: string | null;
   /** Event time as reported in this version; null only for withdrawals. */
@@ -212,7 +227,9 @@ export type MatchEvent = MatchMinute & {
   playerId: string | null;
   /** Cards shown to staff. */
   coachId: string | null;
-  /** Assisting player for goals; goalkeeper for a saved penalty. */
+  /** Required exactly when coachId is set. */
+  staffRole?: StaffRole | null;
+  /** Assisting player for goals; goalkeeper for a penalty. Must be in the matchday squad (either team). */
   relatedPlayerId: string | null;
   providerEventId: string | null;
   providerEventType: string | null;
@@ -385,6 +402,7 @@ export function buildMatchLedgerObservationPayload(
       event_type: event.eventType,
       player_id: lowerId(event.playerId),
       coach_id: lowerId(event.coachId),
+      staff_role: nullable(event.staffRole),
       related_player_id: lowerId(event.relatedPlayerId),
       minute: event.minute,
       stoppage_minute: event.stoppageMinute,
@@ -431,9 +449,11 @@ export function buildMatchLedgerWithdrawalPayload(
 }
 
 /**
- * Bundle-level consistency checks run before calling the RPC. The database
- * enforces the same invariants; this returns readable issues instead of the
- * first constraint violation.
+ * Bundle-level consistency checks run before calling the RPC. The database is
+ * authoritative and enforces the same invariants (constraints, sealing and
+ * deferred completeness triggers); this returns readable issues instead of
+ * the first violation. Mapping, coach-identity and stat-provider checks need
+ * database state and exist only in the database.
  */
 export function validateMatchLedgerObservation(input: MatchLedgerObservationInput): string[] {
   const issues: string[] = [];
@@ -475,14 +495,25 @@ export function validateMatchLedgerObservation(input: MatchLedgerObservationInpu
     }
   }
   for (const team of input.teams) {
-    const teamPlayers = players.filter((player) => player.teamId.toLowerCase() === team.teamId.toLowerCase());
+    const teamId = team.teamId.toLowerCase();
+    const teamPlayers = players.filter((player) => player.teamId.toLowerCase() === teamId);
     const starters = teamPlayers.filter((player) => player.lineupRole === "starter");
     if (starters.length > 11) issues.push(`team ${team.teamId} has more than 11 starters`);
+    // "complete" claims full representation; zero substitutions/events is valid.
     if (team.lineupStatus === "complete" && starters.length !== 11) {
       issues.push(`team ${team.teamId} lineup is marked complete without 11 starters`);
     }
     if (team.lineupStatus === "not_provided" && teamPlayers.length > 0) {
       issues.push(`team ${team.teamId} lineup is marked not_provided but has players`);
+    }
+    if (team.substitutionsStatus === "not_provided" && (input.substitutions ?? []).some((s) => s.teamId.toLowerCase() === teamId)) {
+      issues.push(`team ${team.teamId} substitutions are marked not_provided but substitutions exist`);
+    }
+    if (team.eventsStatus === "not_provided" && (input.events ?? []).some((e) => e.teamId.toLowerCase() === teamId)) {
+      issues.push(`team ${team.teamId} events are marked not_provided but events exist`);
+    }
+    if (team.statisticsStatus === "not_provided" && (input.teamStats ?? []).some((s) => s.teamId.toLowerCase() === teamId)) {
+      issues.push(`team ${team.teamId} statistics are marked not_provided but statistics exist`);
     }
     const slots = starters.flatMap((player) => (player.formationPosition === null ? [] : [player.formationPosition]));
     if (new Set(slots).size !== slots.length) issues.push(`team ${team.teamId} repeats a formation position`);
@@ -516,6 +547,20 @@ export function validateMatchLedgerObservation(input: MatchLedgerObservationInpu
     if (event.playerId && event.coachId) issues.push(`event ${event.sequenceNo} names both a player and a coach`);
     if (event.coachId && !CARD_EVENT_TYPES.includes(event.eventType)) {
       issues.push(`event ${event.sequenceNo}: only cards can be shown to a coach`);
+    }
+    if (Boolean(event.coachId) !== Boolean(event.staffRole)) {
+      issues.push(`event ${event.sequenceNo}: staffRole is required exactly when a coach is named`);
+    }
+    if (event.relatedPlayerId) {
+      if (!RELATED_PLAYER_EVENT_TYPES.includes(event.eventType)) {
+        issues.push(`event ${event.sequenceNo}: ${event.eventType} cannot name a related player`);
+      }
+      if (!squad.has(event.relatedPlayerId.toLowerCase())) {
+        issues.push(`event ${event.sequenceNo}: related player is not in the matchday squad`);
+      }
+      if (event.playerId && event.relatedPlayerId.toLowerCase() === event.playerId.toLowerCase()) {
+        issues.push(`event ${event.sequenceNo}: related player equals the acting player`);
+      }
     }
     if (event.playerId) {
       const player = squad.get(event.playerId.toLowerCase());

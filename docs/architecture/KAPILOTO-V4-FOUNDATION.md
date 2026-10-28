@@ -28,7 +28,7 @@ The layer answers three separate questions:
 | `players`, `player_aliases`, `provider_player_mappings` | Canonical player identity, Hebrew/English/transliterated/provider spellings, provider ids |
 | `coaches`, `coach_aliases`, `provider_coach_mappings` | The same for coaches |
 | `team_coach_tenures` | Immutable, versioned team-coach tenure assertions with date-uncertainty bounds |
-| `match_ledger_observations` | One immutable provider observation **version** of a canonical fixture: provenance, information time, observed kickoff/status/score |
+| `match_ledger_observations` | One immutable provider observation **version** of a canonical fixture: `contract_version`, provenance, information time, observed kickoff/status/score |
 | `match_ledger_team_records` | Per-team context inside a version: side, opponent, coach, nominal formation, completeness per data family |
 | `match_ledger_players` | Matchday squad: starter/bench/unknown, appeared, position, formation slot, shirt, captain, minutes, entered/exited minute, completeness |
 | `match_ledger_substitutions` | Paired substitutions (off, on, minute, team, reason) |
@@ -37,7 +37,7 @@ The layer answers three separate questions:
 | `match_ledger_team_stats` | Numeric team stats keyed by definition and period |
 | `match_ledger_game_state_segments` | Derived segment contract (score/men difference); not populated yet |
 | `match_ledger_record_observation(jsonb)` | Atomic, canonicalized ingestion of one observation version |
-| `match_ledger_observation_as_of`, `match_ledger_team_matches_as_of`, `match_ledger_player_matches_as_of`, `team_coach_tenures_as_of` | As-of reads |
+| `match_ledger_observation_as_of`, `match_ledger_provider_team_matches_as_of`, `match_ledger_provider_player_matches_as_of`, `team_coach_tenures_as_of` | Provider-scoped as-of reads |
 
 `fixtures` stays the canonical match identity and `teams` the canonical team
 identity. The ledger references them and never duplicates them.
@@ -73,12 +73,30 @@ identity. The ledger references them and never duplicates them.
 | `retrieved_at` | When the ingester fetched the source | Ingester | **Never** |
 | `source_updated_at` | Provider's own last-updated stamp, if supplied | Ingester | Never |
 | `first_seen_at` | Information time: when Kapiloto first stored this version | **Database** (`private.kapiloto_information_clock()`) | **Always** |
-| `source_version`, `ingest_version`, `definition_version` | Provider API / ingest code / stat definition versions | Ingester | — |
+| `ingest_statement_at` | Sealing key: `statement_timestamp()` of the statement that wrote the header | Database | **Never** |
+| `contract_version`, `source_version`, `ingest_version`, `definition_version` | Payload contract / provider API / ingest code / stat definition versions | RPC / ingester | — |
 
 `first_seen_at` plays the role of the trigger-stamped `captured_at` in the
 shadow-evaluation tables. The ledger names it `first_seen_at` because
 re-ingesting identical content does not create a new row: the stored time is
 the first time this content was seen.
+
+**Which clock.** `private.kapiloto_information_clock()` returns
+`clock_timestamp()`, evaluated once when the header row is inserted (after the
+fixture locks are held); every child copies the header's value, so one
+observation has one information time.
+
+- `now()` was rejected: it is the transaction start, so a transaction opened
+  early would backdate knowledge written later.
+- `statement_timestamp()` was rejected as the information clock: it is the
+  receipt time of the client command, so time spent waiting for a competing
+  writer's lock would be backdated, and two serialized versions of one fixture
+  could get inverted times. It is used only as the sealing key.
+
+The residual gap is commit latency: a row becomes visible at commit, shortly
+after `first_seen_at`. The payload was already in Kapiloto's hands at
+`first_seen_at`, so this does not admit future information; a replay at a
+cutoff inside that window can see a row a live reader could not yet see.
 
 ## Bitemporal and as-of rules
 
@@ -96,7 +114,7 @@ version had corrected.
 **The leakage example.** A match is played on Oct 30. The provider backfills
 it (or adds an injury record dated Oct 30) and Kapiloto first stores it on
 Nov 3. A reconstruction at Nov 1 calls
-`match_ledger_team_matches_as_of(team, '2026-11-01')`: the Nov 3 version fails
+`match_ledger_provider_team_matches_as_of('sportmonks', team, '2026-11-01')`: the Nov 3 version fails
 step 1, so the match is absent, even though its `kickoff_at` is before Nov 1.
 `lib/kapiloto-v4/as-of-leakage.test.ts` asserts this for team history,
 fixture lookup and player history.
@@ -106,11 +124,13 @@ fixture lookup and player history.
 - `first_seen_at` is overwritten on insert by the database clock. A writer
   cannot backdate it, and service_role cannot redefine the clock (owner only).
 - Observations and children are immutable (update/delete/truncate raise).
-- Children are **sealed**: they may only be inserted in the same transaction
-  as their header (`header.first_seen_at = clock()`), so nothing can be appended
-  to an old version later and inherit its earlier information time.
+- Children are **sealed to the writing statement**
+  (`header.ingest_statement_at = statement_timestamp()`): not even a later
+  statement in the same transaction can append to a header and inherit its
+  earlier information time. Ingestion is therefore one RPC statement.
 - A correction is a new version (`observation_version + 1`, assigned by
-  trigger, serialized per fixture/provider); identical content is a no-op.
+  trigger under the fixture lock); identical content is a no-op, and
+  `first_seen_at` never decreases within one fixture/provider history.
 - `retrieved_at` may not exceed `first_seen_at` (+5 minutes clock skew), and a
   `finished` version cannot be first seen before `kickoff_at + 105 minutes`.
 - `match_ledger_team_records` and `match_ledger_players` carry trigger-copied
@@ -119,7 +139,7 @@ fixture lookup and player history.
 
 **What it does not do.** Code that queries the tables directly must apply the
 same rule (including "a latest withdrawal hides the pair"); use the as-of
-functions or `latestObservationsAsOf`. Backfilled
+functions or `latestProviderObservationsAsOf`. Backfilled
 history gets `first_seen_at` = backfill time, so a strict reconstruction at a
 cutoff before the backfill sees nothing. Training models on backfilled
 history needs an explicit, versioned "assumed availability" policy (for
@@ -127,6 +147,36 @@ example "a finished match's lineup and events were public at kickoff + 3h";
 never applied to injury/sidelined records). That policy is a later decision;
 `capture_mode` (`scheduled_sync`/`backfill`/`manual_import`) is recorded now
 so it can be applied.
+
+## Concurrency
+
+Every write that versions or claims an identity takes a transaction-scoped
+advisory lock (held until commit) and refuses to run outside READ COMMITTED,
+because lock-then-check is only sound when each check sees writers that
+committed first.
+
+| Invariant | Lock |
+| --- | --- |
+| A provider fixture id is actively attached to at most one canonical fixture | `(provider, provider_fixture_id)`, taken first by the RPC and by the header trigger (direct inserts included) |
+| Observation versions are contiguous, deduplicated and time-monotonic | `(fixture, provider)`, taken second |
+| Merges never form cycles or chains (A→B with B→A, merging a new merge target) | one lock per entity table, taken only when `identity_status` / `merged_into_*` changes |
+| Tenure versions are deterministic | `tenure_key` |
+
+The provider-fixture check considers a fixture's latest version carrying the
+id: after a **withdrawal**, the id may be recorded for the correct fixture, and
+the original fixture may be re-recorded under its correct id.
+
+## Multi-provider contract
+
+History reads are **provider-scoped by signature**:
+`match_ledger_provider_team_matches_as_of(provider, team, cutoff, limit)` and
+`match_ledger_provider_player_matches_as_of(provider, player, cutoff, limit)`
+require a provider and return at most one row per canonical fixture, so a
+last-N window can never count one match twice. A null provider is an error,
+not a union. There is deliberately no all-providers history: combining
+providers needs an explicit precedence/fusion policy and will be a separate,
+named canonical-match API. Model code must never merge two provider-scoped
+results into one last-N list.
 
 ## Immutable observation principle
 
@@ -151,6 +201,12 @@ so it can be applied.
 - One observation = one provider's complete view of one fixture at one
   retrieval. It always has exactly two team records (home/away, checked
   against `fixtures` orientation; the opponent is filled by trigger).
+- Database-enforced completeness (deferred constraint triggers that the RPC
+  forces before returning; any other writer meets them at commit): a finished
+  version has a 90-minute score; `lineup_status = 'complete'` means exactly 11
+  starters; `not_provided` forbids rows of that family for that team.
+  `complete` is a claim of full representation, not a minimum: zero
+  substitutions or cards is valid.
 - Completeness is explicit per team and data family
   (`complete`/`partial`/`not_provided`), so a results-only source (a cup or a
   Liga Leumit match from an IFA sheet) and a full Sportmonks payload use the
@@ -159,10 +215,21 @@ so it can be applied.
 - Players: at most 11 starters per team (trigger), unique formation slots and
   shirt numbers, starters cannot be "not appeared". Substitutions must
   reference squad members of the same team, and a starter cannot come on.
-  Event players must belong to the acting team's squad.
+  Event players must belong to the acting team's squad; `related_player_id`
+  (assist, penalty goalkeeper) must be in the observation's squad, either team,
+  and only on goal/penalty events.
+- Mapping consistency: a supplied `provider_player_id` / `provider_coach_id`
+  must not contradict a `confirmed`/`manual_override` mapping in either
+  direction (merge-aware). No provider id, or only an `unverified` mapping,
+  is unknown rather than contradictory and is accepted.
 - Event `team_id` is the acting player's/coach's team. For an own goal that is
   the conceding team (`scoringTeamId()` returns the benefiting team).
-  Coaches can receive cards (`coach_id`).
+  Staff cards carry `coach_id` plus `staff_role`
+  (`head_coach`/`assistant_coach`/`other_staff`/`unknown`). The database
+  refuses the opponent's head coach, a `head_coach` card naming someone other
+  than the team's known head coach, and an assistant/staff card naming the
+  team's own head coach. An unknown team head coach constrains nothing.
+- Team stats must use a stat definition of the observation's own provider.
 - Minutes use `minute` + `stoppage_minute` (45+2 → 45, 2), optional `second`
   and `period`.
 - Stats: `stat_key` names the meaning (`possession_pct`, `shots_on_target`,
@@ -189,7 +256,7 @@ is refused, as are repeated provider event ids within one version.
 
 | Component | Reads |
 | --- | --- |
-| Squad state | `match_ledger_player_matches_as_of`: starts, minutes, last start, positions from one version per fixture; later joined with availability observations |
+| Squad state | `match_ledger_provider_player_matches_as_of`: starts, minutes, last start, positions from one version per fixture; later joined with availability observations |
 | Lineup model (P(start)) | Last N team records + squads as of cutoff; coach from `team_records.coach_id`; formation slots |
 | Minutes model | `minutes_played`, `entered_minute`, `exited_minute`, substitution minutes and reasons |
 | Replacement chains | Consecutive matches: who held a `formation_position` when the usual player was absent |
@@ -209,7 +276,8 @@ To reconstruct Hapoel's last matches before a research cutoff of
 2026-10-31T12:00Z for the 2026-11-02 fixture:
 
 ```
-match_ledger_team_matches_as_of(<hapoel>, '2026-10-31T12:00Z', 5)
+match_ledger_provider_team_matches_as_of('sportmonks', <hapoel>, '2026-10-31T12:00Z', 5)
+match_ledger_provider_team_matches_as_of('ifa', <hapoel>, '2026-10-31T12:00Z', 5)
 ```
 
 | Kickoff (event time) | Provider | Version | first_seen_at | Side | Opp. | Score | Coach | Formation | Lineup |
@@ -236,12 +304,13 @@ match_ledger_team_matches_as_of(<hapoel>, '2026-10-31T12:00Z', 5)
 ## Security
 
 All 15 tables are in `public` with RLS enabled, no policies, and
-`revoke all ... from public, anon, authenticated`. The five RPCs are
+`revoke all ... from public, anon, authenticated`. The five public functions are
 security-invoker, revoked from `public, anon, authenticated` and granted to
 `service_role` only. The private helpers that triggers, generated columns and
 the RPC call by name (`kapiloto_information_clock`, `normalize_entity_alias`,
-`match_ledger_assert_keys`, `match_ledger_record_withdrawal`) are executable by
-`service_role` only, which
+`match_ledger_assert_keys`, `match_ledger_record_withdrawal`,
+`kapiloto_require_read_committed`, `surviving_player_id`, `surviving_coach_id`,
+`lock_match_ledger_fixture`) are executable by `service_role` only, which
 also receives `usage` on schema `private` (not exposed by the Data API). No
 `security definer` function is added. `lib/kapiloto-v4/security.test.ts`
 replays Supabase's default grants and verifies the revokes and the

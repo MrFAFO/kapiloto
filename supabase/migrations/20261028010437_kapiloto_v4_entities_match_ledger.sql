@@ -10,28 +10,54 @@
 --   retrieved_at     when the ingester fetched the source; informational,
 --                    writer supplied, never used for as-of filtering.
 --   first_seen_at    when Kapiloto first stored this version. Stamped by the
---                    database from private.kapiloto_information_clock(); it
---                    cannot be supplied or backdated by a writer. Every as-of
---                    reconstruction filters on first_seen_at <= cutoff.
+--                    database from private.kapiloto_information_clock() at the
+--                    moment the header row is written (after the per-fixture
+--                    locks are held); it cannot be supplied or backdated by a
+--                    writer. Every as-of reconstruction filters on
+--                    first_seen_at <= cutoff.
 --
 -- Observations are immutable versions. A provider correction or backfill is a
 -- new version with a later first_seen_at; earlier versions stay readable, so a
 -- reconstruction at an earlier cutoff never sees the later information.
+--
+-- Concurrency: every write that versions or claims an identity takes a
+-- transaction-scoped advisory lock and requires READ COMMITTED, so its checks
+-- run on a snapshot that includes every competing writer that committed first.
 
 -- ---------------------------------------------------------------------------
 -- Shared helpers
 -- ---------------------------------------------------------------------------
 
--- The single information-time clock for V4 observations. now() is the
--- transaction start time, so every row written in one transaction shares it.
+-- The single information-time clock for V4 observations: wall-clock time when
+-- the stamping trigger runs. Not now() (transaction start: an early BEGIN would
+-- backdate later knowledge) and not statement_timestamp() (receipt of the
+-- client command: time spent waiting for the per-fixture lock would be
+-- backdated, and two serialized versions could get inverted times). Only the
+-- header row is stamped; its children copy that one value, so every row of one
+-- observation shares it.
 create or replace function private.kapiloto_information_clock()
 returns timestamptz
 language sql
+volatile
+set search_path = ''
+as $$
+  select clock_timestamp()
+$$;
+
+-- Lock-then-check is only sound when each check takes a fresh snapshot.
+create or replace function private.kapiloto_require_read_committed(p_context text)
+returns void
+language plpgsql
 stable
 set search_path = ''
 as $$
-  select now()
+begin
+  if current_setting('transaction_isolation') <> 'read committed' then
+    raise exception '% requires READ COMMITTED isolation', p_context;
+  end if;
+end;
 $$;
+
 
 create or replace function private.kapiloto_v4_reject_change()
 returns trigger
@@ -223,15 +249,60 @@ create table public.provider_coach_mappings (
 create index provider_coach_mappings_coach_idx
   on public.provider_coach_mappings (coach_id);
 
+-- One-hop merge resolution (merges are kept one hop deep by trigger).
+create or replace function private.surviving_player_id(p_player_id uuid)
+returns uuid
+language sql
+stable
+set search_path = ''
+as $$
+  select coalesce(
+    (select p.merged_into_player_id from public.players p where p.id = p_player_id),
+    p_player_id
+  )
+$$;
+
+create or replace function private.surviving_coach_id(p_coach_id uuid)
+returns uuid
+language sql
+stable
+set search_path = ''
+as $$
+  select coalesce(
+    (select c.merged_into_coach_id from public.coaches c where c.id = p_coach_id),
+    p_coach_id
+  )
+$$;
+
 -- Merge targets must be active and one hop deep; updated_at is maintained.
+-- Identity changes (merge, un-merge) are serialized per entity table, so two
+-- concurrent merges (A -> B with B -> A, or merging an entity while another
+-- transaction makes it a merge target) cannot both pass their checks.
 create or replace function private.guard_canonical_entity_identity()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
+declare
+  v_identity_change boolean := false;
 begin
   -- Nested ifs: plpgsql does not short-circuit record field access, and each
   -- table only has its own merge column.
+  if tg_op = 'INSERT' then
+    v_identity_change := new.identity_status <> 'active';
+  elsif tg_table_name = 'players' then
+    v_identity_change := new.merged_into_player_id is distinct from old.merged_into_player_id
+      or new.identity_status is distinct from old.identity_status;
+  elsif tg_table_name = 'coaches' then
+    v_identity_change := new.merged_into_coach_id is distinct from old.merged_into_coach_id
+      or new.identity_status is distinct from old.identity_status;
+  end if;
+
+  if v_identity_change then
+    perform private.kapiloto_require_read_committed('canonical identity merges');
+    perform pg_advisory_xact_lock(hashtextextended('kapiloto_identity_merge:' || tg_table_name, 0));
+  end if;
+
   if tg_table_name = 'players' then
     if new.merged_into_player_id is not null then
       if not exists (
@@ -378,6 +449,9 @@ declare
   v_latest_version integer;
   v_first public.team_coach_tenures%rowtype;
 begin
+  -- Serialize versions of one tenure so max() + 1 is deterministic.
+  perform private.kapiloto_require_read_committed('team coach tenure writes');
+  perform pg_advisory_xact_lock(hashtextextended('kapiloto_tenure:' || new.tenure_key::text, 0));
   new.first_seen_at := private.kapiloto_information_clock();
 
   select max(t.tenure_version)
@@ -420,6 +494,10 @@ for each statement execute function private.kapiloto_v4_reject_change();
 
 create table public.match_ledger_observations (
   id uuid primary key default gen_random_uuid(),
+  -- Payload contract the version was written under; a future contract can
+  -- coexist and historical rows stay interpretable. Part of content_sha256.
+  contract_version text not null
+    check (contract_version in ('kapiloto-match-ledger-observation-v1')),
   fixture_id uuid not null references public.fixtures(id) on delete restrict,
   provider text not null
     check (provider ~ '^[a-z0-9_]{1,40}$'),
@@ -446,6 +524,9 @@ create table public.match_ledger_observations (
   retrieved_at timestamptz not null,
   source_updated_at timestamptz,
   first_seen_at timestamptz not null default now(),
+  -- Sealing key, not information time: statement_timestamp() of the statement
+  -- that wrote the header. Children must be written by that same statement.
+  ingest_statement_at timestamptz not null default statement_timestamp(),
   -- 'withdrawal' is a header-only version that retracts this provider's data
   -- for this fixture from later cutoffs (e.g. it was attached to the wrong
   -- fixture or the provider removed it). Earlier versions stay visible to
@@ -476,6 +557,7 @@ create table public.match_ledger_observations (
     home_goals_aet, away_goals_aet, home_penalties, away_penalties
   ) = 0),
   check ((home_goals_90 is null) = (away_goals_90 is null)),
+  check (match_status is distinct from 'finished' or home_goals_90 is not null),
   check ((home_goals_aet is null) = (away_goals_aet is null)),
   check ((home_penalties is null) = (away_penalties is null)),
   check (retrieved_at <= first_seen_at + interval '5 minutes'),
@@ -489,6 +571,32 @@ create index match_ledger_observations_provider_fixture_idx
 create index match_ledger_observations_seen_idx
   on public.match_ledger_observations (first_seen_at);
 
+-- Locks every ledger write takes, always in this order (no deadlock between
+-- writers): the provider fixture identity first, then (fixture, provider).
+-- Held until commit. The first lock serializes two writers that try to attach
+-- one provider fixture id to two different canonical fixtures; the second
+-- serializes versioning of one fixture/provider history.
+create or replace function private.lock_match_ledger_fixture(
+  p_provider text,
+  p_provider_fixture_id text,
+  p_fixture_id uuid
+)
+returns void
+language plpgsql
+volatile
+set search_path = ''
+as $$
+begin
+  perform private.kapiloto_require_read_committed('match ledger writes');
+  perform pg_advisory_xact_lock(hashtextextended(
+    'kapiloto_match_ledger_provider_fixture:' || p_provider || ':' || p_provider_fixture_id, 0
+  ));
+  perform pg_advisory_xact_lock(hashtextextended(
+    'kapiloto_match_ledger_fixture:' || p_fixture_id::text || ':' || p_provider, 0
+  ));
+end;
+$$;
+
 create or replace function private.stamp_match_ledger_observation()
 returns trigger
 language plpgsql
@@ -498,7 +606,11 @@ declare
   v_latest public.match_ledger_observations%rowtype;
   v_mapped_fixture uuid;
 begin
+  -- Re-entrant when the RPC already holds the locks; mandatory for direct
+  -- inserts. Every check below runs after the locks, on a fresh snapshot.
+  perform private.lock_match_ledger_fixture(new.provider, new.provider_fixture_id, new.fixture_id);
   new.first_seen_at := private.kapiloto_information_clock();
+  new.ingest_statement_at := statement_timestamp();
 
   select o.*
     into v_latest
@@ -513,11 +625,19 @@ begin
       raise exception 'match ledger observation is unchanged from version %',
         v_latest.observation_version;
     end if;
-    if v_latest.provider_fixture_id <> new.provider_fixture_id then
+    -- After a withdrawal the fixture may be re-recorded under the correct
+    -- provider fixture id; otherwise the provider identity is fixed.
+    if v_latest.observation_kind = 'observation'
+      and v_latest.provider_fixture_id <> new.provider_fixture_id then
       raise exception 'provider fixture id changed for this fixture and provider';
     end if;
     if v_latest.observation_kind = 'withdrawal' and new.observation_kind = 'withdrawal' then
       raise exception 'this provider observation is already withdrawn';
+    end if;
+    -- Information time never runs backwards within one history.
+    if new.first_seen_at < v_latest.first_seen_at then
+      raise exception 'match ledger information time would precede version %',
+        v_latest.observation_version;
     end if;
     new.observation_version := v_latest.observation_version + 1;
   else
@@ -527,14 +647,21 @@ begin
     new.observation_version := 1;
   end if;
 
-  -- One provider fixture id belongs to one canonical fixture, even before a
-  -- provider_fixture_mappings row exists (guards duplicated fixtures).
+  -- A provider fixture id is actively attached to at most one canonical
+  -- fixture: refuse it while another fixture's latest version carrying this id
+  -- is a (non-withdrawn) observation. Sound because of the provider-fixture
+  -- lock above, not merely because of this query.
   if exists (
     select 1
-    from public.match_ledger_observations o
-    where o.provider = new.provider
-      and o.provider_fixture_id = new.provider_fixture_id
-      and o.fixture_id <> new.fixture_id
+    from (
+      select distinct on (o.fixture_id) o.fixture_id, o.observation_kind
+      from public.match_ledger_observations o
+      where o.provider = new.provider
+        and o.provider_fixture_id = new.provider_fixture_id
+        and o.fixture_id <> new.fixture_id
+      order by o.fixture_id, o.observation_version desc
+    ) other
+    where other.observation_kind = 'observation'
   ) then
     raise exception 'provider fixture id is already recorded for a different canonical fixture';
   end if;
@@ -714,8 +841,13 @@ create table public.match_ledger_events (
     )),
   player_id uuid,
   coach_id uuid references public.coaches(id) on delete restrict,
-  -- Assisting player for goals; goalkeeper for a saved penalty, if supplied.
-  related_player_id uuid references public.players(id) on delete restrict,
+  -- Required with coach_id: whose card it is relative to the team record's
+  -- head coach ('unknown' when the source does not say).
+  staff_role text
+    check (staff_role is null or staff_role in ('head_coach', 'assistant_coach', 'other_staff', 'unknown')),
+  -- Assisting player for goals; goalkeeper for a penalty. Must be in this
+  -- observation's matchday squad (either team).
+  related_player_id uuid,
   minute smallint check (minute is null or minute between 0 and 130),
   stoppage_minute smallint
     check (stoppage_minute is null or stoppage_minute between 0 and 30),
@@ -735,9 +867,15 @@ create table public.match_ledger_events (
   foreign key (observation_id, team_id, player_id)
     references public.match_ledger_players(observation_id, team_id, player_id)
     on delete restrict,
+  foreign key (observation_id, related_player_id)
+    references public.match_ledger_players(observation_id, player_id)
+    on delete restrict,
   unique (observation_id, sequence_no),
   check (num_nonnulls(player_id, coach_id) <= 1),
   check (coach_id is null or event_type in ('yellow_card', 'second_yellow_card', 'red_card')),
+  check ((coach_id is null) = (staff_role is null)),
+  check (related_player_id is null or event_type in ('goal', 'penalty_goal', 'penalty_missed')),
+  check (related_player_id is null or related_player_id is distinct from player_id),
   check (jsonb_typeof(detail) = 'object' and octet_length(detail::text) <= 2000)
 );
 
@@ -845,11 +983,38 @@ begin
   if not found then
     raise exception 'match ledger observation not found';
   end if;
-  if v_observation.first_seen_at <> private.kapiloto_information_clock() then
+  if v_observation.ingest_statement_at <> statement_timestamp() then
     raise exception 'match ledger observation % is sealed', new.observation_id;
   end if;
   if v_observation.observation_kind <> 'observation' then
     raise exception 'a withdrawal version has no team records';
+  end if;
+
+  -- A supplied provider coach id must not contradict an authoritative
+  -- mapping (unverified bootstrap mappings never resolve, so they are ignored).
+  if new.provider_coach_id is not null and new.coach_id is not null then
+    if exists (
+      select 1
+      from public.provider_coach_mappings m
+      where m.provider = v_observation.provider
+        and m.provider_coach_id = new.provider_coach_id
+        and m.mapping_status in ('confirmed', 'manual_override')
+        and private.surviving_coach_id(m.coach_id) <> private.surviving_coach_id(new.coach_id)
+    ) then
+      raise exception 'provider coach id % is mapped to a different canonical coach', new.provider_coach_id;
+    end if;
+    if not exists (
+      select 1 from public.provider_coach_mappings m
+      where m.provider = v_observation.provider
+        and m.provider_coach_id = new.provider_coach_id
+    ) and exists (
+      select 1 from public.provider_coach_mappings m
+      where m.provider = v_observation.provider
+        and m.coach_id = new.coach_id
+        and m.mapping_status in ('confirmed', 'manual_override')
+    ) then
+      raise exception 'canonical coach is mapped to a different provider coach id';
+    end if;
   end if;
 
   select f.home_team_id, f.away_team_id
@@ -882,19 +1047,45 @@ language plpgsql
 set search_path = ''
 as $$
 declare
-  v_first_seen timestamptz;
-  v_kickoff timestamptz;
+  v_observation public.match_ledger_observations%rowtype;
 begin
-  select o.first_seen_at, o.kickoff_at
-    into v_first_seen, v_kickoff
+  select o.*
+    into v_observation
   from public.match_ledger_observations o
   where o.id = new.observation_id;
 
-  if v_first_seen is null then
+  if not found then
     raise exception 'match ledger observation not found';
   end if;
-  if v_first_seen <> private.kapiloto_information_clock() then
+  if v_observation.ingest_statement_at <> statement_timestamp() then
     raise exception 'match ledger observation % is sealed', new.observation_id;
+  end if;
+
+  -- A supplied provider player id must not contradict an authoritative
+  -- mapping in either direction. No provider id = nothing to contradict.
+  if new.provider_player_id is not null then
+    if exists (
+      select 1
+      from public.provider_player_mappings m
+      where m.provider = v_observation.provider
+        and m.provider_player_id = new.provider_player_id
+        and m.mapping_status in ('confirmed', 'manual_override')
+        and private.surviving_player_id(m.player_id) <> private.surviving_player_id(new.player_id)
+    ) then
+      raise exception 'provider player id % is mapped to a different canonical player', new.provider_player_id;
+    end if;
+    if not exists (
+      select 1 from public.provider_player_mappings m
+      where m.provider = v_observation.provider
+        and m.provider_player_id = new.provider_player_id
+    ) and exists (
+      select 1 from public.provider_player_mappings m
+      where m.provider = v_observation.provider
+        and m.player_id = new.player_id
+        and m.mapping_status in ('confirmed', 'manual_override')
+    ) then
+      raise exception 'canonical player is mapped to a different provider player id';
+    end if;
   end if;
 
   if new.lineup_role = 'starter' and (
@@ -907,8 +1098,8 @@ begin
     raise exception 'a team cannot have more than 11 starters';
   end if;
 
-  new.kickoff_at := v_kickoff;
-  new.first_seen_at := v_first_seen;
+  new.kickoff_at := v_observation.kickoff_at;
+  new.first_seen_at := v_observation.first_seen_at;
   return new;
 end;
 $$;
@@ -919,18 +1110,62 @@ language plpgsql
 set search_path = ''
 as $$
 declare
-  v_first_seen timestamptz;
+  v_observation public.match_ledger_observations%rowtype;
+  v_own_coach uuid;
+  v_opponent_coach uuid;
 begin
-  select o.first_seen_at
-    into v_first_seen
+  select o.*
+    into v_observation
   from public.match_ledger_observations o
   where o.id = new.observation_id;
 
-  if v_first_seen is null then
+  if not found then
     raise exception 'match ledger observation not found';
   end if;
-  if v_first_seen <> private.kapiloto_information_clock() then
+  if v_observation.ingest_statement_at <> statement_timestamp() then
     raise exception 'match ledger observation % is sealed', new.observation_id;
+  end if;
+
+  -- Nested ifs: plpgsql does not short-circuit record field access.
+  if tg_table_name = 'match_ledger_team_stats' then
+    if not exists (
+      select 1
+      from public.match_ledger_stat_definitions d
+      where d.id = new.stat_definition_id
+        and d.provider = v_observation.provider
+    ) then
+      raise exception 'stat definition % does not belong to provider %',
+        new.stat_definition_id, v_observation.provider;
+    end if;
+  end if;
+
+  -- Staff cards: unknown is allowed, contradiction is not. A coach shown a
+  -- card can never be the opponent's head coach; a head-coach card must name
+  -- the team's head coach when that is known; an assistant/staff card cannot
+  -- name the team's own head coach.
+  if tg_table_name = 'match_ledger_events' then
+    if new.coach_id is not null then
+      select private.surviving_coach_id(tr.coach_id)
+        into v_own_coach
+      from public.match_ledger_team_records tr
+      where tr.observation_id = new.observation_id and tr.team_id = new.team_id;
+      select private.surviving_coach_id(tr.coach_id)
+        into v_opponent_coach
+      from public.match_ledger_team_records tr
+      where tr.observation_id = new.observation_id and tr.team_id <> new.team_id;
+
+      if v_opponent_coach = private.surviving_coach_id(new.coach_id) then
+        raise exception 'event % names the opponent''s head coach', new.sequence_no;
+      end if;
+      if new.staff_role = 'head_coach' and v_own_coach is not null
+        and v_own_coach <> private.surviving_coach_id(new.coach_id) then
+        raise exception 'event % names a head coach other than the team''s head coach', new.sequence_no;
+      end if;
+      if new.staff_role in ('assistant_coach', 'other_staff')
+        and v_own_coach = private.surviving_coach_id(new.coach_id) then
+        raise exception 'event % names the head coach as non-head-coach staff', new.sequence_no;
+      end if;
+    end if;
   end if;
 
   if tg_table_name = 'match_ledger_substitutions' then
@@ -983,6 +1218,79 @@ for each row execute function private.seal_match_ledger_child();
 create trigger match_ledger_game_state_segments_stamp
 before insert on public.match_ledger_game_state_segments
 for each row execute function private.stamp_match_ledger_derivation();
+
+-- Completeness rules over a team's children. Deferred so they see every child
+-- the writing statement inserts; the RPC forces them before it returns, any
+-- other writer meets them at commit. "complete" means the source claims the
+-- family is fully represented (zero substitutions or cards is valid); only
+-- "not_provided" forbids rows, and a complete lineup needs exactly 11 starters.
+create or replace function private.check_match_ledger_team_completeness()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_starters integer;
+  v_players integer;
+begin
+  select count(*) filter (where p.lineup_role = 'starter'), count(*)
+    into v_starters, v_players
+  from public.match_ledger_players p
+  where p.observation_id = new.observation_id
+    and p.team_id = new.team_id;
+
+  if new.lineup_status = 'complete' and v_starters <> 11 then
+    raise exception 'team % lineup is complete but has % starters', new.team_id, v_starters;
+  end if;
+  if new.lineup_status = 'not_provided' and v_players > 0 then
+    raise exception 'team % lineup is not_provided but has matchday players', new.team_id;
+  end if;
+  if new.substitutions_status = 'not_provided' and exists (
+    select 1 from public.match_ledger_substitutions s
+    where s.observation_id = new.observation_id and s.team_id = new.team_id
+  ) then
+    raise exception 'team % substitutions are not_provided but substitutions exist', new.team_id;
+  end if;
+  if new.events_status = 'not_provided' and exists (
+    select 1 from public.match_ledger_events e
+    where e.observation_id = new.observation_id and e.team_id = new.team_id
+  ) then
+    raise exception 'team % events are not_provided but events exist', new.team_id;
+  end if;
+  if new.statistics_status = 'not_provided' and exists (
+    select 1 from public.match_ledger_team_stats st
+    where st.observation_id = new.observation_id and st.team_id = new.team_id
+  ) then
+    raise exception 'team % statistics are not_provided but statistics exist', new.team_id;
+  end if;
+  return null;
+end;
+$$;
+
+create or replace function private.check_match_ledger_observation_teams()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.observation_kind = 'observation' and (
+    select count(*) from public.match_ledger_team_records tr where tr.observation_id = new.id
+  ) <> 2 then
+    raise exception 'match ledger observation % must have exactly two team records', new.id;
+  end if;
+  return null;
+end;
+$$;
+
+create constraint trigger match_ledger_team_records_complete
+after insert on public.match_ledger_team_records
+deferrable initially deferred
+for each row execute function private.check_match_ledger_team_completeness();
+
+create constraint trigger match_ledger_observations_two_teams
+after insert on public.match_ledger_observations
+deferrable initially deferred
+for each row execute function private.check_match_ledger_observation_teams();
 
 -- Immutability for every ledger table.
 create trigger match_ledger_observations_immutable
@@ -1128,8 +1436,8 @@ begin
     withdrawal_reason text
   );
 
-  if v_header.fixture_id is null or v_header.provider is null then
-    raise exception 'match ledger withdrawal requires fixture_id and provider';
+  if v_header.fixture_id is null or v_header.provider is null or v_header.provider_fixture_id is null then
+    raise exception 'match ledger withdrawal requires fixture_id, provider and provider_fixture_id';
   end if;
 
   v_sha := encode(sha256(convert_to(jsonb_build_object(
@@ -1141,8 +1449,8 @@ begin
     'withdrawal_reason', v_header.withdrawal_reason
   )::text, 'UTF8')), 'hex');
 
-  perform pg_advisory_xact_lock(
-    hashtextextended('match_ledger:' || v_header.fixture_id::text || ':' || v_header.provider, 0)
+  perform private.lock_match_ledger_fixture(
+    v_header.provider, v_header.provider_fixture_id, v_header.fixture_id
   );
 
   select o.*
@@ -1164,12 +1472,13 @@ begin
   end if;
 
   insert into public.match_ledger_observations (
-    fixture_id, provider, provider_fixture_id, provider_endpoint,
+    contract_version, fixture_id, provider, provider_fixture_id, provider_endpoint,
     capture_mode, ingest_version, source_version, content_sha256,
     raw_payload_sha256, raw_observation_id, retrieved_at, source_updated_at,
     observation_kind, withdrawal_reason
   )
   values (
+    'kapiloto-match-ledger-observation-v1',
     v_header.fixture_id, v_header.provider, v_header.provider_fixture_id,
     v_header.provider_endpoint, v_header.capture_mode,
     v_header.ingest_version, v_header.source_version, v_sha,
@@ -1257,7 +1566,7 @@ begin
   ], 'substitution');
   perform private.match_ledger_assert_keys(coalesce(p_observation->'events', '[]'::jsonb), array[
     'team_id', 'sequence_no', 'event_type', 'player_id', 'coach_id',
-    'related_player_id', 'minute', 'stoppage_minute', 'second', 'period',
+    'staff_role', 'related_player_id', 'minute', 'stoppage_minute', 'second', 'period',
     'provider_event_id', 'provider_event_type', 'detail'
   ], 'event');
   perform private.match_ledger_assert_keys(coalesce(p_observation->'team_stats', '[]'::jsonb), array[
@@ -1289,8 +1598,8 @@ begin
     away_penalties smallint
   );
 
-  if v_header.fixture_id is null or v_header.provider is null then
-    raise exception 'match ledger observation requires fixture_id and provider';
+  if v_header.fixture_id is null or v_header.provider is null or v_header.provider_fixture_id is null then
+    raise exception 'match ledger observation requires fixture_id, provider and provider_fixture_id';
   end if;
 
   -- Canonical, typed, ordered children: omitted keys become null, ids and
@@ -1326,7 +1635,7 @@ begin
     into v_events
   from jsonb_to_recordset(coalesce(p_observation->'events', '[]'::jsonb)) as e(
     team_id uuid, sequence_no smallint, event_type text, player_id uuid,
-    coach_id uuid, related_player_id uuid, minute smallint,
+    coach_id uuid, staff_role text, related_player_id uuid, minute smallint,
     stoppage_minute smallint, second smallint, period text,
     provider_event_id text, provider_event_type text, detail jsonb
   );
@@ -1366,8 +1675,8 @@ begin
   v_sha := encode(sha256(convert_to(v_content::text, 'UTF8')), 'hex');
 
   -- Serialize writers per fixture/provider so versioning is race-free.
-  perform pg_advisory_xact_lock(
-    hashtextextended('match_ledger:' || v_header.fixture_id::text || ':' || v_header.provider, 0)
+  perform private.lock_match_ledger_fixture(
+    v_header.provider, v_header.provider_fixture_id, v_header.fixture_id
   );
 
   select o.*
@@ -1388,9 +1697,17 @@ begin
     );
   end if;
 
-  -- observation_version and first_seen_at are assigned by the stamp trigger.
+  -- Cross-row completeness checks run when this statement has written every
+  -- child (forced immediate below), not row by row.
+  set constraints
+    public.match_ledger_team_records_complete,
+    public.match_ledger_observations_two_teams
+    deferred;
+
+  -- observation_version, first_seen_at and ingest_statement_at are assigned
+  -- by the stamp trigger.
   insert into public.match_ledger_observations (
-    fixture_id, provider, provider_fixture_id, provider_endpoint,
+    contract_version, fixture_id, provider, provider_fixture_id, provider_endpoint,
     capture_mode, ingest_version, source_version,
     content_sha256, raw_payload_sha256, raw_observation_id, retrieved_at,
     source_updated_at, kickoff_at, match_status, neutral_venue,
@@ -1398,6 +1715,7 @@ begin
     home_penalties, away_penalties
   )
   values (
+    'kapiloto-match-ledger-observation-v1',
     v_header.fixture_id, v_header.provider, v_header.provider_fixture_id,
     v_header.provider_endpoint, v_header.capture_mode,
     v_header.ingest_version, v_header.source_version, v_sha,
@@ -1464,16 +1782,16 @@ begin
 
   insert into public.match_ledger_events (
     observation_id, team_id, sequence_no, event_type, player_id, coach_id,
-    related_player_id, minute, stoppage_minute, second, period,
+    staff_role, related_player_id, minute, stoppage_minute, second, period,
     provider_event_id, provider_event_type, detail
   )
   select
     v_id, e.team_id, e.sequence_no, e.event_type, e.player_id, e.coach_id,
-    e.related_player_id, e.minute, e.stoppage_minute, e.second, e.period,
+    e.staff_role, e.related_player_id, e.minute, e.stoppage_minute, e.second, e.period,
     e.provider_event_id, e.provider_event_type, coalesce(e.detail, '{}'::jsonb)
   from jsonb_to_recordset(v_events) as e(
     team_id uuid, sequence_no smallint, event_type text, player_id uuid,
-    coach_id uuid, related_player_id uuid, minute smallint,
+    coach_id uuid, staff_role text, related_player_id uuid, minute smallint,
     stoppage_minute smallint, second smallint, period text,
     provider_event_id text, provider_event_type text, detail jsonb
   );
@@ -1486,6 +1804,12 @@ begin
   from jsonb_to_recordset(v_team_stats) as st(
     team_id uuid, stat_definition_id uuid, period text, value numeric
   );
+
+  -- Enforce completeness now so this statement fails atomically.
+  set constraints
+    public.match_ledger_team_records_complete,
+    public.match_ledger_observations_two_teams
+    immediate;
 
   return jsonb_build_object(
     'status', 'recorded',
@@ -1508,12 +1832,19 @@ create or replace function public.match_ledger_observation_as_of(
   p_cutoff timestamptz
 )
 returns uuid
-language sql
+language plpgsql
 stable
 set search_path = ''
 as $$
+declare
+  v_result uuid;
+begin
+  if p_fixture_id is null or p_provider is null or p_cutoff is null then
+    raise exception 'fixture, provider and cutoff are required';
+  end if;
   -- Null when nothing was known yet or the latest known version is a withdrawal.
   select case when latest.observation_kind = 'observation' then latest.id end
+    into v_result
   from (
     select o.id, o.observation_kind
     from public.match_ledger_observations o
@@ -1522,14 +1853,19 @@ as $$
       and o.first_seen_at <= p_cutoff
     order by o.observation_version desc
     limit 1
-  ) latest
+  ) latest;
+  return v_result;
+end;
 $$;
 
-create or replace function public.match_ledger_team_matches_as_of(
+-- Provider-scoped by contract: one provider's view, so a canonical fixture
+-- appears at most once. There is deliberately no all-providers variant; a
+-- fused canonical history (provider precedence) is a later, separate API.
+create or replace function public.match_ledger_provider_team_matches_as_of(
+  p_provider text,
   p_team_id uuid,
   p_cutoff timestamptz,
-  p_limit integer default 10,
-  p_provider text default null
+  p_limit integer default 10
 )
 returns table (
   observation_id uuid,
@@ -1550,10 +1886,16 @@ returns table (
   events_status text,
   statistics_status text
 )
-language sql
+language plpgsql
 stable
 set search_path = ''
 as $$
+#variable_conflict use_column
+begin
+  if p_provider is null or p_team_id is null or p_cutoff is null then
+    raise exception 'provider, team and cutoff are required';
+  end if;
+  return query
   with candidates as (
     select distinct tr.fixture_id
     from public.match_ledger_team_records tr
@@ -1572,7 +1914,7 @@ as $$
     from candidates c
     join public.match_ledger_observations o on o.fixture_id = c.fixture_id
     where o.first_seen_at <= p_cutoff
-      and (p_provider is null or o.provider = p_provider)
+      and o.provider = p_provider
   ),
   latest as (
     select
@@ -1611,17 +1953,18 @@ as $$
     l.statistics_status
   from latest l
   where l.match_rank <= least(greatest(coalesce(p_limit, 10), 0), 50)
-  order by l.kickoff_at desc, l.provider
+  order by l.kickoff_at desc;
+end;
 $$;
 
--- A player's matchday records as of a cutoff, taken only from the latest
--- version of each fixture known at the cutoff (a correction that drops the
--- player from a squad removes the match from his history).
-create or replace function public.match_ledger_player_matches_as_of(
+-- A player's matchday records as of a cutoff, from one provider, taken only
+-- from the latest version of each fixture known at the cutoff (a correction
+-- that drops the player from a squad removes the match from his history).
+create or replace function public.match_ledger_provider_player_matches_as_of(
+  p_provider text,
   p_player_id uuid,
   p_cutoff timestamptz,
-  p_limit integer default 10,
-  p_provider text default null
+  p_limit integer default 10
 )
 returns table (
   observation_id uuid,
@@ -1641,10 +1984,16 @@ returns table (
   exited_minute smallint,
   data_completeness text
 )
-language sql
+language plpgsql
 stable
 set search_path = ''
 as $$
+#variable_conflict use_column
+begin
+  if p_provider is null or p_player_id is null or p_cutoff is null then
+    raise exception 'provider, player and cutoff are required';
+  end if;
+  return query
   with candidates as (
     select distinct o.fixture_id
     from public.match_ledger_players p
@@ -1663,7 +2012,7 @@ as $$
     from candidates c
     join public.match_ledger_observations o on o.fixture_id = c.fixture_id
     where o.first_seen_at <= p_cutoff
-      and (p_provider is null or o.provider = p_provider)
+      and o.provider = p_provider
   ),
   latest as (
     select
@@ -1700,7 +2049,8 @@ as $$
     l.entered_minute, l.exited_minute, l.data_completeness
   from latest l
   where l.match_rank <= least(greatest(coalesce(p_limit, 10), 0), 50)
-  order by l.kickoff_at desc, l.provider
+  order by l.kickoff_at desc;
+end;
 $$;
 
 create or replace function public.team_coach_tenures_as_of(
@@ -1777,14 +2127,20 @@ revoke all on function private.seal_match_ledger_child() from public, anon, auth
 revoke all on function private.stamp_match_ledger_derivation() from public, anon, authenticated;
 revoke all on function private.match_ledger_assert_keys(jsonb, text[], text) from public, anon, authenticated;
 revoke all on function private.match_ledger_record_withdrawal(jsonb) from public, anon, authenticated;
+revoke all on function private.kapiloto_require_read_committed(text) from public, anon, authenticated;
+revoke all on function private.surviving_player_id(uuid) from public, anon, authenticated;
+revoke all on function private.surviving_coach_id(uuid) from public, anon, authenticated;
+revoke all on function private.lock_match_ledger_fixture(text, text, uuid) from public, anon, authenticated;
+revoke all on function private.check_match_ledger_team_completeness() from public, anon, authenticated;
+revoke all on function private.check_match_ledger_observation_teams() from public, anon, authenticated;
 
 revoke all on function public.match_ledger_record_observation(jsonb)
 from public, anon, authenticated;
-revoke all on function public.match_ledger_player_matches_as_of(uuid, timestamptz, integer, text)
+revoke all on function public.match_ledger_provider_player_matches_as_of(text, uuid, timestamptz, integer)
 from public, anon, authenticated;
 revoke all on function public.match_ledger_observation_as_of(uuid, text, timestamptz)
 from public, anon, authenticated;
-revoke all on function public.match_ledger_team_matches_as_of(uuid, timestamptz, integer, text)
+revoke all on function public.match_ledger_provider_team_matches_as_of(text, uuid, timestamptz, integer)
 from public, anon, authenticated;
 revoke all on function public.team_coach_tenures_as_of(uuid, timestamptz)
 from public, anon, authenticated;
@@ -1796,11 +2152,15 @@ grant execute on function private.kapiloto_information_clock() to service_role;
 grant execute on function private.normalize_entity_alias(text) to service_role;
 grant execute on function private.match_ledger_assert_keys(jsonb, text[], text) to service_role;
 grant execute on function private.match_ledger_record_withdrawal(jsonb) to service_role;
+grant execute on function private.kapiloto_require_read_committed(text) to service_role;
+grant execute on function private.surviving_player_id(uuid) to service_role;
+grant execute on function private.surviving_coach_id(uuid) to service_role;
+grant execute on function private.lock_match_ledger_fixture(text, text, uuid) to service_role;
 
 grant execute on function public.match_ledger_record_observation(jsonb) to service_role;
-grant execute on function public.match_ledger_player_matches_as_of(uuid, timestamptz, integer, text) to service_role;
+grant execute on function public.match_ledger_provider_player_matches_as_of(text, uuid, timestamptz, integer) to service_role;
 grant execute on function public.match_ledger_observation_as_of(uuid, text, timestamptz) to service_role;
-grant execute on function public.match_ledger_team_matches_as_of(uuid, timestamptz, integer, text) to service_role;
+grant execute on function public.match_ledger_provider_team_matches_as_of(text, uuid, timestamptz, integer) to service_role;
 grant execute on function public.team_coach_tenures_as_of(uuid, timestamptz) to service_role;
 
 comment on table public.players is
@@ -1836,7 +2196,11 @@ comment on table public.match_ledger_game_state_segments is
 comment on column public.team_coach_tenures.ends_on_latest is
   'Bounds of the last day in charge (inclusive). Both end bounds are null while the tenure is open as far as this version knows.';
 comment on column public.match_ledger_observations.first_seen_at is
-  'Information time: database-stamped when Kapiloto first stored this version. The only column as-of reconstruction may filter on.';
+  'Information time: clock_timestamp() when the header row was written (after the fixture locks). The only column as-of reconstruction may filter on.';
+comment on column public.match_ledger_observations.ingest_statement_at is
+  'Sealing key (statement_timestamp of the writing statement). Not information time; never filter on it.';
+comment on column public.match_ledger_observations.contract_version is
+  'Payload contract this immutable version was written under.';
 comment on column public.match_ledger_observations.retrieved_at is
   'When the ingester fetched the source. Informational; never used for as-of filtering.';
 comment on column public.match_ledger_observations.kickoff_at is

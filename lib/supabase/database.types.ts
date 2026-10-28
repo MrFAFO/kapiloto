@@ -1932,6 +1932,7 @@ export type Database = {
           related_player_id: string | null
           second: number | null
           sequence_no: number
+          staff_role: string | null
           stoppage_minute: number | null
           team_id: string
         }
@@ -1949,6 +1950,7 @@ export type Database = {
           related_player_id?: string | null
           second?: number | null
           sequence_no: number
+          staff_role?: string | null
           stoppage_minute?: number | null
           team_id: string
         }
@@ -1966,6 +1968,7 @@ export type Database = {
           related_player_id?: string | null
           second?: number | null
           sequence_no?: number
+          staff_role?: string | null
           stoppage_minute?: number | null
           team_id?: string
         }
@@ -1976,6 +1979,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "coaches"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_ledger_events_observation_id_related_player_id_fkey"
+            columns: ["observation_id", "related_player_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_players"
+            referencedColumns: ["observation_id", "player_id"]
           },
           {
             foreignKeyName: "match_ledger_events_observation_id_team_id_fkey"
@@ -1990,13 +2000,6 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "match_ledger_players"
             referencedColumns: ["observation_id", "team_id", "player_id"]
-          },
-          {
-            foreignKeyName: "match_ledger_events_related_player_id_fkey"
-            columns: ["related_player_id"]
-            isOneToOne: false
-            referencedRelation: "players"
-            referencedColumns: ["id"]
           },
         ]
       }
@@ -2075,12 +2078,14 @@ export type Database = {
           away_penalties: number | null
           capture_mode: string
           content_sha256: string
+          contract_version: string
           first_seen_at: string
           fixture_id: string
           home_goals_90: number | null
           home_goals_aet: number | null
           home_penalties: number | null
           id: string
+          ingest_statement_at: string
           ingest_version: string
           kickoff_at: string | null
           match_status: string | null
@@ -2103,12 +2108,14 @@ export type Database = {
           away_penalties?: number | null
           capture_mode: string
           content_sha256: string
+          contract_version: string
           first_seen_at?: string
           fixture_id: string
           home_goals_90?: number | null
           home_goals_aet?: number | null
           home_penalties?: number | null
           id?: string
+          ingest_statement_at?: string
           ingest_version: string
           kickoff_at?: string | null
           match_status?: string | null
@@ -2131,12 +2138,14 @@ export type Database = {
           away_penalties?: number | null
           capture_mode?: string
           content_sha256?: string
+          contract_version?: string
           first_seen_at?: string
           fixture_id?: string
           home_goals_90?: number | null
           home_goals_aet?: number | null
           home_penalties?: number | null
           id?: string
+          ingest_statement_at?: string
           ingest_version?: string
           kickoff_at?: string | null
           match_status?: string | null
@@ -3501,12 +3510,12 @@ export type Database = {
         Args: { p_cutoff: string; p_fixture_id: string; p_provider: string }
         Returns: string
       }
-      match_ledger_player_matches_as_of: {
+      match_ledger_provider_player_matches_as_of: {
         Args: {
           p_cutoff: string
           p_limit?: number
           p_player_id: string
-          p_provider?: string
+          p_provider: string
         }
         Returns: {
           appeared: boolean | null
@@ -3527,15 +3536,11 @@ export type Database = {
           team_id: string
         }[]
       }
-      match_ledger_record_observation: {
-        Args: { p_observation: Json }
-        Returns: Json
-      }
-      match_ledger_team_matches_as_of: {
+      match_ledger_provider_team_matches_as_of: {
         Args: {
           p_cutoff: string
           p_limit?: number
-          p_provider?: string
+          p_provider: string
           p_team_id: string
         }
         Returns: {
@@ -3557,6 +3562,10 @@ export type Database = {
           statistics_status: string
           substitutions_status: string
         }[]
+      }
+      match_ledger_record_observation: {
+        Args: { p_observation: Json }
+        Returns: Json
       }
       team_coach_tenures_as_of: {
         Args: { p_cutoff: string; p_team_id: string }

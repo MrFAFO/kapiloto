@@ -30,8 +30,8 @@ const V4_TABLES = [
 const V4_PUBLIC_FUNCTIONS = [
   "public.match_ledger_record_observation(jsonb)",
   "public.match_ledger_observation_as_of(uuid, text, timestamptz)",
-  "public.match_ledger_team_matches_as_of(uuid, timestamptz, integer, text)",
-  "public.match_ledger_player_matches_as_of(uuid, timestamptz, integer, text)",
+  "public.match_ledger_provider_team_matches_as_of(text, uuid, timestamptz, integer)",
+  "public.match_ledger_provider_player_matches_as_of(text, uuid, timestamptz, integer)",
   "public.team_coach_tenures_as_of(uuid, timestamptz)",
 ];
 
@@ -40,6 +40,10 @@ const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.normalize_entity_alias(text)",
   "private.match_ledger_assert_keys(jsonb, text[], text)",
   "private.match_ledger_record_withdrawal(jsonb)",
+  "private.kapiloto_require_read_committed(text)",
+  "private.surviving_player_id(uuid)",
+  "private.surviving_coach_id(uuid)",
+  "private.lock_match_ledger_fixture(text, text, uuid)",
 ];
 
 test("every V4 table is RLS-protected, policy-free and invisible to app users", async () => {
@@ -121,7 +125,7 @@ test("service_role can ingest through the RPC but cannot override the informatio
     [seed.home.playerIds[0]],
   );
   const history = await db.query(
-    "select * from public.match_ledger_team_matches_as_of($1, now(), 5, null)",
+    "select * from public.match_ledger_provider_team_matches_as_of('sportmonks', $1, now(), 5)",
     [seed.home.teamId],
   );
   assert.equal(history.rows.length, 1);

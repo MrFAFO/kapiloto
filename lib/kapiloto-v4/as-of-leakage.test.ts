@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { PGlite } from "@electric-sql/pglite";
 
-import type { PlayerMatchAsOfRow, TeamMatchAsOfRow } from "./as-of";
+import type { ProviderPlayerMatchAsOfRow, ProviderTeamMatchAsOfRow } from "./as-of";
 import { buildMatchLedgerWithdrawalPayload } from "./match-ledger";
 import {
   createFixture,
@@ -22,19 +22,24 @@ async function teamMatchesAsOf(
   teamId: string,
   cutoff: string,
   limit = 10,
-  provider: string | null = null,
-): Promise<TeamMatchAsOfRow[]> {
-  const result = await db.query<TeamMatchAsOfRow>(
-    "select * from public.match_ledger_team_matches_as_of($1, $2, $3, $4)",
-    [teamId, cutoff, limit, provider],
+  provider = "sportmonks",
+): Promise<ProviderTeamMatchAsOfRow[]> {
+  const result = await db.query<ProviderTeamMatchAsOfRow>(
+    "select * from public.match_ledger_provider_team_matches_as_of($1, $2, $3, $4)",
+    [provider, teamId, cutoff, limit],
   );
   return result.rows;
 }
 
-async function playerMatchesAsOf(db: PGlite, playerId: string, cutoff: string): Promise<PlayerMatchAsOfRow[]> {
-  const result = await db.query<PlayerMatchAsOfRow>(
-    "select * from public.match_ledger_player_matches_as_of($1, $2, 10, null)",
-    [playerId, cutoff],
+async function playerMatchesAsOf(
+  db: PGlite,
+  playerId: string,
+  cutoff: string,
+  provider = "sportmonks",
+): Promise<ProviderPlayerMatchAsOfRow[]> {
+  const result = await db.query<ProviderPlayerMatchAsOfRow>(
+    "select * from public.match_ledger_provider_player_matches_as_of($1, $2, $3, 10)",
+    [provider, playerId, cutoff],
   );
   return result.rows;
 }
@@ -178,6 +183,48 @@ test("a withdrawal hides wrongly attached data from later cutoffs only", async (
   await db.close();
 });
 
+test("one canonical fixture seen by two providers is never double-counted", async () => {
+  const db = await createLedgerDatabase();
+  const seed = await seedLedger(db);
+  const kickoff = "2026-10-24T18:00:00.000Z";
+  const fixture = await createFixture(db, seed, kickoff);
+  await recordObservation(
+    db,
+    resultOnlyObservation(fixture, seed.home.teamId, seed.away.teamId, { kickoffAt: kickoff, retrievedAt: "2026-10-25T06:00:00.000Z", homeGoals: 1, awayGoals: 0 }),
+    "2026-10-25T06:00:00.000Z",
+  );
+  await recordObservation(
+    db,
+    resultOnlyObservation({ fixtureId: fixture.fixtureId, providerFixtureId: "ifa-77" }, seed.home.teamId, seed.away.teamId, {
+      kickoffAt: kickoff,
+      retrievedAt: "2026-10-25T07:00:00.000Z",
+      homeGoals: 1,
+      awayGoals: 0,
+      provider: "ifa",
+    }),
+    "2026-10-25T07:00:00.000Z",
+  );
+  for (const provider of ["sportmonks", "ifa"]) {
+    const rows = await teamMatchesAsOf(db, seed.home.teamId, NOV_1, 10, provider);
+    assert.deepEqual(rows.map((row) => row.fixture_id), [fixture.fixtureId], provider);
+    assert.equal(new Set(rows.map((row) => row.fixture_id)).size, rows.length);
+  }
+  // There is no all-providers history: a missing provider is an error, not a union.
+  await assert.rejects(
+    db.query("select * from public.match_ledger_provider_team_matches_as_of(null, $1, $2, 10)", [seed.home.teamId, NOV_1]),
+    /provider, team and cutoff are required/,
+  );
+  await assert.rejects(
+    db.query("select * from public.match_ledger_provider_player_matches_as_of(null, $1, $2, 10)", [seed.home.playerIds[0], NOV_1]),
+    /provider, player and cutoff are required/,
+  );
+  await assert.rejects(
+    db.query("select public.match_ledger_observation_as_of($1, null, $2)", [fixture.fixtureId, NOV_1]),
+    /fixture, provider and cutoff are required/,
+  );
+  await db.close();
+});
+
 test("recent matches as of a cutoff respect information time, order, limit and provider", async () => {
   const db = await createLedgerDatabase();
   const seed = await seedLedger(db);
@@ -224,17 +271,19 @@ test("recent matches as of a cutoff respect information time, order, limit and p
     rows.map((row) => [new Date(row.kickoff_at).toISOString(), row.side, row.goals_for_90, row.goals_against_90, row.provider]),
     [
       ["2026-10-24T18:00:00.000Z", "away", 1, 3, "sportmonks"],
-      ["2026-10-21T17:00:00.000Z", "home", 1, 1, "ifa"],
       ["2026-10-17T18:00:00.000Z", "home", 0, 1, "sportmonks"],
+      ["2026-10-10T18:00:00.000Z", "away", 2, 2, "sportmonks"],
     ],
   );
-  const sportmonksOnly = await teamMatchesAsOf(db, home, NOV_1, 10, "sportmonks");
+  const sportmonksOnly = await teamMatchesAsOf(db, home, NOV_1, 10);
   assert.equal(sportmonksOnly.length, 4);
-  assert.ok(sportmonksOnly.every((row) => row.provider === "sportmonks"));
   assert.equal(sportmonksOnly[0].lineup_status, "not_provided");
+  // The IFA-only cup match exists only in the IFA view.
+  const ifaOnly = await teamMatchesAsOf(db, home, NOV_1, 10, "ifa");
+  assert.deepEqual(ifaOnly.map((row) => row.fixture_id), [cupFixture.fixtureId]);
 
   // A cutoff between kickoff and first-seen of the Oct 24 match excludes it.
-  const oct25Early = await teamMatchesAsOf(db, home, "2026-10-25T05:00:00.000Z", 10, "sportmonks");
+  const oct25Early = await teamMatchesAsOf(db, home, "2026-10-25T05:00:00.000Z", 10);
   assert.deepEqual(oct25Early.map((row) => row.goals_for_90), [0, 2, 1]);
   await db.close();
 });

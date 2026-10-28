@@ -178,19 +178,37 @@ test("writers cannot backdate first_seen_at or choose observation versions", asy
   const seed = await seedLedger(db);
   const fixture = await createFixture(db, seed, "2024-01-01T18:00:00.000Z");
   const before = Date.now();
-  const inserted = await db.query<{ first_seen_at: Date; observation_version: number }>(
+  // Inside a transaction that is rolled back: a header without team records
+  // would (correctly) fail the deferred completeness check at commit.
+  await db.exec("begin");
+  const inserted = await db.query<{ first_seen_at: Date; observation_version: number; ingest_statement_at: Date }>(
     `insert into public.match_ledger_observations
-       (fixture_id, provider, provider_fixture_id, capture_mode, ingest_version,
-        content_sha256, retrieved_at, first_seen_at, kickoff_at, match_status,
+       (contract_version, fixture_id, provider, provider_fixture_id, capture_mode, ingest_version,
+        content_sha256, retrieved_at, first_seen_at, ingest_statement_at, kickoff_at, match_status,
         observation_version, home_goals_90, away_goals_90)
-     values ($1, 'sportmonks', $2, 'manual_import', 'test', repeat('a', 64),
-        '2024-01-02T00:00:00Z', '2024-01-02T00:00:00Z', '2024-01-01T18:00:00Z', 'finished',
+     values ('kapiloto-match-ledger-observation-v1', $1, 'sportmonks', $2, 'manual_import', 'test', repeat('a', 64),
+        '2024-01-02T00:00:00Z', '2024-01-02T00:00:00Z', '2024-01-02T00:00:00Z', '2024-01-01T18:00:00Z', 'finished',
         42, 1, 0)
-     returning first_seen_at, observation_version`,
+     returning first_seen_at, observation_version, ingest_statement_at`,
     [fixture.fixtureId, fixture.providerFixtureId],
   );
   assert.ok(inserted.rows[0].first_seen_at.getTime() >= before - 60_000);
+  assert.ok(inserted.rows[0].ingest_statement_at.getTime() >= before - 60_000);
   assert.equal(inserted.rows[0].observation_version, 1);
+  await db.exec("rollback");
+
+  // The same header committed alone violates the two-team rule at commit.
+  await assert.rejects(
+    db.query(
+      `insert into public.match_ledger_observations
+         (contract_version, fixture_id, provider, provider_fixture_id, capture_mode, ingest_version,
+          content_sha256, retrieved_at, kickoff_at, match_status, home_goals_90, away_goals_90)
+       values ('kapiloto-match-ledger-observation-v1', $1, 'sportmonks', $2, 'manual_import', 'test',
+          repeat('a', 64), '2024-01-02T00:00:00Z', '2024-01-01T18:00:00Z', 'finished', 1, 0)`,
+      [fixture.fixtureId, fixture.providerFixtureId],
+    ),
+    /exactly two team records/,
+  );
   await db.close();
 });
 
