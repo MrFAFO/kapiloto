@@ -23,6 +23,13 @@
 -- Concurrency: every write that versions or claims an identity takes a
 -- transaction-scoped advisory lock and requires READ COMMITTED, so its checks
 -- run on a snapshot that includes every competing writer that committed first.
+--
+-- Canonical identity: ledger rows keep the canonical ids they were written
+-- with. A later merge (A -> B) is a data-quality correction, not football
+-- information, so model-facing reads resolve every stored id to its current
+-- survivor and treat A and B as one person at every cutoff. Writes accept only
+-- surviving ids, and a merge is refused if it would make one observation
+-- version list the same person twice.
 
 -- ---------------------------------------------------------------------------
 -- Shared helpers
@@ -54,6 +61,27 @@ as $$
 begin
   if current_setting('transaction_isolation') <> 'read committed' then
     raise exception '% requires READ COMMITTED isolation', p_context;
+  end if;
+end;
+$$;
+
+-- One canonical-identity lock per entity table ('players', 'coaches'). Merges
+-- and provider-mapping writes take it exclusively; ledger and tenure writes
+-- that check identities take it shared, so they never block each other. Each
+-- side runs its checks only after a competing transaction on the other side
+-- has committed. Taken after any fixture/tenure lock (one global order).
+create or replace function private.lock_canonical_identity(p_entity_table text, p_exclusive boolean)
+returns void
+language plpgsql
+volatile
+set search_path = ''
+as $$
+begin
+  perform private.kapiloto_require_read_committed('canonical identity checks');
+  if p_exclusive then
+    perform pg_advisory_xact_lock(hashtextextended('kapiloto_identity:' || p_entity_table, 0));
+  else
+    perform pg_advisory_xact_lock_shared(hashtextextended('kapiloto_identity:' || p_entity_table, 0));
   end if;
 end;
 $$;
@@ -275,9 +303,18 @@ as $$
 $$;
 
 -- Merge targets must be active and one hop deep; updated_at is maintained.
--- Identity changes (merge, un-merge) are serialized per entity table, so two
--- concurrent merges (A -> B with B -> A, or merging an entity while another
--- transaction makes it a merge target) cannot both pass their checks.
+-- Identity changes (merge, un-merge) take the canonical-identity lock
+-- exclusively, so two concurrent merges (A -> B with B -> A, or merging an
+-- entity while another transaction makes it a merge target) cannot both pass
+-- their checks, and no ledger write that checked the old identities is in
+-- flight while the co-occurrence check below runs.
+--
+-- Co-occurrence: a merge is refused when the two identities would become one
+-- person appearing twice in one stored observation version (two squad rows;
+-- a coach on both benches). Superseded and withdrawn versions count, because
+-- as-of reads at earlier cutoffs still return them; a corrected version does
+-- not repair them. Same-side coach appearances (a head coach and a staff card
+-- of the same team) are not refused.
 create or replace function private.guard_canonical_entity_identity()
 returns trigger
 language plpgsql
@@ -285,6 +322,7 @@ set search_path = ''
 as $$
 declare
   v_identity_change boolean := false;
+  v_shared_observation uuid;
 begin
   -- Nested ifs: plpgsql does not short-circuit record field access, and each
   -- table only has its own merge column.
@@ -299,8 +337,7 @@ begin
   end if;
 
   if v_identity_change then
-    perform private.kapiloto_require_read_committed('canonical identity merges');
-    perform pg_advisory_xact_lock(hashtextextended('kapiloto_identity_merge:' || tg_table_name, 0));
+    perform private.lock_canonical_identity(tg_table_name, true);
   end if;
 
   if tg_table_name = 'players' then
@@ -316,6 +353,21 @@ begin
       ) then
         raise exception 'player % is a merge target; re-point its duplicates first', new.id;
       end if;
+      if v_identity_change then
+        -- Against the target's whole identity class (target + its duplicates).
+        select a.observation_id
+          into v_shared_observation
+        from public.match_ledger_players a
+        join public.match_ledger_players b on b.observation_id = a.observation_id
+        join public.players bp on bp.id = b.player_id
+        where a.player_id = new.id
+          and new.merged_into_player_id in (bp.id, bp.merged_into_player_id)
+        limit 1;
+        if v_shared_observation is not null then
+          raise exception 'players % and % both appear in match ledger observation %; merging them would list one person twice',
+            new.id, new.merged_into_player_id, v_shared_observation;
+        end if;
+      end if;
     end if;
   elsif tg_table_name = 'coaches' then
     if new.merged_into_coach_id is not null then
@@ -329,6 +381,37 @@ begin
         select 1 from public.coaches c where c.merged_into_coach_id = new.id
       ) then
         raise exception 'coach % is a merge target; re-point its duplicates first', new.id;
+      end if;
+      if v_identity_change then
+        -- A coach is linked to a team in an observation by its team record
+        -- (head coach) or a staff card; links to opposite teams conflict.
+        select a.observation_id
+          into v_shared_observation
+        from (
+          select tr.observation_id, tr.team_id
+          from public.match_ledger_team_records tr
+          where tr.coach_id = new.id
+          union all
+          select e.observation_id, e.team_id
+          from public.match_ledger_events e
+          where e.coach_id = new.id
+        ) a
+        join (
+          select tr.observation_id, tr.team_id, tr.coach_id
+          from public.match_ledger_team_records tr
+          where tr.coach_id is not null
+          union all
+          select e.observation_id, e.team_id, e.coach_id
+          from public.match_ledger_events e
+          where e.coach_id is not null
+        ) b on b.observation_id = a.observation_id and b.team_id <> a.team_id
+        join public.coaches bc on bc.id = b.coach_id
+        where new.merged_into_coach_id in (bc.id, bc.merged_into_coach_id)
+        limit 1;
+        if v_shared_observation is not null then
+          raise exception 'coaches % and % are on opposite sides of match ledger observation %; merging them would put one person on both benches',
+            new.id, new.merged_into_coach_id, v_shared_observation;
+        end if;
       end if;
     end if;
   end if;
@@ -349,21 +432,39 @@ before insert or update on public.coaches
 for each row execute function private.guard_canonical_entity_identity();
 
 -- New or re-pointed provider mappings must target an active canonical entity.
+-- A mapping that predates a merge may keep pointing at the merged id (its
+-- metadata and status stay editable): every automatic resolution follows the
+-- survivor. Mapping writes take the canonical-identity lock exclusively, so a
+-- ledger write never checks a mapping that is being written concurrently.
 create or replace function private.guard_provider_entity_mapping()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
+declare
+  v_retargeted boolean;
 begin
   if tg_table_name = 'provider_player_mappings' then
-    if not exists (
+    perform private.lock_canonical_identity('players', true);
+    if tg_op = 'INSERT' then
+      v_retargeted := true;
+    else
+      v_retargeted := new.player_id is distinct from old.player_id;
+    end if;
+    if v_retargeted and not exists (
       select 1 from public.players p
       where p.id = new.player_id and p.identity_status = 'active'
     ) then
       raise exception 'provider player mappings must target an active canonical player';
     end if;
   elsif tg_table_name = 'provider_coach_mappings' then
-    if not exists (
+    perform private.lock_canonical_identity('coaches', true);
+    if tg_op = 'INSERT' then
+      v_retargeted := true;
+    else
+      v_retargeted := new.coach_id is distinct from old.coach_id;
+    end if;
+    if v_retargeted and not exists (
       select 1 from public.coaches c
       where c.id = new.coach_id and c.identity_status = 'active'
     ) then
@@ -454,6 +555,17 @@ begin
   perform pg_advisory_xact_lock(hashtextextended('kapiloto_tenure:' || new.tenure_key::text, 0));
   new.first_seen_at := private.kapiloto_information_clock();
 
+  -- New assertions name the surviving coach; a later version of a tenure
+  -- first asserted for a since-merged coach names that coach's survivor.
+  perform private.lock_canonical_identity('coaches', false);
+  if exists (
+    select 1 from public.coaches c
+    where c.id = new.coach_id and c.identity_status = 'merged'
+  ) then
+    raise exception 'coach % is merged into %; record the surviving canonical id',
+      new.coach_id, private.surviving_coach_id(new.coach_id);
+  end if;
+
   select max(t.tenure_version)
     into v_latest_version
   from public.team_coach_tenures t
@@ -466,7 +578,8 @@ begin
     where t.tenure_key = new.tenure_key
       and t.tenure_version = 1;
 
-    if v_first.team_id <> new.team_id or v_first.coach_id <> new.coach_id then
+    if v_first.team_id <> new.team_id
+      or private.surviving_coach_id(v_first.coach_id) <> new.coach_id then
       raise exception 'a tenure version cannot change its team or coach';
     end if;
   end if;
@@ -647,33 +760,40 @@ begin
     new.observation_version := 1;
   end if;
 
-  -- A provider fixture id is actively attached to at most one canonical
-  -- fixture: refuse it while another fixture's latest version carrying this id
-  -- is a (non-withdrawn) observation. Sound because of the provider-fixture
-  -- lock above, not merely because of this query.
-  if exists (
-    select 1
-    from (
-      select distinct on (o.fixture_id) o.fixture_id, o.observation_kind
-      from public.match_ledger_observations o
-      where o.provider = new.provider
-        and o.provider_fixture_id = new.provider_fixture_id
-        and o.fixture_id <> new.fixture_id
-      order by o.fixture_id, o.observation_version desc
-    ) other
-    where other.observation_kind = 'observation'
-  ) then
-    raise exception 'provider fixture id is already recorded for a different canonical fixture';
-  end if;
+  -- Attachment checks apply to observations only: a withdrawal retracts an
+  -- attachment and must stay possible after the mapping moved elsewhere.
+  if new.observation_kind = 'observation' then
+    -- A provider fixture id is actively attached to at most one canonical
+    -- fixture: refuse it while another fixture's latest version carrying this
+    -- id is a (non-withdrawn) observation. Sound because of the
+    -- provider-fixture lock above, not merely because of this query.
+    if exists (
+      select 1
+      from (
+        select distinct on (o.fixture_id) o.fixture_id, o.observation_kind
+        from public.match_ledger_observations o
+        where o.provider = new.provider
+          and o.provider_fixture_id = new.provider_fixture_id
+          and o.fixture_id <> new.fixture_id
+        order by o.fixture_id, o.observation_version desc
+      ) other
+      where other.observation_kind = 'observation'
+    ) then
+      raise exception 'provider fixture id is already recorded for a different canonical fixture';
+    end if;
 
-  select m.fixture_id
-    into v_mapped_fixture
-  from public.provider_fixture_mappings m
-  where m.provider = new.provider
-    and m.provider_fixture_id = new.provider_fixture_id;
+    -- Point-in-time agreement with the V3 mapping table. V3 writes to
+    -- provider_fixture_mappings do not take the ledger lock, so this is not a
+    -- cross-table invariant; match_ledger_mapping_conflicts() detects drift.
+    select m.fixture_id
+      into v_mapped_fixture
+    from public.provider_fixture_mappings m
+    where m.provider = new.provider
+      and m.provider_fixture_id = new.provider_fixture_id;
 
-  if v_mapped_fixture is not null and v_mapped_fixture <> new.fixture_id then
-    raise exception 'provider fixture id is mapped to a different canonical fixture';
+    if v_mapped_fixture is not null and v_mapped_fixture <> new.fixture_id then
+      raise exception 'provider fixture id is mapped to a different canonical fixture';
+    end if;
   end if;
 
   return new;
@@ -883,6 +1003,10 @@ create index match_ledger_events_player_idx
   on public.match_ledger_events (player_id)
   where player_id is not null;
 
+create index match_ledger_events_coach_idx
+  on public.match_ledger_events (coach_id)
+  where coach_id is not null;
+
 create unique index match_ledger_events_provider_event_uq
   on public.match_ledger_events (observation_id, provider_event_id)
   where provider_event_id is not null;
@@ -990,30 +1114,54 @@ begin
     raise exception 'a withdrawal version has no team records';
   end if;
 
-  -- A supplied provider coach id must not contradict an authoritative
-  -- mapping (unverified bootstrap mappings never resolve, so they are ignored).
-  if new.provider_coach_id is not null and new.coach_id is not null then
+  if new.coach_id is not null then
+    -- Shared identity lock: no coach merge or coach-mapping write is in
+    -- flight while these checks run.
+    perform private.lock_canonical_identity('coaches', false);
     if exists (
-      select 1
-      from public.provider_coach_mappings m
-      where m.provider = v_observation.provider
-        and m.provider_coach_id = new.provider_coach_id
-        and m.mapping_status in ('confirmed', 'manual_override')
-        and private.surviving_coach_id(m.coach_id) <> private.surviving_coach_id(new.coach_id)
+      select 1 from public.coaches c
+      where c.id = new.coach_id and c.identity_status = 'merged'
     ) then
-      raise exception 'provider coach id % is mapped to a different canonical coach', new.provider_coach_id;
+      raise exception 'coach % is merged into %; record the surviving canonical id',
+        new.coach_id, private.surviving_coach_id(new.coach_id);
     end if;
-    if not exists (
-      select 1 from public.provider_coach_mappings m
-      where m.provider = v_observation.provider
-        and m.provider_coach_id = new.provider_coach_id
-    ) and exists (
-      select 1 from public.provider_coach_mappings m
-      where m.provider = v_observation.provider
-        and m.coach_id = new.coach_id
-        and m.mapping_status in ('confirmed', 'manual_override')
+    if exists (
+      select 1 from public.match_ledger_team_records tr
+      where tr.observation_id = new.observation_id and tr.coach_id = new.coach_id
     ) then
-      raise exception 'canonical coach is mapped to a different provider coach id';
+      raise exception 'the same coach cannot lead both teams';
+    end if;
+
+    -- A supplied provider coach id must not contradict an authoritative
+    -- mapping in either direction (merge-aware; unverified bootstrap mappings
+    -- never resolve, so they are ignored).
+    if new.provider_coach_id is not null then
+      if exists (
+        select 1
+        from public.provider_coach_mappings m
+        where m.provider = v_observation.provider
+          and m.provider_coach_id = new.provider_coach_id
+          and m.mapping_status in ('confirmed', 'manual_override')
+          and private.surviving_coach_id(m.coach_id) <> new.coach_id
+      ) then
+        raise exception 'provider coach id % is mapped to a different canonical coach', new.provider_coach_id;
+      end if;
+      if not exists (
+        select 1 from public.provider_coach_mappings m
+        where m.provider = v_observation.provider
+          and m.provider_coach_id = new.provider_coach_id
+      ) and exists (
+        select 1 from public.provider_coach_mappings m
+        where m.provider = v_observation.provider
+          and m.coach_id in (
+            select new.coach_id
+            union all
+            select c.id from public.coaches c where c.merged_into_coach_id = new.coach_id
+          )
+          and m.mapping_status in ('confirmed', 'manual_override')
+      ) then
+        raise exception 'canonical coach is mapped to a different provider coach id';
+      end if;
     end if;
   end if;
 
@@ -1061,8 +1209,22 @@ begin
     raise exception 'match ledger observation % is sealed', new.observation_id;
   end if;
 
+  -- Shared identity lock: no player merge or player-mapping write is in
+  -- flight while these checks run. Substitutions and event players/related
+  -- players reference this observation's squad rows, so checking the squad
+  -- covers every player position.
+  perform private.lock_canonical_identity('players', false);
+  if exists (
+    select 1 from public.players p
+    where p.id = new.player_id and p.identity_status = 'merged'
+  ) then
+    raise exception 'player % is merged into %; record the surviving canonical id',
+      new.player_id, private.surviving_player_id(new.player_id);
+  end if;
+
   -- A supplied provider player id must not contradict an authoritative
-  -- mapping in either direction. No provider id = nothing to contradict.
+  -- mapping in either direction (merge-aware). No provider id = nothing to
+  -- contradict.
   if new.provider_player_id is not null then
     if exists (
       select 1
@@ -1070,7 +1232,7 @@ begin
       where m.provider = v_observation.provider
         and m.provider_player_id = new.provider_player_id
         and m.mapping_status in ('confirmed', 'manual_override')
-        and private.surviving_player_id(m.player_id) <> private.surviving_player_id(new.player_id)
+        and private.surviving_player_id(m.player_id) <> new.player_id
     ) then
       raise exception 'provider player id % is mapped to a different canonical player', new.provider_player_id;
     end if;
@@ -1081,7 +1243,11 @@ begin
     ) and exists (
       select 1 from public.provider_player_mappings m
       where m.provider = v_observation.provider
-        and m.player_id = new.player_id
+        and m.player_id in (
+          select new.player_id
+          union all
+          select p.id from public.players p where p.merged_into_player_id = new.player_id
+        )
         and m.mapping_status in ('confirmed', 'manual_override')
     ) then
       raise exception 'canonical player is mapped to a different provider player id';
@@ -1145,6 +1311,15 @@ begin
   -- name the team's own head coach.
   if tg_table_name = 'match_ledger_events' then
     if new.coach_id is not null then
+      perform private.lock_canonical_identity('coaches', false);
+      if exists (
+        select 1 from public.coaches c
+        where c.id = new.coach_id and c.identity_status = 'merged'
+      ) then
+        raise exception 'coach % is merged into %; record the surviving canonical id',
+          new.coach_id, private.surviving_coach_id(new.coach_id);
+      end if;
+
       select private.surviving_coach_id(tr.coach_id)
         into v_own_coach
       from public.match_ledger_team_records tr
@@ -1392,6 +1567,78 @@ begin
 
   if v_unknown is not null then
     raise exception 'unknown match ledger % field: %', p_label, v_unknown;
+  end if;
+end;
+$$;
+
+-- Ingestion accepts surviving canonical ids only. The RPC refuses a merged id
+-- in any position before it compares content hashes, so a payload resolved
+-- with a stale identity is an error, never an "unchanged" no-op; the child
+-- triggers repeat the check for direct inserts. There is deliberately no
+-- silent canonicalization: the stored ids, the content hash and the caller's
+-- payload stay identical, and raw provider ids/names remain the provenance.
+create or replace function private.match_ledger_assert_surviving_ids(
+  p_teams jsonb,
+  p_players jsonb,
+  p_substitutions jsonb,
+  p_events jsonb
+)
+returns void
+language plpgsql
+volatile
+set search_path = ''
+as $$
+declare
+  v_position text;
+  v_id uuid;
+  v_survivor uuid;
+begin
+  perform private.lock_canonical_identity('players', false);
+  perform private.lock_canonical_identity('coaches', false);
+
+  select r.position, r.id, p.merged_into_player_id
+    into v_position, v_id, v_survivor
+  from (
+    select 'players.player_id' as position, (x->>'player_id')::uuid as id, 1 as ord
+    from jsonb_array_elements(p_players) x
+    union all
+    select 'substitutions.player_off_id', (s->>'player_off_id')::uuid, 2
+    from jsonb_array_elements(p_substitutions) s
+    union all
+    select 'substitutions.player_on_id', (s->>'player_on_id')::uuid, 3
+    from jsonb_array_elements(p_substitutions) s
+    union all
+    select 'events.player_id', (e->>'player_id')::uuid, 4
+    from jsonb_array_elements(p_events) e
+    union all
+    select 'events.related_player_id', (e->>'related_player_id')::uuid, 5
+    from jsonb_array_elements(p_events) e
+  ) r
+  join public.players p on p.id = r.id
+  where p.identity_status = 'merged'
+  order by r.ord
+  limit 1;
+  if v_id is not null then
+    raise exception 'match ledger % % is a merged player; record its surviving canonical id %',
+      v_position, v_id, v_survivor;
+  end if;
+
+  select r.position, r.id, c.merged_into_coach_id
+    into v_position, v_id, v_survivor
+  from (
+    select 'teams.coach_id' as position, (t->>'coach_id')::uuid as id, 1 as ord
+    from jsonb_array_elements(p_teams) t
+    union all
+    select 'events.coach_id', (e->>'coach_id')::uuid, 2
+    from jsonb_array_elements(p_events) e
+  ) r
+  join public.coaches c on c.id = r.id
+  where c.identity_status = 'merged'
+  order by r.ord
+  limit 1;
+  if v_id is not null then
+    raise exception 'match ledger % % is a merged coach; record its surviving canonical id %',
+      v_position, v_id, v_survivor;
   end if;
 end;
 $$;
@@ -1678,6 +1925,8 @@ begin
   perform private.lock_match_ledger_fixture(
     v_header.provider, v_header.provider_fixture_id, v_header.fixture_id
   );
+  -- After the fixture locks (global lock order), before the hash comparison.
+  perform private.match_ledger_assert_surviving_ids(v_teams, v_players, v_substitutions, v_events);
 
   select o.*
     into v_latest
@@ -1861,6 +2110,9 @@ $$;
 -- Provider-scoped by contract: one provider's view, so a canonical fixture
 -- appears at most once. There is deliberately no all-providers variant; a
 -- fused canonical history (provider precedence) is a later, separate API.
+-- Coach identity is explicit: observed_coach_id is the id stored in the
+-- immutable version; canonical_coach_id is its current survivor. Coach models
+-- group by canonical_coach_id.
 create or replace function public.match_ledger_provider_team_matches_as_of(
   p_provider text,
   p_team_id uuid,
@@ -1877,7 +2129,8 @@ returns table (
   side text,
   opponent_team_id uuid,
   neutral_venue boolean,
-  coach_id uuid,
+  observed_coach_id uuid,
+  canonical_coach_id uuid,
   formation_nominal text,
   goals_for_90 smallint,
   goals_against_90 smallint,
@@ -1927,7 +2180,8 @@ begin
       tr.side,
       tr.opponent_team_id,
       o.neutral_venue,
-      tr.coach_id,
+      tr.coach_id as observed_coach_id,
+      coalesce(c.merged_into_coach_id, tr.coach_id) as canonical_coach_id,
       tr.formation_nominal,
       case when tr.side = 'home' then o.home_goals_90 else o.away_goals_90 end as goals_for_90,
       case when tr.side = 'home' then o.away_goals_90 else o.home_goals_90 end as goals_against_90,
@@ -1940,6 +2194,7 @@ begin
     join public.match_ledger_observations o on o.id = v.observation_id
     join public.match_ledger_team_records tr
       on tr.observation_id = o.id and tr.team_id = p_team_id
+    left join public.coaches c on c.id = tr.coach_id
     where v.version_rank = 1
       and v.observation_kind = 'observation'
       and o.match_status = 'finished'
@@ -1948,7 +2203,8 @@ begin
   select
     l.observation_id, l.fixture_id, l.provider, l.observation_version,
     l.first_seen_at, l.kickoff_at, l.side, l.opponent_team_id, l.neutral_venue,
-    l.coach_id, l.formation_nominal, l.goals_for_90, l.goals_against_90,
+    l.observed_coach_id, l.canonical_coach_id, l.formation_nominal,
+    l.goals_for_90, l.goals_against_90,
     l.lineup_status, l.substitutions_status, l.events_status,
     l.statistics_status
   from latest l
@@ -1960,6 +2216,12 @@ $$;
 -- A player's matchday records as of a cutoff, from one provider, taken only
 -- from the latest version of each fixture known at the cutoff (a correction
 -- that drops the player from a squad removes the match from his history).
+--
+-- Merge-aware: the history is the canonical person's. Rows stored under any
+-- member of the identity class (the survivor and every id merged into it)
+-- are included, and a merged p_player_id redirects to its survivor's history
+-- (canonical_player_id says which). The merge guard keeps at most one class
+-- member per observation version, so a fixture still appears at most once.
 create or replace function public.match_ledger_provider_player_matches_as_of(
   p_provider text,
   p_player_id uuid,
@@ -1973,6 +2235,8 @@ returns table (
   observation_version integer,
   first_seen_at timestamptz,
   kickoff_at timestamptz,
+  canonical_player_id uuid,
+  observed_player_id uuid,
   team_id uuid,
   lineup_role text,
   appeared boolean,
@@ -1989,16 +2253,25 @@ stable
 set search_path = ''
 as $$
 #variable_conflict use_column
+declare
+  v_canonical uuid;
+  v_identities uuid[];
 begin
   if p_provider is null or p_player_id is null or p_cutoff is null then
     raise exception 'provider, player and cutoff are required';
   end if;
+  v_canonical := private.surviving_player_id(p_player_id);
+  select array_append(coalesce(array_agg(pl.id), '{}'::uuid[]), v_canonical)
+    into v_identities
+  from public.players pl
+  where pl.merged_into_player_id = v_canonical;
+
   return query
   with candidates as (
     select distinct o.fixture_id
     from public.match_ledger_players p
     join public.match_ledger_observations o on o.id = p.observation_id
-    where p.player_id = p_player_id
+    where p.player_id = any (v_identities)
       and p.first_seen_at <= p_cutoff
   ),
   visible as (
@@ -2022,6 +2295,8 @@ begin
       o.observation_version,
       o.first_seen_at,
       o.kickoff_at,
+      v_canonical as canonical_player_id,
+      p.player_id as observed_player_id,
       p.team_id,
       p.lineup_role,
       p.appeared,
@@ -2036,7 +2311,7 @@ begin
     from visible v
     join public.match_ledger_observations o on o.id = v.observation_id
     join public.match_ledger_players p
-      on p.observation_id = o.id and p.player_id = p_player_id
+      on p.observation_id = o.id and p.player_id = any (v_identities)
     where v.version_rank = 1
       and v.observation_kind = 'observation'
       and o.match_status = 'finished'
@@ -2044,7 +2319,8 @@ begin
   )
   select
     l.observation_id, l.fixture_id, l.provider, l.observation_version,
-    l.first_seen_at, l.kickoff_at, l.team_id, l.lineup_role, l.appeared,
+    l.first_seen_at, l.kickoff_at, l.canonical_player_id, l.observed_player_id,
+    l.team_id, l.lineup_role, l.appeared,
     l.position_code, l.formation_position, l.is_captain, l.minutes_played,
     l.entered_minute, l.exited_minute, l.data_completeness
   from latest l
@@ -2053,29 +2329,196 @@ begin
 end;
 $$;
 
+-- Raw assertion history: the latest version of each tenure known at the
+-- cutoff, exactly as asserted (coach_id is the asserted id). canonical_coach_id
+-- is its current survivor; coach models group by it. Two tenures asserted for
+-- two since-merged coach ids stay two assertions; they are not deduplicated.
 create or replace function public.team_coach_tenures_as_of(
   p_team_id uuid,
   p_cutoff timestamptz
 )
-returns setof public.team_coach_tenures
+returns table (
+  id uuid,
+  tenure_key uuid,
+  tenure_version integer,
+  team_id uuid,
+  coach_id uuid,
+  canonical_coach_id uuid,
+  role text,
+  starts_on_earliest date,
+  starts_on_latest date,
+  ends_on_earliest date,
+  ends_on_latest date,
+  assertion_status text,
+  source_kind text,
+  provider text,
+  provider_record_id text,
+  source_reference text,
+  source_fingerprint text,
+  raw_observation_id uuid,
+  retrieved_at timestamptz,
+  first_seen_at timestamptz,
+  ingest_version text
+)
 language sql
 stable
 set search_path = ''
 as $$
-  select (ranked.tenure).*
+  select
+    t.id, t.tenure_key, t.tenure_version, t.team_id, t.coach_id,
+    coalesce(c.merged_into_coach_id, t.coach_id), t.role,
+    t.starts_on_earliest, t.starts_on_latest, t.ends_on_earliest,
+    t.ends_on_latest, t.assertion_status, t.source_kind, t.provider,
+    t.provider_record_id, t.source_reference, t.source_fingerprint,
+    t.raw_observation_id, t.retrieved_at, t.first_seen_at, t.ingest_version
   from (
     select
-      t as tenure,
+      t0.*,
       row_number() over (
-        partition by t.tenure_key
-        order by t.tenure_version desc
+        partition by t0.tenure_key
+        order by t0.tenure_version desc
       ) as version_rank
-    from public.team_coach_tenures t
-    where t.team_id = p_team_id
-      and t.first_seen_at <= p_cutoff
-  ) ranked
-  where ranked.version_rank = 1
-    and (ranked.tenure).assertion_status = 'asserted'
+    from public.team_coach_tenures t0
+    where t0.team_id = p_team_id
+      and t0.first_seen_at <= p_cutoff
+  ) t
+  join public.coaches c on c.id = t.coach_id
+  where t.version_rank = 1
+    and t.assertion_status = 'asserted'
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Identity resolution. Every automatic resolution returns surviving canonical
+-- ids; raw matched ids are returned alongside for provenance.
+-- ---------------------------------------------------------------------------
+
+-- Alias candidates, one row per matching entity. Callers classify them with
+-- resolveAliasCandidates(): candidates that share a canonical id are one
+-- person (a merged duplicate's aliases stay valid); two canonical ids are
+-- ambiguous and must not be resolved automatically.
+create or replace function public.player_alias_candidates(p_alias text)
+returns table (player_id uuid, canonical_player_id uuid)
+language sql
+stable
+set search_path = ''
+as $$
+  select distinct a.player_id, coalesce(p.merged_into_player_id, p.id)
+  from public.player_aliases a
+  join public.players p on p.id = a.player_id
+  where a.normalized_alias = private.normalize_entity_alias(p_alias)
+  order by 2, 1
+$$;
+
+create or replace function public.coach_alias_candidates(p_alias text)
+returns table (coach_id uuid, canonical_coach_id uuid)
+language sql
+stable
+set search_path = ''
+as $$
+  select distinct a.coach_id, coalesce(c.merged_into_coach_id, c.id)
+  from public.coach_aliases a
+  join public.coaches c on c.id = a.coach_id
+  where a.normalized_alias = private.normalize_entity_alias(p_alias)
+  order by 2, 1
+$$;
+
+-- Authoritative (confirmed/manual_override) provider mappings resolved to the
+-- survivor. A mapping that predates a merge still points at the merged id;
+-- it resolves to the survivor here. Unverified or unknown ids return no row.
+create or replace function public.resolve_provider_player_ids(
+  p_provider text,
+  p_provider_player_ids text[]
+)
+returns table (provider_player_id text, mapped_player_id uuid, canonical_player_id uuid)
+language sql
+stable
+set search_path = ''
+as $$
+  select m.provider_player_id, m.player_id, coalesce(p.merged_into_player_id, p.id)
+  from public.provider_player_mappings m
+  join public.players p on p.id = m.player_id
+  where m.provider = p_provider
+    and m.provider_player_id = any (p_provider_player_ids)
+    and m.mapping_status in ('confirmed', 'manual_override')
+  order by 1
+$$;
+
+create or replace function public.resolve_provider_coach_ids(
+  p_provider text,
+  p_provider_coach_ids text[]
+)
+returns table (provider_coach_id text, mapped_coach_id uuid, canonical_coach_id uuid)
+language sql
+stable
+set search_path = ''
+as $$
+  select m.provider_coach_id, m.coach_id, coalesce(c.merged_into_coach_id, c.id)
+  from public.provider_coach_mappings m
+  join public.coaches c on c.id = m.coach_id
+  where m.provider = p_provider
+    and m.provider_coach_id = any (p_provider_coach_ids)
+    and m.mapping_status in ('confirmed', 'manual_override')
+  order by 1
+$$;
+
+-- Reconciliation input, not an invariant: current (latest, non-withdrawn)
+-- observation versions whose stored canonical assignment disagrees with the
+-- current authoritative mappings, matched through the raw provider ids kept
+-- in the ledger. Disagreement arises from a mapping corrected after ingest
+-- (allowed by design) or, for fixtures, from a provider_fixture_mappings
+-- write that the ledger cannot serialize against (see
+-- docs/architecture/KAPILOTO-V4-FOUNDATION.md). The repair is a corrected
+-- observation version or a withdrawal; ledger rows are never rewritten.
+create or replace function public.match_ledger_mapping_conflicts(p_provider text)
+returns table (
+  conflict_kind text,
+  observation_id uuid,
+  fixture_id uuid,
+  provider_entity_id text,
+  stored_canonical_id uuid,
+  mapped_canonical_id uuid
+)
+language sql
+stable
+set search_path = ''
+as $$
+  with latest as (
+    select distinct on (o.fixture_id) o.id, o.fixture_id, o.provider, o.provider_fixture_id, o.observation_kind
+    from public.match_ledger_observations o
+    where o.provider = p_provider
+    order by o.fixture_id, o.observation_version desc
+  ),
+  current_versions as (
+    select * from latest where observation_kind = 'observation'
+  )
+  select 'fixture', l.id, l.fixture_id, l.provider_fixture_id, l.fixture_id, m.fixture_id
+  from current_versions l
+  join public.provider_fixture_mappings m
+    on m.provider = l.provider and m.provider_fixture_id = l.provider_fixture_id
+  where m.fixture_id is distinct from l.fixture_id
+  union all
+  select 'player', l.id, l.fixture_id, mp.provider_player_id,
+    coalesce(sp.merged_into_player_id, sp.id), coalesce(tp.merged_into_player_id, tp.id)
+  from current_versions l
+  join public.match_ledger_players mp on mp.observation_id = l.id
+  join public.players sp on sp.id = mp.player_id
+  join public.provider_player_mappings m
+    on m.provider = l.provider and m.provider_player_id = mp.provider_player_id
+    and m.mapping_status in ('confirmed', 'manual_override')
+  join public.players tp on tp.id = m.player_id
+  where coalesce(sp.merged_into_player_id, sp.id) <> coalesce(tp.merged_into_player_id, tp.id)
+  union all
+  select 'coach', l.id, l.fixture_id, tr.provider_coach_id,
+    coalesce(sc.merged_into_coach_id, sc.id), coalesce(tc.merged_into_coach_id, tc.id)
+  from current_versions l
+  join public.match_ledger_team_records tr on tr.observation_id = l.id
+  join public.coaches sc on sc.id = tr.coach_id
+  join public.provider_coach_mappings m
+    on m.provider = l.provider and m.provider_coach_id = tr.provider_coach_id
+    and m.mapping_status in ('confirmed', 'manual_override')
+  join public.coaches tc on tc.id = m.coach_id
+  where coalesce(sc.merged_into_coach_id, sc.id) <> coalesce(tc.merged_into_coach_id, tc.id)
+  order by 1, 3, 4
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -2133,6 +2576,8 @@ revoke all on function private.surviving_coach_id(uuid) from public, anon, authe
 revoke all on function private.lock_match_ledger_fixture(text, text, uuid) from public, anon, authenticated;
 revoke all on function private.check_match_ledger_team_completeness() from public, anon, authenticated;
 revoke all on function private.check_match_ledger_observation_teams() from public, anon, authenticated;
+revoke all on function private.lock_canonical_identity(text, boolean) from public, anon, authenticated;
+revoke all on function private.match_ledger_assert_surviving_ids(jsonb, jsonb, jsonb, jsonb) from public, anon, authenticated;
 
 revoke all on function public.match_ledger_record_observation(jsonb)
 from public, anon, authenticated;
@@ -2143,6 +2588,16 @@ from public, anon, authenticated;
 revoke all on function public.match_ledger_provider_team_matches_as_of(text, uuid, timestamptz, integer)
 from public, anon, authenticated;
 revoke all on function public.team_coach_tenures_as_of(uuid, timestamptz)
+from public, anon, authenticated;
+revoke all on function public.player_alias_candidates(text)
+from public, anon, authenticated;
+revoke all on function public.coach_alias_candidates(text)
+from public, anon, authenticated;
+revoke all on function public.resolve_provider_player_ids(text, text[])
+from public, anon, authenticated;
+revoke all on function public.resolve_provider_coach_ids(text, text[])
+from public, anon, authenticated;
+revoke all on function public.match_ledger_mapping_conflicts(text)
 from public, anon, authenticated;
 
 -- Triggers, the alias generated columns and the ingestion RPC run as the
@@ -2156,12 +2611,19 @@ grant execute on function private.kapiloto_require_read_committed(text) to servi
 grant execute on function private.surviving_player_id(uuid) to service_role;
 grant execute on function private.surviving_coach_id(uuid) to service_role;
 grant execute on function private.lock_match_ledger_fixture(text, text, uuid) to service_role;
+grant execute on function private.lock_canonical_identity(text, boolean) to service_role;
+grant execute on function private.match_ledger_assert_surviving_ids(jsonb, jsonb, jsonb, jsonb) to service_role;
 
 grant execute on function public.match_ledger_record_observation(jsonb) to service_role;
 grant execute on function public.match_ledger_provider_player_matches_as_of(text, uuid, timestamptz, integer) to service_role;
 grant execute on function public.match_ledger_observation_as_of(uuid, text, timestamptz) to service_role;
 grant execute on function public.match_ledger_provider_team_matches_as_of(text, uuid, timestamptz, integer) to service_role;
 grant execute on function public.team_coach_tenures_as_of(uuid, timestamptz) to service_role;
+grant execute on function public.player_alias_candidates(text) to service_role;
+grant execute on function public.coach_alias_candidates(text) to service_role;
+grant execute on function public.resolve_provider_player_ids(text, text[]) to service_role;
+grant execute on function public.resolve_provider_coach_ids(text, text[]) to service_role;
+grant execute on function public.match_ledger_mapping_conflicts(text) to service_role;
 
 comment on table public.players is
   'Canonical player identity (V4). Provider ids are mappings, never identity; duplicates are merged explicitly via merged_into_player_id.';

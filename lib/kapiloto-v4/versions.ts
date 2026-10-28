@@ -18,3 +18,9 @@ export const GAME_STATE_SEGMENT_CONTRACT_VERSION = "kapiloto-game-state-segments
 
 /** The as-of rule implemented by the match_ledger_*_as_of SQL functions. */
 export const AS_OF_RULE_VERSION = "kapiloto-as-of-first-seen-v1";
+
+/**
+ * Merge semantics: ledger rows keep their written ids, model-facing reads and
+ * resolutions return current survivors, writes accept survivors only.
+ */
+export const CANONICAL_IDENTITY_RULE_VERSION = "kapiloto-canonical-identity-v1";

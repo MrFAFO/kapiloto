@@ -91,11 +91,11 @@ test("Hebrew and English aliases coexist without identity collision", async () =
 
   const lookup = async (alias: string) =>
     (
-      await db.query<{ player_id: string }>(
-        "select player_id from public.player_aliases where normalized_alias = $1",
-        [normalizeEntityAlias(alias)],
+      await db.query<{ player_id: string; canonical_player_id: string }>(
+        "select * from public.player_alias_candidates($1)",
+        [alias],
       )
-    ).rows.map((row) => row.player_id);
+    ).rows.map((row) => ({ entityId: row.player_id, canonicalEntityId: row.canonical_player_id }));
   assert.deepEqual(resolveAliasCandidates(await lookup("יוֹסִי כֹּהֵן")), { status: "ambiguous", candidateIds: [P1, P2] });
   assert.deepEqual(resolveAliasCandidates(await lookup("YOSSI  COHEN")), { status: "ambiguous", candidateIds: [P1, P2] });
   assert.deepEqual(resolveAliasCandidates(await lookup("y. cohen")), { status: "unique", entityId: P1 });

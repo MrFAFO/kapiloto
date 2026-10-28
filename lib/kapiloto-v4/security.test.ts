@@ -33,6 +33,11 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.match_ledger_provider_team_matches_as_of(text, uuid, timestamptz, integer)",
   "public.match_ledger_provider_player_matches_as_of(text, uuid, timestamptz, integer)",
   "public.team_coach_tenures_as_of(uuid, timestamptz)",
+  "public.player_alias_candidates(text)",
+  "public.coach_alias_candidates(text)",
+  "public.resolve_provider_player_ids(text, text[])",
+  "public.resolve_provider_coach_ids(text, text[])",
+  "public.match_ledger_mapping_conflicts(text)",
 ];
 
 const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
@@ -44,6 +49,8 @@ const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.surviving_player_id(uuid)",
   "private.surviving_coach_id(uuid)",
   "private.lock_match_ledger_fixture(text, text, uuid)",
+  "private.lock_canonical_identity(text, boolean)",
+  "private.match_ledger_assert_surviving_ids(jsonb, jsonb, jsonb, jsonb)",
 ];
 
 test("every V4 table is RLS-protected, policy-free and invisible to app users", async () => {

@@ -15,11 +15,22 @@ test("alias normalization unifies Hebrew points, geresh, maqaf, quotes and spaci
 });
 
 test("alias candidates never resolve to one of several different entities", () => {
+  const self = (id: string) => ({ entityId: id, canonicalEntityId: id });
   assert.deepEqual(resolveAliasCandidates([]), { status: "unresolved" });
-  assert.deepEqual(resolveAliasCandidates(["b", "b"]), { status: "unique", entityId: "b" });
-  assert.deepEqual(resolveAliasCandidates(["b", "a", "b"]), {
+  assert.deepEqual(resolveAliasCandidates([self("b"), self("b")]), { status: "unique", entityId: "b" });
+  assert.deepEqual(resolveAliasCandidates([self("b"), self("a"), self("b")]), {
     status: "ambiguous",
     candidateIds: ["a", "b"],
+  });
+  // A merged duplicate (a -> b) and its survivor are one person ...
+  assert.deepEqual(resolveAliasCandidates([{ entityId: "a", canonicalEntityId: "b" }, self("b")]), {
+    status: "unique",
+    entityId: "b",
+  });
+  // ... but two different survivors stay ambiguous, also through a merged id.
+  assert.deepEqual(resolveAliasCandidates([{ entityId: "a", canonicalEntityId: "b" }, self("c")]), {
+    status: "ambiguous",
+    candidateIds: ["b", "c"],
   });
 });
 

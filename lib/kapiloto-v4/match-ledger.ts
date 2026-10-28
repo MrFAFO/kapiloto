@@ -467,6 +467,8 @@ export function validateMatchLedgerObservation(input: MatchLedgerObservationInpu
       issues.push(`team ${team.teamId}: invalid nominal formation ${team.formationNominal}`);
     }
   }
+  const coachIds = input.teams.map((team) => team.coachId?.toLowerCase()).filter(Boolean);
+  if (new Set(coachIds).size !== coachIds.length) issues.push("the same coach cannot lead both teams");
   if (input.matchStatus === "finished" && (input.homeGoals90 == null || input.awayGoals90 == null)) {
     issues.push("finished observation is missing the 90-minute score");
   }

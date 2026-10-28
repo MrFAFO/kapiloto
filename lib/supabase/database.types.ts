@@ -3506,6 +3506,24 @@ export type Database = {
         Args: { p_snapshot: Json }
         Returns: Json
       }
+      coach_alias_candidates: {
+        Args: { p_alias: string }
+        Returns: {
+          canonical_coach_id: string
+          coach_id: string
+        }[]
+      }
+      match_ledger_mapping_conflicts: {
+        Args: { p_provider: string }
+        Returns: {
+          conflict_kind: string
+          fixture_id: string
+          mapped_canonical_id: string | null
+          observation_id: string
+          provider_entity_id: string
+          stored_canonical_id: string
+        }[]
+      }
       match_ledger_observation_as_of: {
         Args: { p_cutoff: string; p_fixture_id: string; p_provider: string }
         Returns: string
@@ -3519,6 +3537,7 @@ export type Database = {
         }
         Returns: {
           appeared: boolean | null
+          canonical_player_id: string
           data_completeness: string
           entered_minute: number | null
           exited_minute: number | null
@@ -3531,6 +3550,7 @@ export type Database = {
           minutes_played: number | null
           observation_id: string
           observation_version: number
+          observed_player_id: string
           position_code: string | null
           provider: string
           team_id: string
@@ -3544,7 +3564,7 @@ export type Database = {
           p_team_id: string
         }
         Returns: {
-          coach_id: string | null
+          canonical_coach_id: string | null
           events_status: string
           first_seen_at: string
           fixture_id: string
@@ -3556,6 +3576,7 @@ export type Database = {
           neutral_venue: boolean | null
           observation_id: string
           observation_version: number
+          observed_coach_id: string | null
           opponent_team_id: string
           provider: string
           side: string
@@ -3567,9 +3588,54 @@ export type Database = {
         Args: { p_observation: Json }
         Returns: Json
       }
+      player_alias_candidates: {
+        Args: { p_alias: string }
+        Returns: {
+          canonical_player_id: string
+          player_id: string
+        }[]
+      }
+      resolve_provider_coach_ids: {
+        Args: { p_provider: string; p_provider_coach_ids: string[] }
+        Returns: {
+          canonical_coach_id: string
+          mapped_coach_id: string
+          provider_coach_id: string
+        }[]
+      }
+      resolve_provider_player_ids: {
+        Args: { p_provider: string; p_provider_player_ids: string[] }
+        Returns: {
+          canonical_player_id: string
+          mapped_player_id: string
+          provider_player_id: string
+        }[]
+      }
       team_coach_tenures_as_of: {
         Args: { p_cutoff: string; p_team_id: string }
-        Returns: Database["public"]["Tables"]["team_coach_tenures"]["Row"][]
+        Returns: {
+          assertion_status: string
+          canonical_coach_id: string
+          coach_id: string
+          ends_on_earliest: string | null
+          ends_on_latest: string | null
+          first_seen_at: string
+          id: string
+          ingest_version: string
+          provider: string | null
+          provider_record_id: string | null
+          raw_observation_id: string | null
+          retrieved_at: string | null
+          role: string
+          source_fingerprint: string | null
+          source_kind: string
+          source_reference: string | null
+          starts_on_earliest: string
+          starts_on_latest: string
+          team_id: string
+          tenure_key: string
+          tenure_version: number
+        }[]
       }
       toto_save_ticket_draft: {
         Args: {

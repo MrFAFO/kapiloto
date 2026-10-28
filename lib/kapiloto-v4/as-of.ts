@@ -20,6 +20,14 @@ import type { MatchLedgerObservation, TeamSide } from "./match-ledger";
  * unions providers; a fused canonical history needs an explicit provider
  * precedence/fusion policy and will be a separate, named API. Never merge the
  * results of two provider-scoped calls into one last-N list.
+ *
+ * Identity contract (kapiloto-canonical-identity-v1): information time governs
+ * football facts only. Canonical identity is read at its current state: a
+ * player's history includes rows stored under ids since merged into him (a
+ * merged id passed in redirects to the survivor), and team history reports
+ * both the observed and the canonical coach. Exact historical model inputs
+ * are preserved by the prediction registry, not by replaying the identity
+ * graph.
  */
 
 export const MATCH_LEDGER_AS_OF_FUNCTIONS = {
@@ -73,7 +81,12 @@ export function tenuresAsOf<
   return [...latest.values()].filter((tenure) => tenure.assertionStatus === "asserted");
 }
 
-/** Row returned by public.match_ledger_provider_player_matches_as_of. */
+/**
+ * Row returned by public.match_ledger_provider_player_matches_as_of. One row
+ * per fixture for the canonical person: observed_player_id is the id stored in
+ * the immutable version (possibly since merged), canonical_player_id its
+ * survivor.
+ */
 export type ProviderPlayerMatchAsOfRow = {
   observation_id: string;
   fixture_id: string;
@@ -81,6 +94,8 @@ export type ProviderPlayerMatchAsOfRow = {
   observation_version: number;
   first_seen_at: string;
   kickoff_at: string;
+  canonical_player_id: string;
+  observed_player_id: string;
   team_id: string;
   lineup_role: string;
   appeared: boolean | null;
@@ -93,7 +108,11 @@ export type ProviderPlayerMatchAsOfRow = {
   data_completeness: string;
 };
 
-/** Row returned by public.match_ledger_provider_team_matches_as_of. */
+/**
+ * Row returned by public.match_ledger_provider_team_matches_as_of. Coach
+ * models group by canonical_coach_id; observed_coach_id is what the version
+ * stored.
+ */
 export type ProviderTeamMatchAsOfRow = {
   observation_id: string;
   fixture_id: string;
@@ -104,7 +123,8 @@ export type ProviderTeamMatchAsOfRow = {
   side: TeamSide;
   opponent_team_id: string;
   neutral_venue: boolean | null;
-  coach_id: string | null;
+  observed_coach_id: string | null;
+  canonical_coach_id: string | null;
   formation_nominal: string | null;
   goals_for_90: number | null;
   goals_against_90: number | null;

@@ -348,7 +348,7 @@ test("identity merges and tenure versions are serialized and refuse snapshot iso
 
   await db.exec("begin");
   await db.query("update public.players set identity_status = 'merged', merged_into_player_id = $2 where id = $1", [a, b]);
-  assert.equal(await advisoryLockHeld(db, "kapiloto_identity_merge:players"), true);
+  assert.equal(await advisoryLockHeld(db, "kapiloto_identity:players"), true);
   await db.exec("commit");
   // The reverse merge, which a concurrent transaction would attempt, now fails.
   await assert.rejects(

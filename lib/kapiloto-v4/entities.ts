@@ -8,8 +8,21 @@
  * - Aliases are unique per entity, not globally. An alias that matches several
  *   entities is ambiguous and must not be resolved automatically.
  * - When in doubt, create a new canonical entity. Duplicates are repaired by an
- *   explicit merge (identityStatus "merged" + mergedIntoId, one hop); wrongly
- *   merged identities cannot be repaired without rewriting history.
+ *   explicit merge (identityStatus "merged" + mergedIntoId, one hop).
+ *
+ * Merge semantics (kapiloto-canonical-identity-v1):
+ * - A merge is a data-quality correction, not football information. Ledger
+ *   rows keep the ids they were written with; model-facing reads resolve every
+ *   stored id to its current survivor, at every cutoff. Because nothing is
+ *   rewritten, undoing a wrong merge restores the previous reads exactly.
+ * - Reads: any member of an identity class addresses the whole class (a merged
+ *   id redirects), and rows report the canonical id next to the observed one.
+ * - Writes: only surviving ids are accepted; a merged id is an error, never
+ *   silently canonicalized.
+ * - A merge is refused when the two identities appear as two people in one
+ *   stored observation version (two squad rows, or a coach on both benches).
+ * - Alias and provider-mapping resolution return survivors. A mapping that
+ *   predates a merge may keep pointing at the merged id.
  */
 
 export const IDENTITY_STATUSES = ["active", "merged"] as const;
@@ -133,17 +146,24 @@ export type TeamCoachTenure = {
   ingestVersion: string;
 };
 
+/** One alias match: the entity whose alias matched and its current survivor. */
+export type AliasCandidate = { entityId: string; canonicalEntityId: string };
+
 export type AliasResolution =
   | { status: "unresolved" }
+  /** entityId is the surviving canonical id. */
   | { status: "unique"; entityId: string }
   | { status: "ambiguous"; candidateIds: string[] };
 
 /**
  * Turns alias-lookup candidates into a decision without ever choosing between
- * different entities. Duplicate rows for the same entity count once.
+ * different people. Candidates are compared by canonical (surviving) id, so a
+ * merged duplicate and its survivor are one candidate; two different
+ * survivors stay ambiguous. Feed it public.player_alias_candidates /
+ * coach_alias_candidates rows, or in-memory entities via survivingEntityId.
  */
-export function resolveAliasCandidates(candidateEntityIds: readonly string[]): AliasResolution {
-  const distinct = [...new Set(candidateEntityIds)].sort();
+export function resolveAliasCandidates(candidates: readonly AliasCandidate[]): AliasResolution {
+  const distinct = [...new Set(candidates.map((candidate) => candidate.canonicalEntityId))].sort();
   if (distinct.length === 0) return { status: "unresolved" };
   if (distinct.length === 1) return { status: "unique", entityId: distinct[0] };
   return { status: "ambiguous", candidateIds: distinct };
@@ -174,3 +194,50 @@ export function tenureCoversDate(
   const endCertain = !tenure.endsOn || date <= tenure.endsOn.earliest;
   return startCertain && endCertain ? "certain" : "possible";
 }
+
+/** Identity-resolution RPCs (service_role only). All return surviving ids. */
+export const KAPILOTO_IDENTITY_FUNCTIONS = {
+  playerAliasCandidates: "player_alias_candidates",
+  coachAliasCandidates: "coach_alias_candidates",
+  resolveProviderPlayerIds: "resolve_provider_player_ids",
+  resolveProviderCoachIds: "resolve_provider_coach_ids",
+  mappingConflicts: "match_ledger_mapping_conflicts",
+} as const;
+
+/** Row returned by public.player_alias_candidates. */
+export type PlayerAliasCandidateRow = { player_id: string; canonical_player_id: string };
+
+/** Row returned by public.coach_alias_candidates. */
+export type CoachAliasCandidateRow = { coach_id: string; canonical_coach_id: string };
+
+/**
+ * Row returned by public.resolve_provider_player_ids: authoritative mappings
+ * only; mapped_player_id may be a merged id, canonical_player_id never is.
+ */
+export type ProviderPlayerResolutionRow = {
+  provider_player_id: string;
+  mapped_player_id: string;
+  canonical_player_id: string;
+};
+
+/** Row returned by public.resolve_provider_coach_ids. */
+export type ProviderCoachResolutionRow = {
+  provider_coach_id: string;
+  mapped_coach_id: string;
+  canonical_coach_id: string;
+};
+
+/**
+ * Row returned by public.match_ledger_mapping_conflicts: a current ledger
+ * version whose stored canonical assignment disagrees with the current
+ * authoritative mapping of the raw provider id. Repaired by a corrected
+ * observation version or a withdrawal, never by rewriting the ledger.
+ */
+export type MatchLedgerMappingConflictRow = {
+  conflict_kind: "fixture" | "player" | "coach";
+  observation_id: string;
+  fixture_id: string;
+  provider_entity_id: string;
+  stored_canonical_id: string;
+  mapped_canonical_id: string | null;
+};
