@@ -747,6 +747,19 @@ Added by D-049; not read by V1/V2/V3 code. Full semantics in `docs/architecture/
 - RPCs (service_role only): `match_ledger_record_observation` (observations and header-only withdrawals; surviving canonical ids only), `match_ledger_observation_as_of`, `match_ledger_provider_team_matches_as_of` (observed and canonical coach), `match_ledger_provider_player_matches_as_of` (provider required; one row per fixture; merge-aware, D-050), `team_coach_tenures_as_of` (raw assertions plus `canonical_coach_id`), `player_alias_candidates`, `coach_alias_candidates`, `resolve_provider_player_ids`, `resolve_provider_coach_ids` (survivor resolution), `match_ledger_mapping_conflicts` (reconciliation input).
 - Identity merges (D-050): ledger rows keep their written ids; model-facing reads resolve to the current survivor; a merge is refused when both identities appear as two people in one stored observation version.
 
+## V4 foundation 1B: knowledge registry and prediction registry (server-only)
+Added by D-051; not read by V1/V2/V3 code and no existing table is altered. Full semantics in `docs/architecture/KAPILOTO-V4-KNOWLEDGE-REGISTRY.md`. All tables have RLS enabled, no policies and no `anon`/`authenticated` grants; all rows are immutable and `first_seen_at` is stamped by the database clock.
+
+- `knowledge_documents`: identity of observed source material (`identity_key` from an external id, else the canonical URL; domain, publisher, source account).
+- `knowledge_document_versions`: append-only observations of a document (`version_no`, `content_sha256` of the extracted text, bounded inline text up to 200,000 characters, raw media by `raw_content_uri`/hash only, rights provenance `access_basis` + `may_retain_raw`/`may_retain_text`/`may_expose_excerpts`, syndication cluster, optional discovery hook, dedupe `version_fingerprint`).
+- `knowledge_claims`: structured propositions (`claim_kind` epistemic level, `claim_type`, `predicate`, fixture/team/player/coach subjects, `object_value`, polarity, temporal scope) deduplicated by `claim_fingerprint`; derived kinds must cite `derived_from` premises.
+- `knowledge_claim_observations`: document version → claim (supports/contradicts/mentions), rights-gated quote, `quote_found`, extractor provenance, independence key, soft `v3_evidence_id`.
+- `knowledge_claim_relations`: typed claim-to-claim provenance; `derived_from`/`supersedes`/`refines` are acyclic.
+- `knowledge_claim_resolutions` + `knowledge_resolution_evidence`: versioned adjudication on the lattice unresolved/verified/verified_degraded/quarantined/contradicted/fabricated, with typed evidence foreign keys to claim observations, document versions and Match Ledger observations/players/events.
+- `prediction_snapshots`: immutable prediction records (purpose, versions, code revision, model/prompt/feature identifiers, cutoff, kickoff, outcome, 1/X/2 basis points summing to 10,000, reliability, uncertainty, bounded payload, input/output bundle hashes, `idempotency_key`).
+- `prediction_ledger_inputs`, `prediction_document_inputs`, `prediction_claim_inputs` (with the exact resolution version), `prediction_claim_observation_inputs`, `prediction_reference_inputs` (market quotes/snapshots, structured/fact snapshots, soft V3 ids, referenced-row fingerprint), `prediction_identity_bindings` (canonical ids as used, frozen against later merges).
+- RPCs (service_role only): `knowledge_record_document_version`, `knowledge_record_claim`, `knowledge_record_claim_resolution`, `prediction_record_snapshot` (refuses any input first seen after the cutoff and any fixture-scoped reference of another fixture); as-of reads `knowledge_document_version_as_of`, `knowledge_claim_resolutions_as_of`, `knowledge_claim_support_as_of`.
+
 ## AI personas
 ### Kapiloto
 Fixture research only, including round-relative double value for that fixture.

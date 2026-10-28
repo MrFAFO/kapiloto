@@ -453,3 +453,9 @@ engine, tactical state model, research planner, claim resolution, Sol prompt
 or UI changes, ingestion jobs, Sportmonks backfill, IFA scraper, raw document
 archive (`raw_observation_id` is reserved for it), and wiring into
 `fixture-card.ts`.
+
+Foundation 1B (D-051, `KAPILOTO-V4-KNOWLEDGE-REGISTRY.md`) adds the document
+archive, claims, claim resolutions and the prediction registry. A provider
+response can be archived as a `provider_response` document version. Linking
+`raw_observation_id` to it is left to the ingestion task (the column has no
+foreign key).

@@ -24,3 +24,21 @@ export const AS_OF_RULE_VERSION = "kapiloto-as-of-first-seen-v1";
  * resolutions return current survivors, writes accept survivors only.
  */
 export const CANONICAL_IDENTITY_RULE_VERSION = "kapiloto-canonical-identity-v1";
+
+/** JSON payload accepted by public.knowledge_record_document_version. */
+export const DOCUMENT_VERSION_CONTRACT_VERSION = "kapiloto-document-version-v1";
+
+/** JSON payload accepted by public.knowledge_record_claim. */
+export const CLAIM_CONTRACT_VERSION = "kapiloto-claim-v1";
+
+/** Row contract of public.knowledge_claim_observations. */
+export const CLAIM_OBSERVATION_CONTRACT_VERSION = "kapiloto-claim-observation-v1";
+
+/** JSON payload accepted by public.knowledge_record_claim_resolution. */
+export const CLAIM_RESOLUTION_CONTRACT_VERSION = "kapiloto-claim-resolution-v1";
+
+/** JSON payload accepted by public.prediction_record_snapshot. */
+export const PREDICTION_SNAPSHOT_CONTRACT_VERSION = "kapiloto-prediction-snapshot-v1";
+
+/** Shape of prediction_snapshots.uncertainty. */
+export const UNCERTAINTY_DECOMPOSITION_VERSION = "kapiloto-uncertainty-v1";

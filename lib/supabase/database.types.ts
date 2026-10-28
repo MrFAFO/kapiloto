@@ -1917,6 +1917,528 @@ export type Database = {
         }
         Relationships: []
       }
+      knowledge_claim_observations: {
+        Row: {
+          claim_id: string
+          contract_version: string
+          document_id: string
+          document_version_id: string
+          extracted_at: string
+          extraction_confidence: number | null
+          extractor_kind: string
+          extractor_model: string | null
+          extractor_version: string
+          first_seen_at: string
+          id: string
+          independence_key: string
+          observed_wording: string | null
+          prompt_sha256: string | null
+          quote: string | null
+          quote_found: boolean | null
+          relationship: string
+          source_event_at: string | null
+          source_event_text: string | null
+          span_end: number | null
+          span_start: number | null
+          v3_evidence_id: string | null
+        }
+        Insert: {
+          claim_id: string
+          contract_version: string
+          document_id: string
+          document_version_id: string
+          extracted_at: string
+          extraction_confidence?: number | null
+          extractor_kind: string
+          extractor_model?: string | null
+          extractor_version: string
+          first_seen_at?: string
+          id?: string
+          independence_key: string
+          observed_wording?: string | null
+          prompt_sha256?: string | null
+          quote?: string | null
+          quote_found?: boolean | null
+          relationship: string
+          source_event_at?: string | null
+          source_event_text?: string | null
+          span_end?: number | null
+          span_start?: number | null
+          v3_evidence_id?: string | null
+        }
+        Update: {
+          claim_id?: string
+          contract_version?: string
+          document_id?: string
+          document_version_id?: string
+          extracted_at?: string
+          extraction_confidence?: number | null
+          extractor_kind?: string
+          extractor_model?: string | null
+          extractor_version?: string
+          first_seen_at?: string
+          id?: string
+          independence_key?: string
+          observed_wording?: string | null
+          prompt_sha256?: string | null
+          quote?: string | null
+          quote_found?: boolean | null
+          relationship?: string
+          source_event_at?: string | null
+          source_event_text?: string | null
+          span_end?: number | null
+          span_start?: number | null
+          v3_evidence_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_claim_observations_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_claim_observations_document_version_id_document__fkey"
+            columns: ["document_version_id", "document_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_document_versions"
+            referencedColumns: ["id", "document_id"]
+          },
+        ]
+      }
+      knowledge_claim_relations: {
+        Row: {
+          asserted_by_kind: string
+          asserted_by_version: string
+          first_seen_at: string
+          from_claim_id: string
+          id: string
+          note: string | null
+          relation_type: string
+          to_claim_id: string
+        }
+        Insert: {
+          asserted_by_kind: string
+          asserted_by_version: string
+          first_seen_at?: string
+          from_claim_id: string
+          id?: string
+          note?: string | null
+          relation_type: string
+          to_claim_id: string
+        }
+        Update: {
+          asserted_by_kind?: string
+          asserted_by_version?: string
+          first_seen_at?: string
+          from_claim_id?: string
+          id?: string
+          note?: string | null
+          relation_type?: string
+          to_claim_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_claim_relations_from_claim_id_fkey"
+            columns: ["from_claim_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_claim_relations_to_claim_id_fkey"
+            columns: ["to_claim_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_claims"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      knowledge_claim_resolutions: {
+        Row: {
+          claim_id: string
+          confidence: number | null
+          contract_version: string
+          first_seen_at: string
+          id: string
+          idempotency_key: string | null
+          ingest_statement_at: string
+          note: string | null
+          quality_flags: string[]
+          reason_code: string
+          resolution_version: number
+          resolver_id: string | null
+          resolver_kind: string
+          resolver_version: string
+          status: string
+        }
+        Insert: {
+          claim_id: string
+          confidence?: number | null
+          contract_version: string
+          first_seen_at?: string
+          id?: string
+          idempotency_key?: string | null
+          ingest_statement_at?: string
+          note?: string | null
+          quality_flags?: string[]
+          reason_code: string
+          resolution_version: number
+          resolver_id?: string | null
+          resolver_kind: string
+          resolver_version: string
+          status: string
+        }
+        Update: {
+          claim_id?: string
+          confidence?: number | null
+          contract_version?: string
+          first_seen_at?: string
+          id?: string
+          idempotency_key?: string | null
+          ingest_statement_at?: string
+          note?: string | null
+          quality_flags?: string[]
+          reason_code?: string
+          resolution_version?: number
+          resolver_id?: string | null
+          resolver_kind?: string
+          resolver_version?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_claim_resolutions_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_claims"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      knowledge_claims: {
+        Row: {
+          claim_fingerprint: string
+          claim_kind: string
+          claim_type: string
+          coach_id: string | null
+          contract_version: string
+          first_seen_at: string
+          fixture_id: string | null
+          id: string
+          object_value: Json
+          player_id: string | null
+          polarity: string
+          predicate: string
+          scope_ends_on: string | null
+          scope_starts_on: string | null
+          statement_text: string | null
+          team_id: string | null
+          temporal_scope: string
+        }
+        Insert: {
+          claim_fingerprint: string
+          claim_kind: string
+          claim_type: string
+          coach_id?: string | null
+          contract_version: string
+          first_seen_at?: string
+          fixture_id?: string | null
+          id?: string
+          object_value?: Json
+          player_id?: string | null
+          polarity?: string
+          predicate: string
+          scope_ends_on?: string | null
+          scope_starts_on?: string | null
+          statement_text?: string | null
+          team_id?: string | null
+          temporal_scope: string
+        }
+        Update: {
+          claim_fingerprint?: string
+          claim_kind?: string
+          claim_type?: string
+          coach_id?: string | null
+          contract_version?: string
+          first_seen_at?: string
+          fixture_id?: string | null
+          id?: string
+          object_value?: Json
+          player_id?: string | null
+          polarity?: string
+          predicate?: string
+          scope_ends_on?: string | null
+          scope_starts_on?: string | null
+          statement_text?: string | null
+          team_id?: string | null
+          temporal_scope?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_claims_coach_id_fkey"
+            columns: ["coach_id"]
+            isOneToOne: false
+            referencedRelation: "coaches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_claims_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_claims_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_claims_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      knowledge_document_versions: {
+        Row: {
+          access_basis: string
+          author: string | null
+          canonical_url: string | null
+          content_sha256: string
+          contract_version: string
+          discovered_at: string | null
+          discovery_channel: string | null
+          discovery_query_sha256: string | null
+          discovery_rank: number | null
+          document_id: string
+          extracted_text: string | null
+          extraction_version: string
+          first_seen_at: string
+          id: string
+          ingest_version: string
+          language_code: string | null
+          may_expose_excerpts: boolean
+          may_retain_raw: boolean
+          may_retain_text: boolean
+          metadata: Json
+          published_at: string | null
+          raw_content_sha256: string | null
+          raw_content_uri: string | null
+          retrieved_at: string
+          rights_note: string | null
+          source_updated_at: string | null
+          syndication_cluster: string | null
+          title: string | null
+          version_fingerprint: string
+          version_no: number
+        }
+        Insert: {
+          access_basis: string
+          author?: string | null
+          canonical_url?: string | null
+          content_sha256: string
+          contract_version: string
+          discovered_at?: string | null
+          discovery_channel?: string | null
+          discovery_query_sha256?: string | null
+          discovery_rank?: number | null
+          document_id: string
+          extracted_text?: string | null
+          extraction_version: string
+          first_seen_at?: string
+          id?: string
+          ingest_version: string
+          language_code?: string | null
+          may_expose_excerpts?: boolean
+          may_retain_raw?: boolean
+          may_retain_text?: boolean
+          metadata?: Json
+          published_at?: string | null
+          raw_content_sha256?: string | null
+          raw_content_uri?: string | null
+          retrieved_at: string
+          rights_note?: string | null
+          source_updated_at?: string | null
+          syndication_cluster?: string | null
+          title?: string | null
+          version_fingerprint: string
+          version_no: number
+        }
+        Update: {
+          access_basis?: string
+          author?: string | null
+          canonical_url?: string | null
+          content_sha256?: string
+          contract_version?: string
+          discovered_at?: string | null
+          discovery_channel?: string | null
+          discovery_query_sha256?: string | null
+          discovery_rank?: number | null
+          document_id?: string
+          extracted_text?: string | null
+          extraction_version?: string
+          first_seen_at?: string
+          id?: string
+          ingest_version?: string
+          language_code?: string | null
+          may_expose_excerpts?: boolean
+          may_retain_raw?: boolean
+          may_retain_text?: boolean
+          metadata?: Json
+          published_at?: string | null
+          raw_content_sha256?: string | null
+          raw_content_uri?: string | null
+          retrieved_at?: string
+          rights_note?: string | null
+          source_updated_at?: string | null
+          syndication_cluster?: string | null
+          title?: string | null
+          version_fingerprint?: string
+          version_no?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_document_versions_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      knowledge_documents: {
+        Row: {
+          canonical_url: string | null
+          domain: string | null
+          external_id: string | null
+          first_seen_at: string
+          id: string
+          identity_key: string | null
+          platform: string | null
+          provider: string | null
+          publisher: string | null
+          source_account: string | null
+          source_kind: string
+        }
+        Insert: {
+          canonical_url?: string | null
+          domain?: string | null
+          external_id?: string | null
+          first_seen_at?: string
+          id?: string
+          identity_key?: never
+          platform?: string | null
+          provider?: string | null
+          publisher?: string | null
+          source_account?: string | null
+          source_kind: string
+        }
+        Update: {
+          canonical_url?: string | null
+          domain?: string | null
+          external_id?: string | null
+          first_seen_at?: string
+          id?: string
+          identity_key?: never
+          platform?: string | null
+          provider?: string | null
+          publisher?: string | null
+          source_account?: string | null
+          source_kind?: string
+        }
+        Relationships: [
+
+        ]
+      }
+      knowledge_resolution_evidence: {
+        Row: {
+          claim_observation_id: string | null
+          document_version_id: string | null
+          evidence_first_seen_at: string
+          evidence_role: string
+          id: string
+          ledger_event_id: string | null
+          ledger_observation_id: string | null
+          ledger_player_id: string | null
+          note: string | null
+          resolution_id: string
+        }
+        Insert: {
+          claim_observation_id?: string | null
+          document_version_id?: string | null
+          evidence_first_seen_at: string
+          evidence_role: string
+          id?: string
+          ledger_event_id?: string | null
+          ledger_observation_id?: string | null
+          ledger_player_id?: string | null
+          note?: string | null
+          resolution_id: string
+        }
+        Update: {
+          claim_observation_id?: string | null
+          document_version_id?: string | null
+          evidence_first_seen_at?: string
+          evidence_role?: string
+          id?: string
+          ledger_event_id?: string | null
+          ledger_observation_id?: string | null
+          ledger_player_id?: string | null
+          note?: string | null
+          resolution_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_resolution_evidence_claim_observation_id_fkey"
+            columns: ["claim_observation_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_claim_observations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_resolution_evidence_document_version_id_fkey"
+            columns: ["document_version_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_document_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_resolution_evidence_ledger_event_id_fkey"
+            columns: ["ledger_event_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_resolution_evidence_ledger_observation_id_fkey"
+            columns: ["ledger_observation_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_observations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_resolution_evidence_ledger_player_id_fkey"
+            columns: ["ledger_player_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_resolution_evidence_resolution_id_fkey"
+            columns: ["resolution_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_claim_resolutions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       match_ledger_events: {
         Row: {
           coach_id: string | null
@@ -2577,6 +3099,446 @@ export type Database = {
             columns: ["merged_into_player_id"]
             isOneToOne: false
             referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_claim_inputs: {
+        Row: {
+          claim_id: string
+          input_first_seen_at: string
+          input_role: string
+          resolution_id: string | null
+          resolution_status: string
+          snapshot_id: string
+        }
+        Insert: {
+          claim_id: string
+          input_first_seen_at: string
+          input_role: string
+          resolution_id?: string | null
+          resolution_status: string
+          snapshot_id: string
+        }
+        Update: {
+          claim_id?: string
+          input_first_seen_at?: string
+          input_role?: string
+          resolution_id?: string | null
+          resolution_status?: string
+          snapshot_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_claim_inputs_claim_id_fkey"
+            columns: ["claim_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_claims"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_claim_inputs_resolution_id_claim_id_fkey"
+            columns: ["resolution_id", "claim_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_claim_resolutions"
+            referencedColumns: ["id", "claim_id"]
+          },
+          {
+            foreignKeyName: "prediction_claim_inputs_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "prediction_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_claim_observation_inputs: {
+        Row: {
+          claim_observation_id: string
+          input_first_seen_at: string
+          input_role: string
+          snapshot_id: string
+        }
+        Insert: {
+          claim_observation_id: string
+          input_first_seen_at: string
+          input_role: string
+          snapshot_id: string
+        }
+        Update: {
+          claim_observation_id?: string
+          input_first_seen_at?: string
+          input_role?: string
+          snapshot_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_claim_observation_inputs_claim_observation_id_fkey"
+            columns: ["claim_observation_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_claim_observations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_claim_observation_inputs_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "prediction_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_document_inputs: {
+        Row: {
+          document_version_id: string
+          input_first_seen_at: string
+          input_role: string
+          snapshot_id: string
+        }
+        Insert: {
+          document_version_id: string
+          input_first_seen_at: string
+          input_role: string
+          snapshot_id: string
+        }
+        Update: {
+          document_version_id?: string
+          input_first_seen_at?: string
+          input_role?: string
+          snapshot_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_document_inputs_document_version_id_fkey"
+            columns: ["document_version_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_document_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_document_inputs_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "prediction_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_identity_bindings: {
+        Row: {
+          binding_role: string
+          coach_id: string | null
+          context_team_id: string | null
+          entity_type: string
+          id: string
+          observed_coach_id: string | null
+          observed_player_id: string | null
+          player_id: string | null
+          provider: string | null
+          provider_entity_id: string | null
+          snapshot_id: string
+          team_id: string | null
+        }
+        Insert: {
+          binding_role: string
+          coach_id?: string | null
+          context_team_id?: string | null
+          entity_type: string
+          id?: string
+          observed_coach_id?: string | null
+          observed_player_id?: string | null
+          player_id?: string | null
+          provider?: string | null
+          provider_entity_id?: string | null
+          snapshot_id: string
+          team_id?: string | null
+        }
+        Update: {
+          binding_role?: string
+          coach_id?: string | null
+          context_team_id?: string | null
+          entity_type?: string
+          id?: string
+          observed_coach_id?: string | null
+          observed_player_id?: string | null
+          player_id?: string | null
+          provider?: string | null
+          provider_entity_id?: string | null
+          snapshot_id?: string
+          team_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_identity_bindings_coach_id_fkey"
+            columns: ["coach_id"]
+            isOneToOne: false
+            referencedRelation: "coaches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_identity_bindings_context_team_id_fkey"
+            columns: ["context_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_identity_bindings_observed_coach_id_fkey"
+            columns: ["observed_coach_id"]
+            isOneToOne: false
+            referencedRelation: "coaches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_identity_bindings_observed_player_id_fkey"
+            columns: ["observed_player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_identity_bindings_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_identity_bindings_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "prediction_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_identity_bindings_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_ledger_inputs: {
+        Row: {
+          input_first_seen_at: string
+          input_role: string
+          ledger_observation_id: string
+          snapshot_id: string
+        }
+        Insert: {
+          input_first_seen_at: string
+          input_role: string
+          ledger_observation_id: string
+          snapshot_id: string
+        }
+        Update: {
+          input_first_seen_at?: string
+          input_role?: string
+          ledger_observation_id?: string
+          snapshot_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_ledger_inputs_ledger_observation_id_fkey"
+            columns: ["ledger_observation_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_observations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_ledger_inputs_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "prediction_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_reference_inputs: {
+        Row: {
+          fact_snapshot_id: string | null
+          id: string
+          input_role: string
+          input_time_at: string | null
+          legacy_v3_id: string | null
+          market_quote_id: string | null
+          market_snapshot_id: string | null
+          reference_kind: string
+          referenced_row_sha256: string | null
+          snapshot_id: string
+          structured_snapshot_id: string | null
+        }
+        Insert: {
+          fact_snapshot_id?: string | null
+          id?: string
+          input_role: string
+          input_time_at?: string | null
+          legacy_v3_id?: string | null
+          market_quote_id?: string | null
+          market_snapshot_id?: string | null
+          reference_kind: string
+          referenced_row_sha256?: string | null
+          snapshot_id: string
+          structured_snapshot_id?: string | null
+        }
+        Update: {
+          fact_snapshot_id?: string | null
+          id?: string
+          input_role?: string
+          input_time_at?: string | null
+          legacy_v3_id?: string | null
+          market_quote_id?: string | null
+          market_snapshot_id?: string | null
+          reference_kind?: string
+          referenced_row_sha256?: string | null
+          snapshot_id?: string
+          structured_snapshot_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_reference_inputs_fact_snapshot_id_fkey"
+            columns: ["fact_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "fixture_fact_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_reference_inputs_market_snapshot_id_fkey"
+            columns: ["market_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "fixture_market_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_reference_inputs_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "prediction_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_reference_inputs_structured_snapshot_id_fkey"
+            columns: ["structured_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "fixture_structured_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_snapshots: {
+        Row: {
+          abstain_reason: string | null
+          calibration_version: string | null
+          code_revision: string
+          contract_version: string
+          derivation_version: string | null
+          feature_versions: Json
+          first_seen_at: string
+          fixture_id: string
+          generated_at: string
+          id: string
+          idempotency_key: string
+          ingest_statement_at: string
+          input_bundle_sha256: string
+          kickoff_at_snapshot: string
+          model_identifiers: Json
+          outcome: string
+          output_bundle_sha256: string
+          p_1_bp: number | null
+          p_2_bp: number | null
+          p_x_bp: number | null
+          payload: Json
+          payload_schema_version: string
+          pipeline_version: string
+          prediction_protocol_version: string
+          prompt_hashes: Json
+          purpose: string
+          reliability: number | null
+          research_cutoff_at: string
+          round_game_id: string | null
+          settlement_rule: string | null
+          uncertainty: Json
+        }
+        Insert: {
+          abstain_reason?: string | null
+          calibration_version?: string | null
+          code_revision: string
+          contract_version: string
+          derivation_version?: string | null
+          feature_versions?: Json
+          first_seen_at?: string
+          fixture_id: string
+          generated_at: string
+          id?: string
+          idempotency_key: string
+          ingest_statement_at?: string
+          input_bundle_sha256: string
+          kickoff_at_snapshot: string
+          model_identifiers?: Json
+          outcome: string
+          output_bundle_sha256: string
+          p_1_bp?: number | null
+          p_2_bp?: number | null
+          p_x_bp?: number | null
+          payload?: Json
+          payload_schema_version: string
+          pipeline_version: string
+          prediction_protocol_version: string
+          prompt_hashes?: Json
+          purpose: string
+          reliability?: number | null
+          research_cutoff_at: string
+          round_game_id?: string | null
+          settlement_rule?: string | null
+          uncertainty?: Json
+        }
+        Update: {
+          abstain_reason?: string | null
+          calibration_version?: string | null
+          code_revision?: string
+          contract_version?: string
+          derivation_version?: string | null
+          feature_versions?: Json
+          first_seen_at?: string
+          fixture_id?: string
+          generated_at?: string
+          id?: string
+          idempotency_key?: string
+          ingest_statement_at?: string
+          input_bundle_sha256?: string
+          kickoff_at_snapshot?: string
+          model_identifiers?: Json
+          outcome?: string
+          output_bundle_sha256?: string
+          p_1_bp?: number | null
+          p_2_bp?: number | null
+          p_x_bp?: number | null
+          payload?: Json
+          payload_schema_version?: string
+          pipeline_version?: string
+          prediction_protocol_version?: string
+          prompt_hashes?: Json
+          purpose?: string
+          reliability?: number | null
+          research_cutoff_at?: string
+          round_game_id?: string | null
+          settlement_rule?: string | null
+          uncertainty?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_snapshots_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: false
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_snapshots_round_game_id_fkey"
+            columns: ["round_game_id"]
+            isOneToOne: false
+            referencedRelation: "round_games"
             referencedColumns: ["id"]
           },
         ]
@@ -3513,6 +4475,42 @@ export type Database = {
           coach_id: string
         }[]
       }
+      knowledge_claim_resolutions_as_of: {
+        Args: { p_claim_ids: string[]; p_cutoff: string }
+        Returns: {
+          claim_id: string
+          confidence: number | null
+          first_seen_at: string | null
+          quality_flags: string[]
+          reason_code: string | null
+          resolution_id: string | null
+          resolution_version: number | null
+          resolver_kind: string | null
+          status: string
+        }[]
+      }
+      knowledge_claim_support_as_of: {
+        Args: { p_claim_id: string; p_cutoff: string }
+        Returns: {
+          document_count: number
+          independent_source_count: number
+          observation_count: number
+          relationship: string
+        }[]
+      }
+      knowledge_document_version_as_of: {
+        Args: { p_cutoff: string; p_document_id: string }
+        Returns: string
+      }
+      knowledge_record_claim: { Args: { p_claim: Json }; Returns: Json }
+      knowledge_record_claim_resolution: {
+        Args: { p_resolution: Json }
+        Returns: Json
+      }
+      knowledge_record_document_version: {
+        Args: { p_document: Json }
+        Returns: Json
+      }
       match_ledger_mapping_conflicts: {
         Args: { p_provider: string }
         Returns: {
@@ -3594,6 +4592,10 @@ export type Database = {
           canonical_player_id: string
           player_id: string
         }[]
+      }
+      prediction_record_snapshot: {
+        Args: { p_snapshot: Json }
+        Returns: Json
       }
       resolve_provider_coach_ids: {
         Args: { p_provider: string; p_provider_coach_ids: string[] }

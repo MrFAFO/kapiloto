@@ -25,6 +25,20 @@ const V4_TABLES = [
   "match_ledger_stat_definitions",
   "match_ledger_team_stats",
   "match_ledger_game_state_segments",
+  "knowledge_documents",
+  "knowledge_document_versions",
+  "knowledge_claims",
+  "knowledge_claim_observations",
+  "knowledge_claim_relations",
+  "knowledge_claim_resolutions",
+  "knowledge_resolution_evidence",
+  "prediction_snapshots",
+  "prediction_ledger_inputs",
+  "prediction_document_inputs",
+  "prediction_claim_inputs",
+  "prediction_claim_observation_inputs",
+  "prediction_reference_inputs",
+  "prediction_identity_bindings",
 ];
 
 const V4_PUBLIC_FUNCTIONS = [
@@ -38,6 +52,13 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.resolve_provider_player_ids(text, text[])",
   "public.resolve_provider_coach_ids(text, text[])",
   "public.match_ledger_mapping_conflicts(text)",
+  "public.knowledge_record_document_version(jsonb)",
+  "public.knowledge_record_claim(jsonb)",
+  "public.knowledge_record_claim_resolution(jsonb)",
+  "public.prediction_record_snapshot(jsonb)",
+  "public.knowledge_document_version_as_of(uuid, timestamptz)",
+  "public.knowledge_claim_resolutions_as_of(uuid[], timestamptz)",
+  "public.knowledge_claim_support_as_of(uuid, timestamptz)",
 ];
 
 const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
@@ -51,6 +72,12 @@ const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.lock_match_ledger_fixture(text, text, uuid)",
   "private.lock_canonical_identity(text, boolean)",
   "private.match_ledger_assert_surviving_ids(jsonb, jsonb, jsonb, jsonb)",
+  "private.kapiloto_v4_assert_keys(jsonb, text[], text)",
+  "private.knowledge_document_version_fingerprint(text, text, text, text, text, timestamptz, text, boolean, boolean, boolean)",
+  "private.knowledge_claim_fingerprint(text, text, text, text, uuid, uuid, uuid, uuid, jsonb, text, text, date, date)",
+  "private.prediction_output_sha256(text, text, smallint, smallint, smallint, numeric, jsonb, text, jsonb)",
+  "private.prediction_canonical_inputs(jsonb)",
+  "private.prediction_input_bundle_sha256(jsonb)",
 ];
 
 test("every V4 table is RLS-protected, policy-free and invisible to app users", async () => {
@@ -107,6 +134,9 @@ test("every V4 table is RLS-protected, policy-free and invisible to app users", 
       /permission denied/,
       role,
     );
+    await assert.rejects(db.query("select * from public.knowledge_claims"), /permission denied/, role);
+    await assert.rejects(db.query("select * from public.prediction_snapshots"), /permission denied/, role);
+    await assert.rejects(db.query("select public.prediction_record_snapshot('{}'::jsonb)"), /permission denied/, role);
     await db.exec("reset role");
   }
   await db.close();
