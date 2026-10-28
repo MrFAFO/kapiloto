@@ -735,6 +735,17 @@ One scored selection per fixture/arm/arm_version/mode/selection rule/scoring ver
 
 The insert trigger rejects a score whose prediction is not the latest one eligible under selection rule v1.
 
+## V4 foundation: canonical entities and Match Ledger (server-only)
+Added by D-049; not read by V1/V2/V3 code. Full semantics in `docs/architecture/KAPILOTO-V4-FOUNDATION.md`. All tables have RLS enabled with no policies and no `anon`/`authenticated` grants.
+
+- `players`, `player_aliases`, `provider_player_mappings`: canonical player identity, per-entity aliases (Hebrew/English/transliteration/provider spelling, normalized by `private.normalize_entity_alias`), provider ids (`unique (provider, player_id)`); explicit one-hop merges.
+- `coaches`, `coach_aliases`, `provider_coach_mappings`: the same for coaches.
+- `team_coach_tenures`: immutable, versioned tenure assertions (`tenure_key`, `tenure_version`) with start/end date bounds, provenance and DB-stamped `first_seen_at`.
+- `match_ledger_observations`: immutable provider observation versions of a fixture (`observation_version` per fixture/provider, `observation_kind` observation/withdrawal, `content_sha256`, `retrieved_at`, DB-stamped `first_seen_at`, observed kickoff/status/score).
+- `match_ledger_team_records`, `match_ledger_players`, `match_ledger_substitutions`, `match_ledger_events`, `match_ledger_team_stats` (+ `match_ledger_stat_definitions`): per-version team context, matchday squads, paired substitutions, typed events and typed stats; sealed to the header's transaction.
+- `match_ledger_game_state_segments`: derived segment contract (score/men difference), not populated yet.
+- RPCs (service_role only): `match_ledger_record_observation` (observations and header-only withdrawals), `match_ledger_observation_as_of`, `match_ledger_team_matches_as_of`, `match_ledger_player_matches_as_of`, `team_coach_tenures_as_of`.
+
 ## AI personas
 ### Kapiloto
 Fixture research only, including round-relative double value for that fixture.

@@ -75,14 +75,31 @@ create function extensions.gen_random_bytes(n int) returns bytea
   language sql as $$ select decode(md5(random()::text), 'hex') $$;
 `;
 
+/**
+ * Supabase grants every new public table and function to anon, authenticated
+ * and service_role by default, and service_role bypasses RLS. Opt in to verify
+ * that a migration's revokes actually remove those platform defaults.
+ */
+const SUPABASE_PRIVILEGE_STUBS = `
+alter role service_role bypassrls;
+grant usage on schema public to anon, authenticated, service_role;
+alter default privileges in schema public
+  grant all on tables to anon, authenticated, service_role;
+alter default privileges in schema public
+  grant all on functions to anon, authenticated, service_role;
+alter default privileges in schema public
+  grant all on sequences to anon, authenticated, service_role;
+`;
+
 const DATA_SEED_MIGRATIONS = /team_aliases_round|verified_mappings_round/;
 
 export async function createMigratedDatabase(
-  options: { exclude?: RegExp } = {},
+  options: { exclude?: RegExp; supabaseDefaultPrivileges?: boolean } = {},
 ): Promise<PGlite> {
   const dir = join(process.cwd(), "supabase", "migrations");
   const db = new PGlite();
   await db.exec(PLATFORM_STUBS);
+  if (options.supabaseDefaultPrivileges) await db.exec(SUPABASE_PRIVILEGE_STUBS);
   for (const file of readdirSync(dir).filter((name) => name.endsWith(".sql")).sort()) {
     if (DATA_SEED_MIGRATIONS.test(file)) continue;
     if (options.exclude?.test(file)) continue;

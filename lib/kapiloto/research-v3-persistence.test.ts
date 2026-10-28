@@ -80,7 +80,15 @@ test("new V3 migration exists and earlier migration files are untouched", () => 
   const files = readdirSync(join(process.cwd(), "supabase", "migrations")).sort();
   const v3 = files.filter((file) => V3_MIGRATION.test(file));
   assert.equal(v3.length, 1);
-  assert.ok(files.indexOf(v3[0]) === files.length - 1, "V3 migration is the latest");
+  // V3 stays the latest migration that touches Kapiloto research persistence.
+  for (const later of files.slice(files.indexOf(v3[0]) + 1)) {
+    const laterSql = readFileSync(join(process.cwd(), "supabase", "migrations", later), "utf8");
+    assert.doesNotMatch(
+      laterSql,
+      /\bkapiloto_(analyses|factors|factor_evidence|evidence|research_|materialize|source_registry|fixture_|round_research_state)/i,
+      `${later} must not alter V3 research persistence`,
+    );
+  }
   const sql = readFileSync(join(process.cwd(), "supabase", "migrations", v3[0]), "utf8");
   assert.match(sql, /add column if not exists expected_lineups jsonb/);
   assert.match(sql, /add column if not exists matchup_ids jsonb not null default '\[\]'::jsonb/);
