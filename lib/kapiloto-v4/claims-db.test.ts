@@ -289,6 +289,12 @@ test("fabrication is distinct from missing metadata, and resolutions are auditab
   const replay = await recordResolution(db, { ...base, status: "fabricated", reasonCode: "quote_not_in_source", idempotencyKey: "verifier-run-1", evidence: [{ evidenceRole: "absence", claimObservationId: observation.id }] }, "2026-10-28T13:00:00.000Z");
   assert.deepEqual([replay.status, replay.resolution_id], ["unchanged", fabricated.resolution_id]);
   await assert.rejects(recordResolution(db, { ...base, status: "quarantined", reasonCode: "x", idempotencyKey: "verifier-run-1" }, at), /already used/);
+  // Same status and reason but different evidence, flags or confidence is a
+  // different write, never a silent "unchanged".
+  const differently = { ...base, status: "fabricated" as const, reasonCode: "quote_not_in_source", idempotencyKey: "verifier-run-1" };
+  await assert.rejects(recordResolution(db, { ...differently, evidence: [{ evidenceRole: "absence", documentVersionId: doc.document_version_id }] }, at), /already used/);
+  await assert.rejects(recordResolution(db, { ...differently, confidence: 0.4, evidence: [{ evidenceRole: "absence", claimObservationId: observation.id }] }, at), /already used/);
+  await assert.rejects(recordResolution(db, { ...differently, qualityFlags: ["missing_author"], evidence: [{ evidenceRole: "absence", claimObservationId: observation.id }] }, at), /already used/);
 
   // Evidence cannot be appended to an old resolution; rows are immutable.
   await assert.rejects(
@@ -303,6 +309,25 @@ test("fabrication is distinct from missing metadata, and resolutions are auditab
     db.query("select public.knowledge_record_claim($1::jsonb)", [JSON.stringify({ ...buildClaimPayload(availability(seed, fixture.fixtureId, "fit")), confidence: 1 })]),
     /unknown claim field: confidence/,
   );
+  await db.close();
+});
+
+test("observations and resolutions are never known before what they depend on", async () => {
+  const { db, seed, fixture } = await setup();
+  const claim = await recordClaim(db, availability(seed, fixture.fixtureId, "doubtful"), OCT_28);
+  const doc = await recordDocument(db, articleInput(), OCT_29);
+  // A backwards clock step must not make an observation precede its document
+  // version (it would be counted at a cutoff when the document was unknown).
+  await assert.rejects(
+    addObservation(db, { claimId: claim.claim_id, documentVersionId: doc.document_version_id, relationship: "supports" }, "2026-10-28T12:00:00.000Z"),
+    /would precede its document version or claim/,
+  );
+  assert.deepEqual(await support(db, claim.claim_id, "2026-10-28T13:00:00.000Z"), {});
+  await assert.rejects(
+    recordResolution(db, { claimId: claim.claim_id, status: "unresolved", resolverKind: "grounding", resolverVersion: "g1", reasonCode: "early" }, "2026-10-27T00:00:00.000Z"),
+    /would precede its claim/,
+  );
+  await addObservation(db, { claimId: claim.claim_id, documentVersionId: doc.document_version_id, relationship: "supports" }, OCT_29);
   await db.close();
 });
 

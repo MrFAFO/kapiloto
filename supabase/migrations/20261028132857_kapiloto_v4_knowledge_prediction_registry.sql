@@ -484,6 +484,7 @@ as $$
 declare
   v_version public.knowledge_document_versions%rowtype;
   v_claim_kind text;
+  v_claim_seen timestamptz;
 begin
   select v.*
     into v_version
@@ -495,13 +496,18 @@ begin
 
   -- Sources report facts and expectations; derived claims are Kapiloto's own
   -- and cite premises instead, so the two layers never blur.
-  select c.claim_kind into v_claim_kind
+  select c.claim_kind, c.first_seen_at into v_claim_kind, v_claim_seen
   from public.knowledge_claims c where c.id = new.claim_id;
   if v_claim_kind not in ('observed_fact', 'reported_expectation') then
     raise exception 'documents can only be observed reporting source claims, not % claims', v_claim_kind;
   end if;
 
   new.first_seen_at := private.kapiloto_information_clock();
+  -- An observation is never known before the version and claim it links
+  -- (guards a backwards clock step), so no as-of read can count it early.
+  if new.first_seen_at < v_version.first_seen_at or new.first_seen_at < v_claim_seen then
+    raise exception 'claim observation information time would precede its document version or claim';
+  end if;
   new.document_id := v_version.document_id;
   new.independence_key := coalesce(v_version.syndication_cluster, 'sha256:' || v_version.content_sha256);
 
@@ -694,6 +700,10 @@ begin
 
   if exists (select 1 from unnest(new.quality_flags) f where f !~ '^[a-z][a-z0-9_]{1,62}$') then
     raise exception 'quality flags must be lower-case keys';
+  end if;
+
+  if new.first_seen_at < (select c.first_seen_at from public.knowledge_claims c where c.id = new.claim_id) then
+    raise exception 'claim resolution information time would precede its claim';
   end if;
 
   select r.resolution_version, r.first_seen_at
@@ -1159,6 +1169,7 @@ set search_path = ''
 as $$
 declare
   v_round_fixture uuid;
+  v_fixture_kickoff timestamptz;
 begin
   perform private.kapiloto_require_read_committed('prediction registry writes');
   perform pg_advisory_xact_lock(hashtextextended('kapiloto_prediction:' || new.idempotency_key, 0));
@@ -1167,6 +1178,14 @@ begin
 
   if new.research_cutoff_at > new.first_seen_at then
     raise exception 'prediction cutoff % is after its recording time %', new.research_cutoff_at, new.first_seen_at;
+  end if;
+  -- kickoff_at_snapshot is writer supplied; the canonical fixture's kickoff
+  -- (actual when known) is the authority, so a post-kickoff cutoff cannot
+  -- be hidden behind a later snapshot.
+  select coalesce(f.actual_kickoff_at, f.kickoff_at) into v_fixture_kickoff
+  from public.fixtures f where f.id = new.fixture_id;
+  if v_fixture_kickoff is not null and new.research_cutoff_at > v_fixture_kickoff then
+    raise exception 'prediction cutoff % is after the fixture kickoff %', new.research_cutoff_at, v_fixture_kickoff;
   end if;
   if new.round_game_id is not null then
     select rg.fixture_id into v_round_fixture
@@ -1284,14 +1303,19 @@ begin
         raise exception 'market quote % belongs to another fixture', new.market_quote_id;
       end if;
     elsif new.market_snapshot_id is not null then
-      -- captured_at is writer supplied in this V1 table: enforced as given.
-      select m.captured_at, m.fixture_id, to_jsonb(m) into v_seen, v_fixture, v_row
+      -- Legacy timing guard, weaker than first_seen_at: captured_at is writer
+      -- supplied in this V1 table (often a provider time) and created_at is
+      -- DEFAULT now() (transaction start, writer-suppliable, not stamped).
+      -- Both must precede the cutoff.
+      select greatest(m.captured_at, m.created_at), m.fixture_id, to_jsonb(m) into v_seen, v_fixture, v_row
       from public.fixture_market_snapshots m where m.id = new.market_snapshot_id;
       if v_fixture is distinct from v_snapshot.fixture_id then
         raise exception 'market snapshot % belongs to another fixture', new.market_snapshot_id;
       end if;
     elsif new.structured_snapshot_id is not null then
-      select greatest(s.research_cutoff_at, s.computed_at), s.fixture_id, to_jsonb(s) into v_seen, v_fixture, v_row
+      -- Legacy timing guard: the snapshot's own cutoff plus computed_at and
+      -- created_at (both DEFAULT now(), writer-suppliable).
+      select greatest(s.research_cutoff_at, s.computed_at, s.created_at), s.fixture_id, to_jsonb(s) into v_seen, v_fixture, v_row
       from public.fixture_structured_snapshots s where s.id = new.structured_snapshot_id;
       if v_fixture is distinct from v_snapshot.fixture_id then
         raise exception 'structured snapshot % belongs to another fixture', new.structured_snapshot_id;
@@ -1799,8 +1823,45 @@ begin
     from public.knowledge_claim_resolutions r
     where r.claim_id = v.claim_id and r.idempotency_key = v.idempotency_key;
     if found then
-      if (v_existing.status, v_existing.resolver_kind, v_existing.resolver_version, v_existing.reason_code)
-        is not distinct from (v.status, v.resolver_kind, v.resolver_version, v.reason_code) then
+      if (
+          v_existing.status, v_existing.confidence, v_existing.resolver_kind,
+          v_existing.resolver_version, v_existing.resolver_id,
+          v_existing.reason_code, v_existing.quality_flags, v_existing.note
+        ) is not distinct from (
+          v.status, v.confidence, v.resolver_kind, v.resolver_version,
+          v.resolver_id, v.reason_code, coalesce(v.quality_flags, '{}'::text[]), v.note
+        )
+        and coalesce((
+          select jsonb_agg(e order by e::text) from (
+            select jsonb_build_object(
+              'evidence_role', x.evidence_role,
+              'claim_observation_id', x.claim_observation_id,
+              'document_version_id', x.document_version_id,
+              'ledger_observation_id', x.ledger_observation_id,
+              'ledger_player_id', x.ledger_player_id,
+              'ledger_event_id', x.ledger_event_id,
+              'note', x.note
+            ) as e
+            from public.knowledge_resolution_evidence x
+            where x.resolution_id = v_existing.id
+          ) stored), '[]'::jsonb)
+        = coalesce((
+          select jsonb_agg(e order by e::text) from (
+            select jsonb_build_object(
+              'evidence_role', x.evidence_role,
+              'claim_observation_id', x.claim_observation_id,
+              'document_version_id', x.document_version_id,
+              'ledger_observation_id', x.ledger_observation_id,
+              'ledger_player_id', x.ledger_player_id,
+              'ledger_event_id', x.ledger_event_id,
+              'note', x.note
+            ) as e
+            from jsonb_to_recordset(coalesce(p_resolution->'evidence', '[]'::jsonb)) as x(
+              evidence_role text, claim_observation_id uuid, document_version_id uuid,
+              ledger_observation_id uuid, ledger_player_id uuid, ledger_event_id uuid,
+              note text
+            )
+          ) supplied), '[]'::jsonb) then
         return jsonb_build_object(
           'status', 'unchanged',
           'resolution_id', v_existing.id,

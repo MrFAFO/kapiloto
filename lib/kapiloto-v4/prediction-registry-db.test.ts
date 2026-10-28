@@ -85,8 +85,8 @@ async function setup() {
   }, "2026-10-29T10:00:00.000Z");
   const structured = await db.query<{ id: string }>(
     `insert into public.fixture_structured_snapshots
-       (fixture_id, feature_version, research_cutoff_at, computed_at, features, input_payload, sha256)
-     values ($1, 'features-test-v1', '2026-10-30T10:00:00Z', '2026-10-30T10:01:00Z', '{}', '{}', $2) returning id`,
+       (fixture_id, feature_version, research_cutoff_at, computed_at, created_at, features, input_payload, sha256)
+     values ($1, 'features-test-v1', '2026-10-30T10:00:00Z', '2026-10-30T10:01:00Z', '2026-10-30T10:01:00Z', '{}', '{}', $2) returning id`,
     [fixture.fixtureId, "a".repeat(64)],
   );
   const inputs = (): PredictionSnapshotInput["inputs"] => ({
@@ -187,8 +187,8 @@ test("an input first seen after the prediction cutoff is refused, whatever its k
     evidence: [{ evidenceRole: "contradicting", claimObservationId: lateObservation.id }],
   }, "2026-10-30T13:00:00.000Z");
   const lateStructured = await db.query<{ id: string }>(
-    `insert into public.fixture_structured_snapshots (fixture_id, feature_version, research_cutoff_at, computed_at, features, input_payload, sha256)
-     values ($1, 'features-test-v2', '2026-10-30T12:00:00Z', '2026-10-30T12:30:00Z', '{}', '{}', $2) returning id`,
+    `insert into public.fixture_structured_snapshots (fixture_id, feature_version, research_cutoff_at, computed_at, created_at, features, input_payload, sha256)
+     values ($1, 'features-test-v2', '2026-10-30T12:00:00Z', '2026-10-30T12:30:00Z', '2026-10-30T12:30:00Z', '{}', '{}', $2) returning id`,
     [ctx.fixture.fixtureId, "b".repeat(64)],
   );
 
@@ -208,6 +208,23 @@ test("an input first seen after the prediction cutoff is refused, whatever its k
   await assert.rejects(
     recordPrediction(db, basePrediction(ctx.fixture.fixtureId, { inputs: { ...ctx.inputs(), claims: [{ claimId: lateClaim.claim_id, resolutionId: ctx.degraded.resolution_id }] } }), "2026-11-05T00:00:00.000Z"),
     /does not belong to claim/,
+  );
+  // The writer-supplied kickoff snapshot cannot hide a post-kickoff cutoff:
+  // the canonical fixture kickoff is the authority, so the predicted match's
+  // own result can never be linked.
+  const ownResult = await recordObservation(
+    db,
+    realisticObservation(seed, ctx.fixture, { kickoffAt: KICKOFF, retrievedAt: "2026-11-02T20:59:00.000Z" }),
+    "2026-11-02T21:00:00.000Z",
+  );
+  await assert.rejects(
+    recordPrediction(db, basePrediction(ctx.fixture.fixtureId, {
+      researchCutoffAt: "2026-11-02T22:00:00.000Z",
+      kickoffAtSnapshot: "2026-11-09T18:00:00.000Z",
+      generatedAt: "2026-11-02T22:00:00.000Z",
+      inputs: { ledger: [{ ledgerObservationId: ownResult.observation_id }] },
+    }), "2026-11-02T22:05:00.000Z"),
+    /prediction cutoff .* is after the fixture kickoff/,
   );
   assert.equal(await count(db, "prediction_snapshots"), 0);
   for (const table of ["prediction_ledger_inputs", "prediction_identity_bindings", "prediction_reference_inputs"]) assert.equal(await count(db, table), 0, table);
@@ -264,16 +281,31 @@ test("fixture-scoped references must belong to the predicted fixture and precede
 
   // V1 market snapshots are fixture-scoped and mutable: the link records a
   // fingerprint of the row it used, so a later edit is detectable.
-  const marketSnapshot = async (fixtureId: string) =>
+  const marketSnapshot = async (fixtureId: string, createdAt = "2029-12-30T00:00:00Z") =>
     (await db.query<{ id: string }>(
-      `insert into public.fixture_market_snapshots (fixture_id, provider, captured_at, p_1_bp, p_x_bp, p_2_bp)
-       values ($1, 'api_football', '2029-12-30T00:00:00Z', 4500, 2800, 2700) returning id`,
-      [fixtureId],
+      `insert into public.fixture_market_snapshots (fixture_id, provider, captured_at, created_at, p_1_bp, p_x_bp, p_2_bp)
+       values ($1, 'api_football', '2029-12-30T00:00:00Z', $2, 4500, 2800, 2700) returning id`,
+      [fixtureId, createdAt],
     )).rows[0].id;
   const ownMarket = await marketSnapshot(futureFixture.fixtureId);
   await assert.rejects(
     recordPrediction(db, future({ inputs: { references: [{ referenceKind: "market_snapshot", referenceId: await marketSnapshot(ctx.historyFixture.fixtureId) }] } }), inFuture),
     /market snapshot .* belongs to another fixture/,
+  );
+  // A row inserted after the cutoff cannot pass on a backdated, writer-supplied
+  // capture time: its insertion time (created_at) is checked too.
+  await assert.rejects(
+    recordPrediction(db, future({ inputs: { references: [{ referenceKind: "market_snapshot", referenceId: await marketSnapshot(futureFixture.fixtureId, "2029-12-31T06:00:00Z") }] } }), inFuture),
+    /market_snapshot reference was captured after the prediction cutoff/,
+  );
+  const lateInsertedStructured = await db.query<{ id: string }>(
+    `insert into public.fixture_structured_snapshots (fixture_id, feature_version, research_cutoff_at, computed_at, created_at, features, input_payload, sha256)
+     values ($1, 'features-late-insert', '2029-12-30T00:00:00Z', '2029-12-30T00:00:00Z', '2029-12-31T06:00:00Z', '{}', '{}', $2) returning id`,
+    [futureFixture.fixtureId, "d".repeat(64)],
+  );
+  await assert.rejects(
+    recordPrediction(db, future({ inputs: { references: [{ referenceKind: "structured_snapshot", referenceId: lateInsertedStructured.rows[0].id }] } }), inFuture),
+    /structured_snapshot reference was captured after the prediction cutoff/,
   );
   const withMarket = await recordPrediction(db, future({ inputs: { references: [{ referenceKind: "market_snapshot", referenceId: ownMarket }] } }), inFuture);
   const drift = async () =>

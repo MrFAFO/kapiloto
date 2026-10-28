@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { buildMatchLedgerObservationPayload } from "./match-ledger";
@@ -175,5 +176,30 @@ test("service_role can ingest through the RPC but cannot override the informatio
   );
   await assert.rejects(db.query("update public.match_ledger_players set minutes_played = 1"), /immutable/);
   await db.exec("reset role");
+  await db.close();
+});
+
+test("no function defined by a V4 migration is executable by app roles or security definer", async () => {
+  const db = await createLedgerDatabase({ supabaseDefaultPrivileges: true, testClock: false });
+  const names = new Set<string>();
+  for (const file of [
+    "supabase/migrations/20261028010437_kapiloto_v4_entities_match_ledger.sql",
+    "supabase/migrations/20261028132857_kapiloto_v4_knowledge_prediction_registry.sql",
+  ]) {
+    for (const match of readFileSync(file, "utf8").matchAll(/create or replace function (?:public|private)\.([a-z_0-9]+)\(/g)) {
+      names.add(match[1]);
+    }
+  }
+  const functions = await db.query<{ fn: string; anon: boolean; authenticated: boolean; definer: boolean }>(
+    `select p.oid::regprocedure::text as fn,
+            has_function_privilege('anon', p.oid, 'execute') as anon,
+            has_function_privilege('authenticated', p.oid, 'execute') as authenticated,
+            p.prosecdef as definer
+     from pg_proc p
+     where p.pronamespace in ('public'::regnamespace, 'private'::regnamespace) and p.proname = any($1)`,
+    [[...names]],
+  );
+  assert.equal(functions.rows.length, names.size);
+  assert.deepEqual(functions.rows.filter((row) => row.anon || row.authenticated || row.definer), []);
   await db.close();
 });

@@ -108,8 +108,10 @@ Claims name surviving canonical players/coaches (D-050).
 The verbatim `quote` is rights-gated, and `quote_found` records whether the
 quote occurs in the retained text: a signal for fabrication review, not a
 gate. `observed_wording` is Kapiloto's paraphrase. Extractor kind, version,
-model and prompt hash are kept. Re-running the same extractor on the same
-version is idempotent.
+model and prompt hash are kept. The same extractor cannot record the same
+observation twice. An observation is never first seen before its document
+version or claim (this guards a backwards clock step), so no as-of read can
+count it early.
 
 **Independence.** Syndicated copies are distinct documents but never
 independent confirmation. `knowledge_claim_support_as_of` counts each
@@ -142,8 +144,10 @@ football information is not dropped because a page lacks a byline or a
 published time, which is V3's binary accepted/rejected failure mode.
 
 **Versioning.** Resolutions are append-only per claim (`resolution_version`
-by trigger under a per-claim lock). Any transition is allowed; the history
-is the record. Example: Monday a report says the striker is doubtful
+by trigger under a per-claim lock) and are never first seen before their
+claim. Any transition is allowed; the history is the record. An
+`idempotency_key` replay returns `unchanged` only when every adjudication
+field and the exact evidence set match; anything else is refused. Example: Monday a report says the striker is doubtful
 (`unresolved`); Tuesday a training photo makes it `verified_degraded`;
 Wednesday the official squad makes it `verified`.
 
@@ -212,7 +216,14 @@ linked, so a later edit to a mutable source table (such as V1
 
 ## Anti-leakage guarantees
 
-`prediction_record_snapshot` (and any direct insert) refuses a link to:
+`prediction_record_snapshot` (and any direct insert) refuses a link whose
+information time is after the prediction cutoff. Two strengths of guarantee
+apply.
+
+**Strong: V4 information time (`first_seen_at`).** These inputs carry a
+`first_seen_at` stamped by `private.kapiloto_information_clock()`
+(`clock_timestamp()` when the row is written). A writer cannot supply or
+backdate it, and long transactions cannot create early knowledge.
 
 | Input | Refused when |
 | --- | --- |
@@ -221,17 +232,48 @@ linked, so a later edit to a mutable source table (such as V1
 | Claim | claim `first_seen_at > cutoff` |
 | Claim resolution | resolution `first_seen_at > cutoff`, or it belongs to another claim |
 | Claim observation | `first_seen_at > cutoff` |
-| Market quote | database-stamped `captured_at > cutoff`, or another fixture |
-| Market snapshot (V1) | `captured_at > cutoff` (writer-supplied in that table, enforced as stored), or another fixture |
-| Structured snapshot | `research_cutoff_at` or `computed_at > cutoff`, or another fixture |
-| Fact snapshot | `captured_at` or `source_observed_at > cutoff`, or another fixture |
+
+**Weaker: legacy snapshot timing guard.** Pre-V4 tables have no
+`first_seen_at`. They are checked against every timestamp they have, as a
+fail-closed bound, and must belong to the predicted fixture.
+
+| Input | Refused when | Timestamp semantics |
+| --- | --- | --- |
+| Market quote (shadow) | `captured_at > cutoff`, or another fixture | Trigger-forced to `now()`: cannot be supplied, immutable, but it is transaction-start time |
+| Market snapshot (V1) | `captured_at > cutoff` or `created_at > cutoff`, or another fixture | `captured_at` is writer supplied (often a provider time). `created_at` is `DEFAULT now()`: transaction-start time, writer-suppliable, not trigger-stamped. The table is mutable; later edits are detectable through `referenced_row_sha256` |
+| Structured snapshot | `research_cutoff_at`, `computed_at` or `created_at > cutoff`, or another fixture | `computed_at`/`created_at` are `DEFAULT now()`: transaction-start time, writer-suppliable. The table is immutable after insert |
+| Fact snapshot | `captured_at` or `source_observed_at > cutoff`, or another fixture | `captured_at` is `DEFAULT now()` (writer-suppliable); `source_observed_at` is writer supplied |
+
+Residual limitation of the legacy guard:
+
+- A writer that explicitly supplies backdated timestamps is not caught.
+- A transaction that began before the cutoff and inserted a snapshot after it
+  carries the earlier transaction-start time.
+
+Removing these would mean changing V1/V3 runtime tables (stamping triggers),
+which 1B deliberately does not do. Every V4-native input uses true
+`first_seen_at` semantics, and future V4 inputs must too.
 
 The snapshot itself also requires:
 
-- cutoff ≤ kickoff;
+- cutoff ≤ kickoff, checked against the canonical fixture kickoff (actual
+  when known), not only the writer-supplied `kickoff_at_snapshot`, so a
+  prediction can never link its own match's result;
 - cutoff ≤ recording time;
 - `generated_at` ≥ cutoff;
 - the round game, if given, belongs to the predicted fixture.
+
+A writer cannot widen what a prediction may see:
+
+- `research_cutoff_at` is bounded by the database recording time and the
+  canonical fixture kickoff;
+- `kickoff_at_snapshot` can only tighten the bound;
+- every reference is matched to its fixture through the referenced row
+  itself.
+
+Choosing an earlier cutoff only excludes inputs. The canonical kickoff is as
+current as the fixture sync; a match brought forward but not yet synced is
+the remaining edge.
 
 A backtest recorded weeks later is checked against its own cutoff, not its
 recording time. The checks run in the database; the TypeScript validator only
