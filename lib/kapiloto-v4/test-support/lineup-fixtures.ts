@@ -4,7 +4,8 @@ import type { ResolutionStatus } from "../claims";
 import { buildLineupForecast } from "../lineup-model";
 import { buildLineupForecastSnapshot, lineupModelInput, loadLineupSquadInputs, type LineupSnapshotMeta } from "../lineup-snapshot";
 import { buildPredictionSnapshotV2Payload, type PredictionSnapshotV2Input, type RecordPredictionSnapshotResult } from "../prediction-registry";
-import { buildFixtureSquadState, historySelectionPolicy, type HistorySelectionPolicy, type SquadStateRpc } from "../squad-state";
+import { buildFixtureSquadStateFor, historySelectionPolicy, type HistorySelectionPolicy, type SquadStateBuilderVersion, type SquadStateRpc } from "../squad-state";
+import { SQUAD_STATE_BUILDER_VERSION } from "../versions";
 import { addObservation, articleInput, recordClaim, recordDocument, recordResolution } from "./knowledge-fixtures";
 import { createFixture, createLedgerDatabase, realisticObservation, recordObservation, seedLedger, setClock, type LedgerSeed } from "./ledger-fixtures";
 import { insertMembership, membershipKey } from "./roster-fixtures";
@@ -178,12 +179,13 @@ let snapshotCounter = 0;
 export async function forecastSnapshot(
   world: Pick<LineupWorld, "rpc" | "target">,
   teamId: string,
-  overrides: Partial<LineupSnapshotMeta> & { cutoff?: string; policy?: HistorySelectionPolicy } = {},
+  overrides: Partial<LineupSnapshotMeta> & { cutoff?: string; policy?: HistorySelectionPolicy; builder?: SquadStateBuilderVersion } = {},
 ) {
   snapshotCounter += 1;
   const policy = overrides.policy ?? LINEUP_POLICY;
   const inputs = await loadLineupSquadInputs(world.rpc, { fixtureId: world.target.fixtureId, teamId, cutoff: overrides.cutoff ?? LINEUP_CUTOFF, policy });
-  const state = buildFixtureSquadState(inputs, policy);
+  // Defaults to builder-v1 so the original 1D tests keep exercising the frozen V1 path.
+  const state = buildFixtureSquadStateFor(overrides.builder ?? SQUAD_STATE_BUILDER_VERSION, inputs, policy);
   const output = buildLineupForecast(lineupModelInput(inputs, state));
   const snapshot = buildLineupForecastSnapshot({
     inputs,

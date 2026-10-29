@@ -225,6 +225,7 @@ test("no function defined by a V4 migration is executable by app roles or securi
     "supabase/migrations/20261028132857_kapiloto_v4_knowledge_prediction_registry.sql",
     "supabase/migrations/20261029074019_kapiloto_v4_roster_squad_state.sql",
     "supabase/migrations/20261029085303_kapiloto_v4_lineup_prediction_registry_v2.sql",
+    "supabase/migrations/20261029211641_kapiloto_v4_squad_state_features_v2.sql",
   ]) {
     for (const match of readFileSync(file, "utf8").matchAll(/create or replace function (?:public|private)\.([a-z_0-9]+)\(/g)) {
       names.add(match[1]);

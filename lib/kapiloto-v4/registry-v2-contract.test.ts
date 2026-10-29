@@ -96,6 +96,10 @@ test("V2 validation: kind-specific rules", () => {
   assert.ok(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, subjectTeamId: FIXTURE } } })).includes("squad-state context team differs from the subject team"));
   assert.ok(validatePredictionSnapshotV2(lineup({ researchCutoffAt: "2026-11-03T00:00:00.000Z" })).includes("research cutoff is after kickoff"));
   assert.ok(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, squadStateCanonicalJson: `${STATE_TEXT} ` } } })).includes("squad-state artifact does not hash to its SHA-256"));
+  // Builder and features versions are a closed pair (D-055): V1+V1 or V2+V2.
+  assert.deepEqual(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, squadStateBuilderVersion: "kapiloto-squad-state-builder-v2", squadFeaturesVersion: "kapiloto-squad-features-v2" } } })), []);
+  assert.ok(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, squadStateBuilderVersion: "kapiloto-squad-state-builder-v2" } } })).includes("unsupported squad-state builder/features version pair"));
+  assert.ok(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, squadFeaturesVersion: "kapiloto-squad-features-v3" as never } } })).includes("unsupported squad-state builder/features version pair"));
 
   const outcome = lineup({ predictionKind: "match_outcome", subjectTeamId: null, probabilities: { p1Bp: 4600, pXBp: 2800, p2Bp: 2600 }, payload: {}, inputs: {} });
   assert.deepEqual(validatePredictionSnapshotV2(outcome), []);

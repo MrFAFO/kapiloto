@@ -1,11 +1,10 @@
 import { sha256Hex } from "./canonical-json";
+import { isSupportedSquadStateBuild, type SquadFeaturesVersion, type SquadStateBuilderVersion } from "./squad-state";
 import {
   AVAILABILITY_NORMALIZATION_VERSION,
   HISTORY_SELECTION_POLICY_VERSION,
   PREDICTION_SNAPSHOT_CONTRACT_VERSION,
   PREDICTION_SNAPSHOT_V2_CONTRACT_VERSION,
-  SQUAD_FEATURES_VERSION,
-  SQUAD_STATE_BUILDER_VERSION,
   SQUAD_STATE_CONTRACT_VERSION,
   SQUAD_STATE_INPUTS_CONTRACT_VERSION,
   SQUAD_TARGET_DATE_POLICY_VERSION,
@@ -292,8 +291,9 @@ export type SquadStateContext = {
   subjectTeamId: string;
   squadStateInputsContract: typeof SQUAD_STATE_INPUTS_CONTRACT_VERSION;
   squadStateContract: typeof SQUAD_STATE_CONTRACT_VERSION;
-  squadStateBuilderVersion: typeof SQUAD_STATE_BUILDER_VERSION;
-  squadFeaturesVersion: typeof SQUAD_FEATURES_VERSION;
+  /** builder-v1 + features-v1 (frozen 1D replay) or builder-v2 + features-v2 (membership-aware). */
+  squadStateBuilderVersion: SquadStateBuilderVersion;
+  squadFeaturesVersion: SquadFeaturesVersion;
   historySelectionPolicyVersion: typeof HISTORY_SELECTION_POLICY_VERSION;
   availabilityNormalizationVersion: typeof AVAILABILITY_NORMALIZATION_VERSION;
   targetDatePolicy: typeof SQUAD_TARGET_DATE_POLICY_VERSION;
@@ -336,6 +336,9 @@ export function validatePredictionSnapshotV2(input: PredictionSnapshotV2Input): 
     }
     if (sha256Hex(input.inputs.squadStateContext.squadStateCanonicalJson) !== input.inputs.squadStateContext.squadStateSha256) {
       issues.push("squad-state artifact does not hash to its SHA-256");
+    }
+    if (!isSupportedSquadStateBuild(input.inputs.squadStateContext.squadStateBuilderVersion, input.inputs.squadStateContext.squadFeaturesVersion)) {
+      issues.push("unsupported squad-state builder/features version pair");
     }
   }
   if (Date.parse(input.researchCutoffAt) > Date.parse(input.kickoffAtSnapshot)) issues.push("research cutoff is after kickoff");

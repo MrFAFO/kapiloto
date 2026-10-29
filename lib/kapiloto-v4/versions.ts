@@ -68,6 +68,18 @@ export const AVAILABILITY_NORMALIZATION_VERSION = "kapiloto-availability-normali
 export const SQUAD_FEATURES_VERSION = "kapiloto-squad-features-v1";
 
 /**
+ * Membership-aware historical start knownness: absence from a complete
+ * historical lineup is a known non-start only while frozen membership
+ * evidence makes the player CERTAINLY a member of the team on that fixture's
+ * UTC date. Everything else is kapiloto-squad-features-v1. V1 stays callable
+ * (and byte-identical) for replaying frozen 1D snapshots.
+ */
+export const SQUAD_FEATURES_V2_VERSION = "kapiloto-squad-features-v2";
+
+/** Builder producing kapiloto-squad-features-v2 states (same state contract, same raw inputs). */
+export const SQUAD_STATE_BUILDER_V2_VERSION = "kapiloto-squad-state-builder-v2";
+
+/**
  * Target date for membership/tenure coverage: the UTC calendar date of the
  * canonical kickoff. Deterministic, not necessarily the competition-local date.
  */
