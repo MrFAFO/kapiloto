@@ -282,3 +282,19 @@ Decision:
 Details: `docs/architecture/KAPILOTO-V4-KNOWLEDGE-REGISTRY.md`.
 
 Reason: D-050 treats a merge as a data-quality correction. Without merge-aware claim identity, the knowledge layer would split one proposition into two claims with separate evidence and truth histories. Without observed-id and provenance ordering, the registry could record an impossible identity pair or a conclusion visible before its premises.
+
+## D-053 — V4 roster membership and deterministic pre-match squad state
+Decision:
+- **Roster assertions.** Roster membership is stored as immutable, versioned assertions (`team_player_memberships`): a source says a player belongs to a team within inclusive, uncertain date bounds. Corrections and retractions are new versions under a per-key lock, `first_seen_at` is database-stamped, and writes name D-050 survivors while reads expose observed and canonical ids. Overlapping assertions are allowed and never turned into transfer truth.
+- **Raw inputs, pure derivation.** `squad_state_inputs_as_of` returns cutoff-filtered raw inputs and fails closed only for an unresolvable fixture or team or a cutoff after the canonical kickoff. The pure `buildFixtureSquadState` derives the squad state in memory (`kapiloto-squad-state-v1`); it is not persisted.
+- **History selection.** One ledger observation per historical fixture: complete over partial, then explicit provider priority (`kapiloto-history-selection-v1`), never blended, with reasons recorded. The latest 10 selected fixtures are used.
+- **Candidates.** The universe is the union of active or possible roster, selected history, and attributable target-fixture availability and lineup claims (`historical_only` and `claim_only` kept, never pruned).
+- **Features (`kapiloto-squad-features-v1`).** Raw counts with per-feature knownness: start, appearance and minutes each have their own known denominator, and unknown is never zero. A `complete` lineup structurally proves only its 11 starters, so absence from it means "did not start" and nothing else; squad negatives are never inferred in V1. Full regulation starts need explicit minutes of at least 90.
+- **Target date.** Membership and tenure coverage use the kickoff's UTC calendar date (`kapiloto-target-date-utc-v1`), which is deterministic but not necessarily the local football date.
+- **Evidence.** Accepted availability evidence is verified/verified_degraded only; unresolved is evidence, never a conclusion; quarantined/contradicted/fabricated are audit only. Conflicting accepted categories set `availability_conflict` and pick nothing (`kapiloto-availability-normalization-v1`). Reported lineups remain evidence.
+- **Coach state.** Reported as `ledger_and_tenure`/`ledger_only`/`tenure_only`/`conflict`/`unknown`; no coach is invented on conflict.
+- **Scope gate.** 1C produces no lineup probability. Before any 1D lineup model powers a persisted prediction, the Prediction Registry must gain a versioned way to freeze roster-membership and coach-tenure inputs without changing existing `kapiloto-prediction-snapshot-v1` meaning or hashes.
+
+Details: `docs/architecture/KAPILOTO-V4-SQUAD-STATE.md`.
+
+Reason: Availability, expected lineups, minutes and replacements all need a reproducible, leakage-free picture of the squad before kickoff. Without explicit provider fusion, partial-data denominators and evidence standing, a lineup model would double-count matches, mistake missing data for absence, or let a single unverified report decide the team.

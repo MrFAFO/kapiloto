@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import test from "node:test";
 
 const ROOT = process.cwd();
-const V4_MIGRATIONS = [/_kapiloto_v4_entities_match_ledger\.sql$/, /_kapiloto_v4_knowledge_prediction_registry\.sql$/];
+const V4_MIGRATIONS = [
+  /_kapiloto_v4_entities_match_ledger\.sql$/,
+  /_kapiloto_v4_knowledge_prediction_registry\.sql$/,
+  /_kapiloto_v4_roster_squad_state\.sql$/,
+];
 const V4_TABLES = new Set([
   "players",
   "player_aliases",
@@ -35,6 +40,7 @@ const V4_TABLES = new Set([
   "prediction_claim_observation_inputs",
   "prediction_reference_inputs",
   "prediction_identity_bindings",
+  "team_player_memberships",
 ]);
 
 function sourceFiles(dir: string): string[] {
@@ -87,9 +93,24 @@ test("the V4 migrations are the latest, in order, and strictly additive", () => 
       assert.ok(V4_TABLES.has(match[1]), `${file} creates unexpected table ${match[1]}`);
     }
   }
-  // 1B adds no trigger, constraint or index to an existing (pre-V4) table.
-  const knowledge = readFileSync(join(dir, v4[1]), "utf8").toLowerCase();
-  for (const match of knowledge.matchAll(/\bon\s+public\.([a-z_]+)/g)) {
-    assert.ok(V4_TABLES.has(match[1]), `1B attaches to existing table ${match[1]}`);
+  // 1B and 1C add no trigger, constraint or index to an existing (pre-V4) table.
+  for (const file of v4.slice(1)) {
+    const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
+    for (const match of sql.matchAll(/\bon\s+public\.([a-z_]+)/g)) {
+      assert.ok(V4_TABLES.has(match[1]), `${file} attaches to existing table ${match[1]}`);
+    }
+  }
+});
+
+// Foundation 1A and 1B are applied to production; their migrations must never
+// change (line endings normalized so CRLF checkouts hash the same).
+test("the applied V4 migrations are byte-for-byte unchanged", () => {
+  const applied: Record<string, string> = {
+    "20261028010437_kapiloto_v4_entities_match_ledger.sql": "8e9ebcebe0e930c85f929a9906926f52c95c9d784edd3a70dc8d8e94b357b0a9",
+    "20261028132857_kapiloto_v4_knowledge_prediction_registry.sql": "baf08e5b5616568bf1a929823413163f3cd3d57d2ee47c9337319e722853132e",
+  };
+  for (const [file, sha256] of Object.entries(applied)) {
+    const text = readFileSync(join(ROOT, "supabase", "migrations", file), "utf8").replace(/\r\n/g, "\n");
+    assert.equal(createHash("sha256").update(text).digest("hex"), sha256, file);
   }
 });

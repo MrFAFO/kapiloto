@@ -4090,6 +4090,103 @@ export type Database = {
           },
         ]
       }
+      team_player_memberships: {
+        Row: {
+          assertion_status: string
+          contract_version: string
+          document_version_id: string | null
+          ends_on_earliest: string | null
+          ends_on_latest: string | null
+          first_seen_at: string
+          id: string
+          ingest_version: string
+          membership_key: string
+          membership_version: number
+          player_id: string
+          provider: string | null
+          provider_record_id: string | null
+          retrieved_at: string | null
+          shirt_number: number | null
+          source_fingerprint: string | null
+          source_kind: string
+          source_reference: string | null
+          squad_group: string
+          starts_on_earliest: string
+          starts_on_latest: string
+          team_id: string
+        }
+        Insert: {
+          assertion_status?: string
+          contract_version: string
+          document_version_id?: string | null
+          ends_on_earliest?: string | null
+          ends_on_latest?: string | null
+          first_seen_at?: string
+          id?: string
+          ingest_version: string
+          membership_key: string
+          membership_version: number
+          player_id: string
+          provider?: string | null
+          provider_record_id?: string | null
+          retrieved_at?: string | null
+          shirt_number?: number | null
+          source_fingerprint?: string | null
+          source_kind: string
+          source_reference?: string | null
+          squad_group?: string
+          starts_on_earliest: string
+          starts_on_latest: string
+          team_id: string
+        }
+        Update: {
+          assertion_status?: string
+          contract_version?: string
+          document_version_id?: string | null
+          ends_on_earliest?: string | null
+          ends_on_latest?: string | null
+          first_seen_at?: string
+          id?: string
+          ingest_version?: string
+          membership_key?: string
+          membership_version?: number
+          player_id?: string
+          provider?: string | null
+          provider_record_id?: string | null
+          retrieved_at?: string | null
+          shirt_number?: number | null
+          source_fingerprint?: string | null
+          source_kind?: string
+          source_reference?: string | null
+          squad_group?: string
+          starts_on_earliest?: string
+          starts_on_latest?: string
+          team_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_player_memberships_document_version_id_fkey"
+            columns: ["document_version_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_document_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "team_player_memberships_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "team_player_memberships_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       teams: {
         Row: {
           canonical_name: string
@@ -4625,6 +4722,15 @@ export type Database = {
           provider_player_id: string
         }[]
       }
+      squad_state_inputs_as_of: {
+        Args: {
+          p_cutoff: string
+          p_fixture_id: string
+          p_history_fixture_limit?: number
+          p_team_id: string
+        }
+        Returns: Json
+      }
       team_coach_tenures_as_of: {
         Args: { p_cutoff: string; p_team_id: string }
         Returns: {
@@ -4649,6 +4755,30 @@ export type Database = {
           team_id: string
           tenure_key: string
           tenure_version: number
+        }[]
+      }
+      team_player_memberships_as_of: {
+        Args: { p_cutoff: string; p_on_date: string; p_team_id: string }
+        Returns: {
+          canonical_player_id: string
+          coverage: string
+          document_version_id: string | null
+          ends_on_earliest: string | null
+          ends_on_latest: string | null
+          first_seen_at: string
+          membership_id: string
+          membership_key: string
+          membership_version: number
+          observed_player_id: string
+          provider: string | null
+          provider_record_id: string | null
+          shirt_number: number | null
+          source_kind: string
+          source_reference: string | null
+          squad_group: string
+          starts_on_earliest: string
+          starts_on_latest: string
+          team_id: string
         }[]
       }
       toto_save_ticket_draft: {
