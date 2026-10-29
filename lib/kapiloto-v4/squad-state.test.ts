@@ -118,7 +118,8 @@ test("player history features are raw counts with honest denominators", () => {
   assert.deepEqual(f.starts_last, { last_3: { value: 2, available_matches: 3 }, last_5: { value: 2, available_matches: 4 }, last_10: { value: 2, available_matches: 4 } });
   assert.deepEqual(f.minutes_last.last_3, { value: 165, available_matches: 3 });
   assert.deepEqual(f.appearances_last.last_10, { value: 3, available_matches: 4 });
-  assert.deepEqual([f.full_matches, f.sub_on, f.sub_off, f.early_exits_before_60, f.captain_starts], [1, 1, 0, 1, 1]);
+  assert.deepEqual([f.full_regulation_starts, f.starts_with_known_minutes, f.sub_on, f.sub_off, f.early_exits_before_60, f.captain_starts], [1, 2, 1, 0, 1, 1]);
+  assert.deepEqual([f.start_known_matches, f.appearance_known_matches], [4, 4]);
   assert.equal(f.consecutive_starts, 2);
   assert.deepEqual([f.last_squad_kickoff, f.last_start_kickoff, f.last_appearance_kickoff], [history[0].kickoff_at, history[0].kickoff_at, history[0].kickoff_at]);
   assert.deepEqual(f.position_histogram, { FW: 1, MF: 2 });
@@ -281,6 +282,7 @@ function inputs(overrides: Partial<SquadStateInputs> = {}): SquadStateInputs {
     kickoff_at: "2026-11-02T18:00:00+00:00",
     cutoff: "2026-10-30T12:00:00+00:00",
     target_date: "2026-11-02",
+    target_date_policy: "kapiloto-target-date-utc-v1",
     history: [],
     memberships: [],
     claims: [],
@@ -321,24 +323,71 @@ test("candidate universe is the union of roster, history and attributable claims
   assert.throws(() => buildFixtureSquadState(inputs({ cutoff: "2026-11-02T18:00:01+00:00" }), POLICY), /after the fixture kickoff/);
 });
 
-test("a player missing from a partial lineup is unknown, not 'not selected'", () => {
+test("each feature has its own knownness: unknown is never a zero and never a denominator", () => {
   const p = P(1);
-  const history = [
+  const only = (row: HistoryPlayerInput, overrides: Partial<HistoryObservationInput> = {}) =>
+    playerHistoryFeatures(p, [observation(1, "sportmonks", { players: [row], ...overrides })]);
+
+  // 1. Bench row, appeared = null: squad and start (not a starter) known,
+  //    appearance and minutes unknown.
+  const benchUnknown = only(playerRow(p, { lineup_role: "bench", appeared: null, minutes_played: null, entered_minute: null, formation_position: null }));
+  assert.deepEqual(
+    [benchUnknown.squad_appearances, benchUnknown.starts_last.last_3, benchUnknown.appearances_last.last_3, benchUnknown.minutes_last.last_3, benchUnknown.bench_appearance_unknown],
+    [1, { value: 0, available_matches: 1 }, { value: 0, available_matches: 0 }, { value: 0, available_matches: 0 }, 1],
+  );
+
+  // 2. lineup_role = unknown: start is unknown; an explicit appeared flag
+  //    still settles appearance.
+  const roleUnknown = only(playerRow(p, { lineup_role: "unknown", appeared: true, minutes_played: 30, formation_position: null }));
+  assert.deepEqual([roleUnknown.starts_last.last_3, roleUnknown.start_known_matches], [{ value: 0, available_matches: 0 }, 0]);
+  assert.deepEqual([roleUnknown.appearances_last.last_3, roleUnknown.minutes_last.last_3], [{ value: 1, available_matches: 1 }, { value: 30, available_matches: 1 }]);
+  assert.equal(only(playerRow(p, { lineup_role: "unknown", appeared: null, minutes_played: null, formation_position: null })).appearance_known_matches, 0);
+
+  // 3. Absent from a partial lineup: every feature unknown.
+  const partialAbsent = playerHistoryFeatures(p, [observation(1, "sportmonks", { lineup_status: "partial", players: [playerRow(P(2))] })]);
+  assert.deepEqual(
+    [partialAbsent.start_known_matches, partialAbsent.appearance_known_matches, partialAbsent.minutes_known_matches, partialAbsent.matches_with_known_status],
+    [0, 0, 0, 0],
+  );
+
+  // 4. Absent from a complete lineup: the database proves its 11 starters are
+  //    all listed, so "did not start" is known; squad selection, appearance and
+  //    minutes are NOT (bench enumeration is not guaranteed).
+  const completeAbsent = playerHistoryFeatures(p, [observation(1, "sportmonks", { players: [playerRow(P(2))] })]);
+  assert.deepEqual(completeAbsent.starts_last.last_3, { value: 0, available_matches: 1 });
+  assert.deepEqual(
+    [completeAbsent.appearance_known_matches, completeAbsent.minutes_known_matches, completeAbsent.matches_with_known_status, completeAbsent.squad_appearances],
+    [0, 0, 0, 0],
+  );
+
+  // Minutes: stated values count, appeared = false is a known zero, a
+  // missing value on a starter is unknown.
+  assert.deepEqual(only(playerRow(p, { lineup_role: "bench", appeared: false, minutes_played: null, entered_minute: null, formation_position: null })).minutes_last.last_3, { value: 0, available_matches: 1 });
+  assert.deepEqual(only(playerRow(p, { minutes_played: null })).minutes_last.last_3, { value: 0, available_matches: 0 });
+
+  // The streak stops at an unknown start rather than assuming either way.
+  const streak = playerHistoryFeatures(p, [
     observation(3, "sportmonks", { players: [playerRow(p)] }),
-    // Partial source, player not listed: unknown.
-    observation(2, "sportmonks", { lineup_status: "partial", players: [playerRow(P(2))] }),
-    // Complete source, player not listed: known not selected.
-    observation(1, "sportmonks", { players: [playerRow(P(2))] }),
-  ];
-  const f = playerHistoryFeatures(p, history);
-  assert.deepEqual([f.matches_available, f.matches_with_known_status], [3, 2]);
-  assert.deepEqual(f.starts_last.last_3, { value: 1, available_matches: 2 });
-  assert.deepEqual(f.appearances_last.last_3, { value: 1, available_matches: 2 });
-  assert.deepEqual(f.minutes_last.last_3, { value: 90, available_matches: 2 });
-  // The streak stops at the unknown match rather than assuming either way.
-  const streak = playerHistoryFeatures(p, [history[0], history[1], observation(0, "sportmonks", { players: [playerRow(p)] })]);
-  assert.equal(streak.consecutive_starts, 1);
-  // Minutes the source did not state are not counted as zero minutes.
-  const unstated = playerHistoryFeatures(p, [observation(1, "sportmonks", { players: [playerRow(p, { minutes_played: null })] })]);
-  assert.deepEqual([unstated.minutes_last.last_3, unstated.minutes_known_matches], [{ value: 0, available_matches: 0 }, 0]);
+    observation(2, "sportmonks", { players: [playerRow(p, { lineup_role: "unknown", formation_position: null })] }),
+    observation(1, "sportmonks", { players: [playerRow(p)] }),
+  ]);
+  assert.deepEqual([streak.consecutive_starts, streak.starts, streak.start_known_matches], [1, 2, 2]);
+  // Captaincy unknown is not "not captain"; the count is a lower bound.
+  assert.equal(only(playerRow(p, { is_captain: null })).captain_starts, 0);
+});
+
+test("full regulation starts need explicit minutes; a missing exit is never a full match", () => {
+  const p = P(1);
+  const only = (row: HistoryPlayerInput) => playerHistoryFeatures(p, [observation(1, "sportmonks", { players: [row] })]);
+  const counts = (f: ReturnType<typeof only>) => [f.full_regulation_starts, f.starts_with_known_minutes];
+  assert.deepEqual(counts(only(playerRow(p, { minutes_played: 90 }))), [1, 1]);
+  assert.deepEqual(counts(only(playerRow(p, { minutes_played: null, exited_minute: null }))), [0, 0]);
+  assert.deepEqual(counts(only(playerRow(p, { minutes_played: 55, exited_minute: 55 }))), [0, 1]);
+  assert.deepEqual(counts(only(playerRow(p, { lineup_role: "bench", appeared: true, minutes_played: 95, entered_minute: 1, formation_position: null }))), [0, 0]);
+  // Contradictory data (90 minutes but an earlier stated exit) does not count.
+  assert.deepEqual(counts(only(playerRow(p, { minutes_played: 90, exited_minute: 80 }))), [0, 1]);
+  // Extra time: on for all of regulation counts, whether or not he lasted to
+  // 120; completion of extra time is deliberately not derived.
+  assert.deepEqual(counts(only(playerRow(p, { minutes_played: 105, exited_minute: 105 }))), [1, 1]);
+  assert.deepEqual(counts(only(playerRow(p, { minutes_played: 120 }))), [1, 1]);
 });

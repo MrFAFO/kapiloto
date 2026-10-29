@@ -63,3 +63,12 @@ export const HISTORY_SELECTION_POLICY_VERSION = "kapiloto-history-selection-v1";
 
 /** Raw availability status -> small derived category (normalizeAvailabilityStatus). */
 export const AVAILABILITY_NORMALIZATION_VERSION = "kapiloto-availability-normalization-v1";
+
+/** Feature knownness contract of playerHistoryFeatures (per-feature denominators). */
+export const SQUAD_FEATURES_VERSION = "kapiloto-squad-features-v1";
+
+/**
+ * Target date for membership/tenure coverage: the UTC calendar date of the
+ * canonical kickoff. Deterministic, not necessarily the competition-local date.
+ */
+export const SQUAD_TARGET_DATE_POLICY_VERSION = "kapiloto-target-date-utc-v1";

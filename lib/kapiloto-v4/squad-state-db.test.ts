@@ -8,6 +8,7 @@ import {
   buildFixtureSquadState,
   historySelectionPolicy,
   loadSquadStateInputs,
+  playerHistoryFeatures,
   type SquadCandidate,
   type SquadStateRpc,
 } from "./squad-state";
@@ -296,5 +297,39 @@ test("the target match's own data, later corrections and invalid requests never 
   const away = buildFixtureSquadState(await loadSquadStateInputs(ctx.rpc, { fixtureId: ctx.target.fixtureId, teamId: seed.away.teamId, cutoff: CUTOFF }), POLICY);
   assert.deepEqual([away.quality.active_roster_assertions, away.coach.provenance, away.quality.usable_history_matches], [0, "ledger_only", 3]);
   assert.ok(away.candidates.every((c) => c.presence === "historical_only"));
+  await db.close();
+});
+
+test("a complete lineup proves its 11 starters, not the bench: unlisted players are unknown except for starting", async () => {
+  const db = await createLedgerDatabase();
+  const seed = await seedLedger(db);
+  const target = await createFixture(db, seed, KICKOFF);
+  const past = await createFixture(db, seed, "2026-10-25T18:00:00.000Z");
+  // 1A accepts a "complete" lineup of exactly 11 starters with no bench rows
+  // at all: the structural guarantee is the starting XI, nothing more.
+  const startersOnly = realisticObservation(seed, past, { kickoffAt: "2026-10-25T18:00:00.000Z", retrievedAt: "2026-10-26T08:59:00.000Z" });
+  startersOnly.players = startersOnly.players!.filter((p) => p.lineupRole === "starter");
+  startersOnly.substitutions = [];
+  startersOnly.events = [];
+  for (const team of startersOnly.teams) team.eventsStatus = "not_provided";
+  assert.equal(startersOnly.teams[0].lineupStatus, "complete");
+  assert.equal((await recordObservation(db, startersOnly, "2026-10-26T09:00:00.000Z")).status, "recorded");
+
+  const rpc: SquadStateRpc = async (fn, args) =>
+    (await db.query<{ r: unknown }>(`select public.${fn}($1, $2, $3, $4) as r`, [args.p_fixture_id, args.p_team_id, args.p_cutoff, args.p_history_fixture_limit ?? 30])).rows[0].r;
+  const inputs = await loadSquadStateInputs(rpc, { fixtureId: target.fixtureId, teamId: seed.home.teamId, cutoff: CUTOFF });
+  assert.equal(inputs.target_date_policy, "kapiloto-target-date-utc-v1");
+  assert.equal(inputs.target_date, "2026-11-02");
+  const state = buildFixtureSquadState(inputs, POLICY);
+  // A usual bench player who is simply not listed: known not to have
+  // started, but squad selection, appearance and minutes stay unknown.
+  const bench = seed.home.playerIds[15];
+  assert.equal(state.candidates.find((c) => c.canonical_player_id === bench), undefined);
+  const f = playerHistoryFeatures(bench, inputs.history);
+  assert.deepEqual(
+    [f.starts_last.last_3, f.appearance_known_matches, f.minutes_known_matches, f.matches_with_known_status],
+    [{ value: 0, available_matches: 1 }, 0, 0, 0],
+  );
+  assert.deepEqual([state.fixture.target_date_policy, state.features_version], ["kapiloto-target-date-utc-v1", "kapiloto-squad-features-v1"]);
   await db.close();
 });

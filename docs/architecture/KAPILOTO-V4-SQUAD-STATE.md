@@ -77,7 +77,15 @@ canonical kickoff (actual when known). It returns:
   cutoff`; a withdrawal hides the pair) of the team's finished fixtures that
   kicked off before the target, never the target itself. Player and coach
   ids come with their current survivors.
-- **memberships:** the as-of read above, for the kickoff's UTC calendar date.
+- **memberships:** the as-of read above, for the target date.
+
+**Target date (`kapiloto-target-date-utc-v1`).** Membership and tenure
+coverage use the UTC calendar date of the canonical kickoff. This is
+deterministic, but not necessarily the competition-local football date: a
+kickoff shortly after local midnight in Israel (UTC+2/+3) falls on the
+previous UTC calendar day.
+The inputs and the state report `target_date_policy`. Competition or team
+time zones are a future schema concern.
 - **claims:** target-fixture `player_availability` / `expected_lineup`
   canonical claim groups (D-052) known at the cutoff, about a player, for
   this team or with no team, each with its as-of belief.
@@ -128,24 +136,57 @@ Nobody is pruned to 11, 18, 20 or 23. A claim with no team is attributed only
 if the player is already in the roster/history universe; otherwise it is
 listed in `quality.unattributed_claim_ids`.
 
-## Player history features
+## Player history features (`kapiloto-squad-features-v1`)
 
 All features are raw deterministic counts over the selected fixtures. There
-is no weighting, no learned score and no form rating.
+is no weighting, no learned score and no form rating. **Each feature has its
+own knownness; unknown is never a zero and never enters a denominator.**
+Every 3/5/10 window carries `available_matches` = the matches in the window
+where that feature is known (never padded to the window size).
 
-- **Totals:** `matches_available`, `matches_with_known_status`, squad
-  appearances, starts, bench unused (plus bench appearance unknown),
-  appearances, minutes (plus `minutes_known_matches`), full matches, subbed
-  on, subbed off, early exits before minute 60, captain starts.
-- **Windows:** starts, appearances and minutes over the last 3/5/10 matches.
-- **Recency:** last squad, playing and starting kickoffs, and consecutive
-  starts entering the fixture.
-- **Histograms:** position and formation slot.
+| Knownness | Known when | Unknown when |
+| --- | --- | --- |
+| Start | starter (1) or bench (0) row; absence from a `complete` lineup (0, see below) | `lineup_role = unknown`; absence from a `partial` lineup |
+| Appearance | starter (1); a row with `appeared` true/false | non-starter with `appeared = null`; any absence |
+| Minutes | `minutes_played` stated; 0 when the row says `appeared = false` | missing `minutes_played` otherwise; any absence |
+| Squad | the player has a row (positive) | any absence: a squad negative is never inferred in V1 |
 
-**Denominators are honest.** Every window carries `available_matches`,
-never padded to the window size. A player missing from a `partial` lineup is
-**unknown**, not "not selected": that match leaves his denominators, and the
-start streak stops at it. Minutes the source did not state are not zeros.
+**What `lineup_status = 'complete'` proves (decision B, fail closed).**
+- **What the database enforces:** 1A enforces only that a `complete` lineup
+  has exactly 11 starters. The 1A docs describe `complete` both as "a claim
+  of full representation" and as "exactly 11 starters".
+- **What nothing guarantees:** no ingester enumerates the bench. A database
+  test (`squad-state-db.test.ts`) shows 1A accepts a `complete` lineup of 11
+  starters and no bench rows at all.
+- **What 1C infers:** absence from a `complete` lineup is used only for what
+  is structurally proven, "did not start". It never manufactures "not in the
+  squad", "did not appear" or "0 minutes".
+- **Future upgrade:** an explicit matchday-squad completeness signal would be
+  needed to infer squad negatives.
+
+**Feature audit.**
+
+| Feature | Kind | Missing data |
+| --- | --- | --- |
+| `squad_appearances`, `matches_with_known_status` | positive count (rows) | absence never counted as a negative |
+| `starts` / `start_known_matches`, `starts_last` | rate with start-known denominator | `unknown` role or partial absence excluded |
+| `appearances` / `appearance_known_matches`, `appearances_last` | rate with appearance-known denominator | `appeared = null` or absence excluded |
+| `minutes_total` / `minutes_known_matches`, `minutes_last` | sum with minutes-known denominator | missing minutes excluded, never 0 |
+| `full_regulation_starts` / `starts_with_known_minutes` | rate with explicit-minutes denominator | a start without stated minutes never counts |
+| `bench_unused` | explicit known negative (`appeared = false`) | — |
+| `bench_appearance_unknown` | explicit unknown count | — |
+| `sub_on`, `sub_off` | lower bound from listed substitutions | missing substitution data is not zero |
+| `early_exits_before_60` | lower bound: explicit `exited_minute < 60` | a missing exit is never assumed |
+| `consecutive_starts` | streak | stops at a known non-start or an unknown start |
+| `captain_starts` | lower bound: `is_captain = true` | null is not "not captain" |
+| position / formation-slot histograms, `last_*_kickoff` | positive observations | — |
+
+**Full regulation starts.** A start counts only with explicit
+`minutes_played >= 90` and no stated exit before minute 90: the player was on
+the pitch for all of regulation time. It is not "full match": whether an
+extra-time match was played to 120 is not derived. A starter with no stated
+minutes and no exit never counts, because a missing exit is not evidence of
+playing on.
 
 ## Replacement patterns
 

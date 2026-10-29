@@ -254,7 +254,11 @@ $$;
 --                excluded, limited to the most recent fixtures. One entry
 --                per (fixture, provider); the builder selects ONE per
 --                fixture. Player ids: observed + current survivor;
---   memberships  team_player_memberships_as_of(team, cutoff, kickoff date);
+--   memberships  team_player_memberships_as_of(team, cutoff, target date);
+--   target date  kapiloto-target-date-utc-v1: the UTC calendar date of the
+--                canonical kickoff. Deterministic, NOT necessarily the
+--                competition-local football date; local time zones are a
+--                future schema concern;
 --   claims       target-fixture player_availability / expected_lineup claim
 --                groups (D-052) known at the cutoff, about a player, for
 --                this team or with no team, with the as-of belief;
@@ -456,6 +460,7 @@ begin
     'kickoff_at', v_kickoff,
     'cutoff', p_cutoff,
     'target_date', v_target_date,
+    'target_date_policy', 'kapiloto-target-date-utc-v1',
     'history', v_history,
     'memberships', v_memberships,
     'claims', v_claims,

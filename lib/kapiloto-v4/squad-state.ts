@@ -5,9 +5,11 @@ import type { MembershipAsOfRow, MembershipCoverage, SquadGroup } from "./roster
 import {
   AVAILABILITY_NORMALIZATION_VERSION,
   HISTORY_SELECTION_POLICY_VERSION,
+  SQUAD_FEATURES_VERSION,
   SQUAD_STATE_BUILDER_VERSION,
   SQUAD_STATE_CONTRACT_VERSION,
   SQUAD_STATE_INPUTS_CONTRACT_VERSION,
+  SQUAD_TARGET_DATE_POLICY_VERSION,
 } from "./versions";
 
 /**
@@ -118,7 +120,9 @@ export type SquadStateInputs = {
   side: TeamSide;
   kickoff_at: string;
   cutoff: string;
+  /** UTC calendar date of the canonical kickoff (target_date_policy). */
   target_date: string;
+  target_date_policy: typeof SQUAD_TARGET_DATE_POLICY_VERSION;
   history: HistoryObservationInput[];
   memberships: MembershipAsOfRow[];
   claims: SquadClaimInput[];
@@ -361,48 +365,77 @@ export type ReportedLineupSummary = {
 // ---------------------------------------------------------------------------
 
 /**
- * value over the window's matches whose status for this player is known;
+ * value over the window's matches where THIS feature is known for the player;
  * available_matches is that denominator (never padded to the window size).
  */
 export type WindowCount = { value: number; available_matches: number };
 export type RollingWindows = { last_3: WindowCount; last_5: WindowCount; last_10: WindowCount };
 
+/**
+ * Per-feature knownness (kapiloto-squad-features-v1). Unknown is never
+ * turned into a zero and never enters a denominator. Matchday-squad
+ * completeness is NOT assumed: 1A structurally proves only that a "complete"
+ * lineup lists exactly 11 starters, so absence from it proves "did not start"
+ * and nothing else (see docs/architecture/KAPILOTO-V4-SQUAD-STATE.md).
+ *
+ *   start      known for a starter or bench row, or absence from a complete
+ *              lineup (known 0); unknown for lineup_role = unknown or absence
+ *              from a partial lineup.
+ *   appearance known for a starter (1) or a row with appeared true/false;
+ *              unknown for appeared = null on a non-starter, and for any
+ *              absence.
+ *   minutes    known when minutes_played is stated, or 0 when the row says
+ *              appeared = false; unknown otherwise, including any absence.
+ *   squad      known (positive) only when the player has a row; a squad
+ *              negative is never inferred in V1.
+ */
 export type PlayerHistoryFeatures = {
   /** Selected historical fixtures. */
   matches_available: number;
-  /**
-   * Selected fixtures where this player's squad status is known: he has a
-   * row, or the source's player family is complete. A missing row in a
-   * partial lineup is unknown, not "not selected". Denominator for totals.
-   */
+  /** Squad-status coverage: matches where he has a row (no inferred negatives in V1). */
   matches_with_known_status: number;
+  /** Positive count: matches where he has a matchday row. */
   squad_appearances: number;
+  /** Positive count; rate denominator start_known_matches. */
   starts: number;
+  start_known_matches: number;
+  /** Explicit known negatives: bench rows with appeared = false. */
   bench_unused: number;
-  /** Bench rows whose appearance is not stated by the source. */
+  /** Bench rows whose appearance the source does not state. */
   bench_appearance_unknown: number;
+  /** Positive count; rate denominator appearance_known_matches. */
   appearances: number;
+  appearance_known_matches: number;
+  /** Sum over minutes-known matches only; denominator minutes_known_matches. */
   minutes_total: number;
-  /** Squad rows with a stated minutes value. */
   minutes_known_matches: number;
   starts_last: RollingWindows;
   appearances_last: RollingWindows;
   minutes_last: RollingWindows;
-  full_matches: number;
+  /**
+   * Starts with explicit minutes_played >= 90 and no earlier stated exit:
+   * on the pitch for all of regulation time. Not "full match": whether an
+   * extra-time match was played to 120 is not derived. Denominator
+   * starts_with_known_minutes; a start without stated minutes never counts.
+   */
+  full_regulation_starts: number;
+  starts_with_known_minutes: number;
+  /** Lower bounds from listed substitutions (missing substitution data is not zero). */
   sub_on: number;
   sub_off: number;
+  /** Lower bound: explicit exited_minute < 60 only; a missing exit is never assumed. */
   early_exits_before_60: number;
   last_squad_kickoff: string | null;
   last_appearance_kickoff: string | null;
   last_start_kickoff: string | null;
   /**
    * Starts in a row entering the fixture, from the most recent selected
-   * match; stops at the first non-start or at a match where his status is
-   * unknown.
+   * match; stops at the first known non-start or the first unknown start.
    */
   consecutive_starts: number;
   position_histogram: Partial<Record<PositionCode, number>>;
   formation_slot_histogram: { slot: number; count: number }[];
+  /** Lower bound: starts with is_captain = true (null is not "not captain"). */
   captain_starts: number;
   observation_ids: string[];
 };
@@ -488,6 +521,7 @@ export type FixtureSquadState = {
   inputs_contract_version: typeof SQUAD_STATE_INPUTS_CONTRACT_VERSION;
   history_selection_policy: HistorySelectionPolicy;
   availability_normalization_version: typeof AVAILABILITY_NORMALIZATION_VERSION;
+  features_version: typeof SQUAD_FEATURES_VERSION;
   fixture: {
     fixture_id: string;
     team_id: string;
@@ -496,6 +530,7 @@ export type FixtureSquadState = {
     kickoff_at: string;
     cutoff: string;
     target_date: string;
+    target_date_policy: typeof SQUAD_TARGET_DATE_POLICY_VERSION;
   };
   history_selection: SelectedHistoryFixture[];
   history_excluded: ExcludedHistoryFixture[];
@@ -574,6 +609,7 @@ export function buildFixtureSquadState(inputs: SquadStateInputs, policy: History
     inputs_contract_version: SQUAD_STATE_INPUTS_CONTRACT_VERSION,
     history_selection_policy: policy,
     availability_normalization_version: AVAILABILITY_NORMALIZATION_VERSION,
+    features_version: SQUAD_FEATURES_VERSION,
     fixture: {
       fixture_id: inputs.fixture_id,
       team_id: inputs.team_id,
@@ -582,6 +618,7 @@ export function buildFixtureSquadState(inputs: SquadStateInputs, policy: History
       kickoff_at: inputs.kickoff_at,
       cutoff: inputs.cutoff,
       target_date: inputs.target_date,
+      target_date_policy: inputs.target_date_policy,
     },
     history_selection: selected,
     history_excluded: excluded,
@@ -649,16 +686,19 @@ function buildCandidate(
 export function playerHistoryFeatures(playerId: string, history: readonly HistoryObservationInput[]): PlayerHistoryFeatures {
   const rows = history.map((observation) => {
     const player = observation.players.find((p) => p.canonical_player_id === playerId) ?? null;
-    // Absent from a complete lineup = known not selected; absent from a
-    // partial lineup = unknown.
-    const statusKnown = player !== null || observation.lineup_status === "complete";
-    const minutesKnown = player === null ? statusKnown : player.minutes_played !== null;
-    return { observation, player, statusKnown, minutesKnown };
+    // Start: a starter/bench row, or absence from a lineup whose 11 starters
+    // the database proves are all listed.
+    const startKnown = player !== null ? player.lineup_role !== "unknown" : observation.lineup_status === "complete";
+    // Appearance: a starter appeared; otherwise only an explicit flag counts.
+    const appearanceKnown = player !== null && (player.lineup_role === "starter" || player.appeared !== null);
+    // Minutes: stated, or zero when the row says he did not appear.
+    const minutesKnown = player !== null && (player.minutes_played !== null || player.appeared === false);
+    return { observation, player, startKnown, appearanceKnown, minutesKnown };
   });
   type Row = (typeof rows)[number];
   const started = (r: Row) => r.player?.lineup_role === "starter";
   const played = (r: Row) => r.player !== null && (r.player.lineup_role === "starter" || r.player.appeared === true);
-  const minutes = (r: Row) => r.player?.minutes_played ?? 0;
+  const minutes = (r: Row) => (r.minutesKnown ? (r.player!.minutes_played ?? 0) : 0);
   const windows = (count: (r: Row) => number, known: (r: Row) => boolean): RollingWindows => {
     const [w3, w5, w10] = WINDOWS.map((w) => {
       const slice = rows.slice(0, w).filter(known);
@@ -670,9 +710,10 @@ export function playerHistoryFeatures(playerId: string, history: readonly Histor
   const subsOff = rows.filter((r) => r.observation.substitutions.some((s) => s.canonical_player_off_id === playerId)).length;
   let consecutive = 0;
   for (const r of rows) {
-    if (!r.statusKnown || !started(r)) break;
+    if (!r.startKnown || !started(r)) break;
     consecutive += 1;
   }
+  const startsWithMinutes = rows.filter((r) => started(r) && r.player!.minutes_played !== null);
   const positions: Partial<Record<PositionCode, number>> = {};
   const slots = new Map<number, number>();
   for (const r of rows) {
@@ -686,18 +727,23 @@ export function playerHistoryFeatures(playerId: string, history: readonly Histor
   const inSquad = rows.filter((r) => r.player !== null);
   return {
     matches_available: rows.length,
-    matches_with_known_status: rows.filter((r) => r.statusKnown).length,
+    matches_with_known_status: inSquad.length,
     squad_appearances: inSquad.length,
     starts: rows.filter(started).length,
+    start_known_matches: rows.filter((r) => r.startKnown).length,
     bench_unused: inSquad.filter((r) => r.player!.lineup_role === "bench" && r.player!.appeared === false).length,
     bench_appearance_unknown: inSquad.filter((r) => r.player!.lineup_role === "bench" && r.player!.appeared === null).length,
     appearances: rows.filter(played).length,
+    appearance_known_matches: rows.filter((r) => r.appearanceKnown).length,
     minutes_total: rows.reduce((n, r) => n + minutes(r), 0),
-    minutes_known_matches: inSquad.filter((r) => r.player!.minutes_played !== null).length,
-    starts_last: windows((r) => (started(r) ? 1 : 0), (r) => r.statusKnown),
-    appearances_last: windows((r) => (played(r) ? 1 : 0), (r) => r.statusKnown),
+    minutes_known_matches: rows.filter((r) => r.minutesKnown).length,
+    starts_last: windows((r) => (started(r) ? 1 : 0), (r) => r.startKnown),
+    appearances_last: windows((r) => (played(r) ? 1 : 0), (r) => r.appearanceKnown),
     minutes_last: windows(minutes, (r) => r.minutesKnown),
-    full_matches: rows.filter((r) => started(r) && r.player!.exited_minute === null).length,
+    full_regulation_starts: startsWithMinutes.filter(
+      (r) => r.player!.minutes_played! >= 90 && (r.player!.exited_minute === null || r.player!.exited_minute >= 90),
+    ).length,
+    starts_with_known_minutes: startsWithMinutes.length,
     sub_on: subsOn,
     sub_off: subsOff,
     early_exits_before_60: inSquad.filter((r) => r.player!.exited_minute !== null && r.player!.exited_minute < 60).length,
@@ -893,6 +939,7 @@ export function parseSquadStateInputs(value: unknown): SquadStateInputs {
   if (typeof value !== "object" || value === null) throw new Error("squad-state inputs must be an object");
   const candidate = value as { [key: string]: unknown };
   if (candidate.contract_version !== SQUAD_STATE_INPUTS_CONTRACT_VERSION) throw new Error("unsupported squad-state inputs contract");
+  if (candidate.target_date_policy !== SQUAD_TARGET_DATE_POLICY_VERSION) throw new Error("unsupported squad-state target date policy");
   for (const key of ["fixture_id", "team_id", "opponent_team_id", "side", "kickoff_at", "cutoff", "target_date"]) {
     if (typeof candidate[key] !== "string") throw new Error(`squad-state inputs field ${key} must be a string`);
   }
