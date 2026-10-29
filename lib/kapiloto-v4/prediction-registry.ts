@@ -1,3 +1,4 @@
+import { sha256Hex } from "./canonical-json";
 import {
   AVAILABILITY_NORMALIZATION_VERSION,
   HISTORY_SELECTION_POLICY_VERSION,
@@ -286,7 +287,7 @@ export const LINEUP_INPUT_ROLES = {
   coachTenure: "squad_coach_tenure",
 } as const;
 
-/** One row of prediction_squad_state_context: what reconstructs the exact 1C state. */
+/** One row of prediction_squad_state_context: the exact 1C state a lineup forecast consumed. */
 export type SquadStateContext = {
   subjectTeamId: string;
   squadStateInputsContract: typeof SQUAD_STATE_INPUTS_CONTRACT_VERSION;
@@ -299,6 +300,8 @@ export type SquadStateContext = {
   providerPriority: string[];
   historyMaxFixtures: number;
   squadStateSha256: string;
+  /** canonicalJson(state): the exact bytes the model consumed; squadStateSha256 is their SHA-256. */
+  squadStateCanonicalJson: string;
 };
 
 export type PredictionInputsV2 = PredictionInputs & {
@@ -327,8 +330,13 @@ export function validatePredictionSnapshotV2(input: PredictionSnapshotV2Input): 
   if (input.outcome === "predicted" && !input.payload?.lineup_estimate) issues.push("a predicted lineup forecast needs lineup_estimate");
   if (input.outcome === "abstained" && !input.abstainReason) issues.push("an abstained snapshot needs an abstain reason");
   if (!input.inputs.squadStateContext) issues.push("a lineup forecast needs its squad-state context");
-  else if (input.inputs.squadStateContext.subjectTeamId.toLowerCase() !== input.subjectTeamId?.toLowerCase()) {
-    issues.push("squad-state context team differs from the subject team");
+  else {
+    if (input.inputs.squadStateContext.subjectTeamId.toLowerCase() !== input.subjectTeamId?.toLowerCase()) {
+      issues.push("squad-state context team differs from the subject team");
+    }
+    if (sha256Hex(input.inputs.squadStateContext.squadStateCanonicalJson) !== input.inputs.squadStateContext.squadStateSha256) {
+      issues.push("squad-state artifact does not hash to its SHA-256");
+    }
   }
   if (Date.parse(input.researchCutoffAt) > Date.parse(input.kickoffAtSnapshot)) issues.push("research cutoff is after kickoff");
   return issues;
@@ -360,6 +368,7 @@ export function buildPredictionSnapshotV2Payload(input: PredictionSnapshotV2Inpu
         provider_priority: [...context.providerPriority],
         history_max_fixtures: context.historyMaxFixtures,
         squad_state_sha256: context.squadStateSha256,
+        squad_state_canonical_json: context.squadStateCanonicalJson,
       },
     },
   };

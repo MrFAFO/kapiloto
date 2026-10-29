@@ -106,6 +106,17 @@ test("the V4 migrations are the latest, in order, and strictly additive", () => 
   }
 });
 
+// 1D adds V2 alongside V1: it never redefines the V1 RPC or the V1 hashing.
+test("the 1D migration does not redefine any V1 prediction registry function", () => {
+  const dir = join(ROOT, "supabase", "migrations");
+  const file = readdirSync(dir).find((name) => /_kapiloto_v4_lineup_prediction_registry_v2\.sql$/.test(name))!;
+  const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
+  for (const fn of ["public.prediction_record_snapshot", "private.prediction_canonical_inputs", "private.prediction_input_bundle_sha256", "private.prediction_output_sha256"]) {
+    assert.ok(!sql.includes(`create or replace function ${fn}(`), fn);
+  }
+  assert.ok(sql.includes("create or replace function public.prediction_record_snapshot_v2("));
+});
+
 // Foundation 1A, 1B and 1C are applied to production; their migrations must
 // never change (line endings normalized so CRLF checkouts hash the same).
 test("the applied V4 migrations are byte-for-byte unchanged", () => {

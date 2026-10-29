@@ -105,10 +105,12 @@ create table public.prediction_tenure_inputs (
   primary key (snapshot_id, tenure_id)
 );
 
--- Everything needed to reconstruct the exact 1C squad state a lineup forecast
--- consumed: contract/builder/policy versions, the explicit provider priority
--- and history window, and the SHA-256 of the derived state. The state itself
--- is reproducible from the frozen input links plus these values.
+-- The exact 1C squad state a lineup forecast consumed: contract/builder/policy
+-- versions, the explicit provider priority and history window, and the
+-- state itself as its canonical JSON bytes (stored as text, never
+-- reserialized) with their SHA-256. A historical snapshot can therefore
+-- always retrieve the exact state bytes, even after later identity merges
+-- change what today's 1C reads resolve to.
 create table public.prediction_squad_state_context (
   snapshot_id uuid primary key references public.prediction_snapshots(id) on delete restrict,
   subject_team_id uuid not null references public.teams(id) on delete restrict,
@@ -125,7 +127,10 @@ create table public.prediction_squad_state_context (
   target_date_policy text not null check (target_date_policy in ('kapiloto-target-date-utc-v1')),
   provider_priority text[] not null check (cardinality(provider_priority) between 1 and 20),
   history_max_fixtures smallint not null check (history_max_fixtures between 1 and 10),
-  squad_state_sha256 text not null check (squad_state_sha256 ~ '^[0-9a-f]{64}$')
+  squad_state_sha256 text not null check (squad_state_sha256 ~ '^[0-9a-f]{64}$'),
+  squad_state_canonical_json text not null
+    check (octet_length(squad_state_canonical_json) between 2 and 1048576),
+  check (squad_state_sha256 = encode(sha256(convert_to(squad_state_canonical_json, 'UTF8')), 'hex'))
 );
 
 -- V2 input families: sealed to the snapshot's statement, V2 only, never first
@@ -143,6 +148,7 @@ declare
   v_status text;
   v_superseded boolean;
   v_fixture_teams uuid[];
+  v_state jsonb;
 begin
   select s.* into v_snapshot from public.prediction_snapshots s where s.id = new.snapshot_id;
   if not found then
@@ -167,6 +173,23 @@ begin
     if exists (select 1 from unnest(new.provider_priority) p where p !~ '^[a-z0-9_]{1,40}$')
       or cardinality(array(select distinct unnest(new.provider_priority))) <> cardinality(new.provider_priority) then
       raise exception 'provider priority must list distinct provider keys';
+    end if;
+    -- The frozen artifact must describe this snapshot and this context.
+    v_state := new.squad_state_canonical_json::jsonb;
+    if jsonb_typeof(v_state) <> 'object'
+      or v_state->>'contract_version' is distinct from new.squad_state_contract
+      or v_state->>'builder_version' is distinct from new.squad_state_builder_version
+      or v_state->>'inputs_contract_version' is distinct from new.squad_state_inputs_contract
+      or v_state->>'features_version' is distinct from new.squad_features_version
+      or v_state->>'availability_normalization_version' is distinct from new.availability_normalization_version
+      or v_state->'history_selection_policy'->>'version' is distinct from new.history_selection_policy_version
+      or v_state->'history_selection_policy'->'maxFixtures' is distinct from to_jsonb(new.history_max_fixtures)
+      or v_state->'history_selection_policy'->'providerPriority' is distinct from to_jsonb(new.provider_priority)
+      or v_state->'fixture'->>'fixture_id' is distinct from v_snapshot.fixture_id::text
+      or v_state->'fixture'->>'team_id' is distinct from v_snapshot.subject_team_id::text
+      or v_state->'fixture'->>'target_date_policy' is distinct from new.target_date_policy
+      or (v_state->'fixture'->>'cutoff')::timestamptz is distinct from v_snapshot.research_cutoff_at then
+      raise exception 'squad-state artifact does not describe this snapshot and its context';
     end if;
     return new;
   end if;
@@ -385,7 +408,8 @@ begin
       'subject_team_id', 'squad_state_inputs_contract', 'squad_state_contract',
       'squad_state_builder_version', 'squad_features_version',
       'history_selection_policy_version', 'availability_normalization_version',
-      'target_date_policy', 'provider_priority', 'history_max_fixtures', 'squad_state_sha256'
+      'target_date_policy', 'provider_priority', 'history_max_fixtures', 'squad_state_sha256',
+      'squad_state_canonical_json'
     ], 'squad-state context');
   end if;
 
@@ -413,18 +437,157 @@ begin
           'target_date_policy', c.target_date_policy,
           'provider_priority', to_jsonb(c.provider_priority),
           'history_max_fixtures', c.history_max_fixtures,
-          'squad_state_sha256', c.squad_state_sha256
+          'squad_state_sha256', c.squad_state_sha256,
+          'squad_state_canonical_json', c.squad_state_canonical_json
         )
         from jsonb_to_record(v_context) as c(
           subject_team_id uuid, squad_state_inputs_contract text, squad_state_contract text,
           squad_state_builder_version text, squad_features_version text,
           history_selection_policy_version text, availability_normalization_version text,
           target_date_policy text, provider_priority text[], history_max_fixtures smallint,
-          squad_state_sha256 text
+          squad_state_sha256 text, squad_state_canonical_json text
         )
         where jsonb_typeof(v_context) = 'object'
       )
     );
+end;
+$$;
+
+-- True when a JSON value is an integer in [lo, hi].
+create or replace function private.prediction_json_int_between(p_value jsonb, p_lo integer, p_hi integer)
+returns boolean
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  v numeric;
+begin
+  if jsonb_typeof(p_value) is distinct from 'number' then
+    return false;
+  end if;
+  v := (p_value::text)::numeric;
+  return v = trunc(v) and v between p_lo and p_hi;
+end;
+$$;
+
+-- The stored-output contract of kapiloto-lineup-output-v1 (not the model
+-- formula): null when valid, else the first violation. Called at commit for
+-- every stored lineup_estimate, so a direct service_role write cannot persist
+-- a malformed scientific record.
+create or replace function private.prediction_lineup_estimate_issue(p_estimate jsonb)
+returns text
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  v_players jsonb := p_estimate->'players';
+  v_modal jsonb := p_estimate->'modal_xi';
+  v_status text := p_estimate->>'status';
+  v_sum numeric;
+begin
+  if jsonb_typeof(p_estimate) is distinct from 'object' then
+    return 'lineup estimate must be an object';
+  end if;
+  if p_estimate->>'contract_version' is distinct from 'kapiloto-lineup-output-v1'
+    or p_estimate->>'model_version' is distinct from 'kapiloto-lineup-model-v1' then
+    return 'unsupported output contract or model version';
+  end if;
+  if v_status is null or v_status not in ('projected', 'insufficient_candidates', 'insufficient_start_capacity', 'invalid_input') then
+    return 'unknown status';
+  end if;
+  if jsonb_typeof(v_players) is distinct from 'array' then
+    return 'players must be an array';
+  end if;
+  if jsonb_typeof(v_modal) is distinct from 'array' then
+    return 'modal_xi must be an array';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_players) e
+    where jsonb_typeof(e) <> 'object'
+      or jsonb_typeof(e->'canonical_player_id') is distinct from 'string'
+      or (e->>'canonical_player_id') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  ) then
+    return 'every player needs a canonical player id';
+  end if;
+  if jsonb_array_length(v_players) <> (select count(distinct e->>'canonical_player_id') from jsonb_array_elements(v_players) e) then
+    return 'duplicate player';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_players) e
+    where not private.prediction_json_int_between(e->'start_cap_bp', 0, 10000)
+      or not private.prediction_json_int_between(e->'raw_start_probability_bp', 0, 10000)
+      or not private.prediction_json_int_between(e->'raw_appearance_probability_bp', 0, 10000)
+  ) then
+    return 'raw probabilities and start caps must be integers in 0..10000';
+  end if;
+
+  if v_status <> 'projected' then
+    if jsonb_array_length(v_modal) <> 0
+      or coalesce(p_estimate->'team_start_total_bp', 'null'::jsonb) <> 'null'::jsonb
+      or coalesce(p_estimate->'team_lambda_micro', 'null'::jsonb) <> 'null'::jsonb then
+      return 'only a projected estimate has a modal XI or team totals';
+    end if;
+    if exists (
+      select 1 from jsonb_array_elements(v_players) e
+      where coalesce(e->'projected_start_probability_bp', 'null'::jsonb) <> 'null'::jsonb
+        or coalesce(e->'appearance_probability_bp', 'null'::jsonb) <> 'null'::jsonb
+        or coalesce(e->'expected_regulation_minutes_tenths', 'null'::jsonb) <> 'null'::jsonb
+        or coalesce(e->'in_modal_xi', 'false'::jsonb) <> 'false'::jsonb
+    ) then
+      return 'only a projected estimate has projected player values';
+    end if;
+    return null;
+  end if;
+
+  if p_estimate->>'parameters_version' is distinct from 'kapiloto-lineup-parameters-v1' then
+    return 'unsupported parameters version';
+  end if;
+  if p_estimate->'team_start_total_bp' is distinct from '110000'::jsonb then
+    return 'team start total must be 110000';
+  end if;
+  if not private.prediction_json_int_between(p_estimate->'team_lambda_micro', -2147483647, 2147483647) then
+    return 'team intercept must be an integer';
+  end if;
+  if jsonb_array_length(v_modal) <> 11
+    or (select count(distinct x) from jsonb_array_elements(v_modal) x) <> 11
+    or exists (select 1 from jsonb_array_elements(v_modal) x where jsonb_typeof(x) <> 'string') then
+    return 'modal XI must hold exactly 11 unique player ids';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements_text(v_modal) x
+    where (select count(*) from jsonb_array_elements(v_players) e where e->>'canonical_player_id' = x) <> 1
+  ) then
+    return 'every modal XI player must be exactly one output player';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_players) e
+    where not private.prediction_json_int_between(e->'projected_start_probability_bp', 0, 10000)
+      or not private.prediction_json_int_between(e->'appearance_probability_bp', 0, 10000)
+      or not private.prediction_json_int_between(e->'expected_regulation_minutes_tenths', 0, 900)
+  ) then
+    return 'projected starts and appearances must be integers in 0..10000 and minutes in 0..900 tenths';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_players) e
+    where (e->>'projected_start_probability_bp')::integer > (e->>'start_cap_bp')::integer
+      or (e->>'appearance_probability_bp')::integer < (e->>'projected_start_probability_bp')::integer
+      or (e->>'appearance_probability_bp')::integer > (e->>'start_cap_bp')::integer
+  ) then
+    return 'each player needs start <= cap and start <= appearance <= cap';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_players) e
+    where e->'in_modal_xi' is distinct from to_jsonb(v_modal ? (e->>'canonical_player_id'))
+  ) then
+    return 'in_modal_xi flags disagree with modal_xi';
+  end if;
+  select sum((e->>'projected_start_probability_bp')::numeric) into v_sum from jsonb_array_elements(v_players) e;
+  if v_sum is distinct from 110000 then
+    return 'player projected starts must sum to 110000';
+  end if;
+  return null;
 end;
 $$;
 
@@ -450,6 +613,9 @@ declare
   v_hash text;
   v_context public.prediction_squad_state_context%rowtype;
   v_missing uuid;
+  v_expected jsonb;
+  v_state jsonb;
+  v_issue text;
 begin
   select jsonb_build_object(
     'ledger', coalesce((
@@ -509,8 +675,55 @@ begin
       if v_context.snapshot_id is null then
         raise exception 'lineup forecast % has no squad-state context', new.id;
       end if;
+
+      -- Complete 1C capture: the frozen links are exactly what the 1C as-of
+      -- read returns for this fixture, team, cutoff and history window - no
+      -- omitted provider alternative, membership, tenure, claim or
+      -- resolution, and nothing it would not return.
+      v_expected := public.squad_state_inputs_as_of(
+        new.fixture_id, new.subject_team_id, new.research_cutoff_at, v_context.history_max_fixtures::integer);
+      if array(select h->>'observation_id' from jsonb_array_elements(v_expected->'history') h order by 1)
+        is distinct from array(select i.ledger_observation_id::text from public.prediction_ledger_inputs i
+                               where i.snapshot_id = new.id order by 1) then
+        raise exception 'lineup forecast % does not freeze exactly the squad history the 1C as-of read returns', new.id;
+      end if;
+      if array(select m->>'membership_id' from jsonb_array_elements(v_expected->'memberships') m order by 1)
+        is distinct from array(select i.membership_id::text from public.prediction_membership_inputs i
+                               where i.snapshot_id = new.id order by 1) then
+        raise exception 'lineup forecast % does not freeze exactly the memberships the 1C as-of read returns', new.id;
+      end if;
+      if array(select t->>'tenure_id' from jsonb_array_elements(v_expected->'tenures') t order by 1)
+        is distinct from array(select i.tenure_id::text from public.prediction_tenure_inputs i
+                               where i.snapshot_id = new.id order by 1) then
+        raise exception 'lineup forecast % does not freeze exactly the coach tenures the 1C as-of read returns', new.id;
+      end if;
+      if array(select coalesce(c->>'resolution_claim_id', c->>'claim_id') || ':' || coalesce(c->>'resolution_id', '')
+               from jsonb_array_elements(v_expected->'claims') c order by 1)
+        is distinct from array(select i.claim_id::text || ':' || coalesce(i.resolution_id::text, '')
+                               from public.prediction_claim_inputs i where i.snapshot_id = new.id order by 1) then
+        raise exception 'lineup forecast % does not freeze exactly the target claims and resolutions the 1C as-of read returns', new.id;
+      end if;
+
+      -- The frozen squad-state artifact was derived from exactly these links.
+      v_state := v_context.squad_state_canonical_json::jsonb;
+      if array(select x from jsonb_array_elements_text(v_state->'provenance'->'ledger_observation_ids') x order by 1)
+        is distinct from array(select i.ledger_observation_id::text from public.prediction_ledger_inputs i
+                               where i.snapshot_id = new.id and i.input_role = 'squad_history_selected' order by 1)
+        or array(select x from jsonb_array_elements_text(v_state->'provenance'->'considered_observation_ids') x order by 1)
+        is distinct from array(select i.ledger_observation_id::text from public.prediction_ledger_inputs i
+                               where i.snapshot_id = new.id order by 1)
+        or array(select x from jsonb_array_elements_text(v_state->'provenance'->'membership_ids') x order by 1)
+        is distinct from array(select i.membership_id::text from public.prediction_membership_inputs i
+                               where i.snapshot_id = new.id order by 1)
+        or array(select x from jsonb_array_elements_text(v_state->'provenance'->'tenure_ids') x order by 1)
+        is distinct from array(select i.tenure_id::text from public.prediction_tenure_inputs i
+                               where i.snapshot_id = new.id order by 1) then
+        raise exception 'lineup forecast % input links do not match the provenance of its frozen squad state', new.id;
+      end if;
+
       -- Any stored lineup estimate (predicted, or kept on an abstention) must
-      -- describe this fixture, this team and the frozen squad state.
+      -- describe this fixture, this team and the frozen squad state, and obey
+      -- the kapiloto-lineup-output-v1 contract.
       if new.payload ? 'lineup_estimate' then
         if new.payload->'lineup_estimate'->>'fixture_id' is distinct from new.fixture_id::text then
           raise exception 'lineup estimate fixture does not match the snapshot';
@@ -524,8 +737,16 @@ begin
         if new.outcome = 'predicted' and new.payload->'lineup_estimate'->>'status' is distinct from 'projected' then
           raise exception 'a predicted lineup forecast must carry a projected lineup estimate';
         end if;
-        if jsonb_typeof(new.payload->'lineup_estimate'->'players') is distinct from 'array' then
-          raise exception 'lineup estimate players must be an array';
+        v_issue := private.prediction_lineup_estimate_issue(new.payload->'lineup_estimate');
+        if v_issue is not null then
+          raise exception 'lineup estimate violates its output contract: %', v_issue;
+        end if;
+        -- One output player per frozen candidate (none only when the model
+        -- refused its parameters).
+        if jsonb_array_length(new.payload->'lineup_estimate'->'players') > 0
+          and array(select e->>'canonical_player_id' from jsonb_array_elements(new.payload->'lineup_estimate'->'players') e order by 1)
+          is distinct from array(select x from jsonb_array_elements_text(v_state->'provenance'->'canonical_player_ids') x order by 1) then
+          raise exception 'lineup estimate players are not exactly the frozen squad-state candidates';
         end if;
         -- Every player in the output is bound to the canonical id the model used.
         select (p->>'canonical_player_id')::uuid into v_missing
@@ -748,19 +969,21 @@ begin
     snapshot_id, subject_team_id, squad_state_inputs_contract, squad_state_contract,
     squad_state_builder_version, squad_features_version,
     history_selection_policy_version, availability_normalization_version,
-    target_date_policy, provider_priority, history_max_fixtures, squad_state_sha256
+    target_date_policy, provider_priority, history_max_fixtures, squad_state_sha256,
+    squad_state_canonical_json
   )
   select
     v_id, c.subject_team_id, c.squad_state_inputs_contract, c.squad_state_contract,
     c.squad_state_builder_version, c.squad_features_version,
     c.history_selection_policy_version, c.availability_normalization_version,
-    c.target_date_policy, c.provider_priority, c.history_max_fixtures, c.squad_state_sha256
+    c.target_date_policy, c.provider_priority, c.history_max_fixtures, c.squad_state_sha256,
+    c.squad_state_canonical_json
   from jsonb_to_record(v_inputs->'squad_state_context') as c(
     subject_team_id uuid, squad_state_inputs_contract text, squad_state_contract text,
     squad_state_builder_version text, squad_features_version text,
     history_selection_policy_version text, availability_normalization_version text,
     target_date_policy text, provider_priority text[], history_max_fixtures smallint,
-    squad_state_sha256 text
+    squad_state_sha256 text, squad_state_canonical_json text
   )
   where jsonb_typeof(v_inputs->'squad_state_context') = 'object';
 
@@ -793,12 +1016,16 @@ revoke all on function private.prepare_prediction_v2_input() from public, anon, 
 revoke all on function private.check_prediction_lineup_scope() from public, anon, authenticated;
 revoke all on function private.prediction_canonical_inputs_v2(jsonb) from public, anon, authenticated;
 revoke all on function private.prediction_input_bundle_sha256_v2(jsonb) from public, anon, authenticated;
+revoke all on function private.prediction_json_int_between(jsonb, integer, integer) from public, anon, authenticated;
+revoke all on function private.prediction_lineup_estimate_issue(jsonb) from public, anon, authenticated;
 revoke all on function public.prediction_record_snapshot_v2(jsonb) from public, anon, authenticated;
 
 -- The V2 RPC and the commit-time check run as the invoking service_role and
 -- call these helpers by name.
 grant execute on function private.prediction_canonical_inputs_v2(jsonb) to service_role;
 grant execute on function private.prediction_input_bundle_sha256_v2(jsonb) to service_role;
+grant execute on function private.prediction_json_int_between(jsonb, integer, integer) to service_role;
+grant execute on function private.prediction_lineup_estimate_issue(jsonb) to service_role;
 grant execute on function public.prediction_record_snapshot_v2(jsonb) to service_role;
 
 comment on table public.prediction_membership_inputs is
@@ -806,4 +1033,4 @@ comment on table public.prediction_membership_inputs is
 comment on table public.prediction_tenure_inputs is
   'Exact coach-tenure assertion versions a V2 prediction used (frozen; never first seen after the cutoff).';
 comment on table public.prediction_squad_state_context is
-  'Versions, provider priority, history window and SHA-256 needed to reconstruct the exact 1C squad state a lineup forecast consumed.';
+  'The exact 1C squad state a lineup forecast consumed: versions, provider priority, history window, and the canonical JSON bytes of the state with their SHA-256.';

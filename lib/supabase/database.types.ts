@@ -3601,6 +3601,7 @@ export type Database = {
           snapshot_id: string
           squad_features_version: string
           squad_state_builder_version: string
+          squad_state_canonical_json: string
           squad_state_contract: string
           squad_state_inputs_contract: string
           squad_state_sha256: string
@@ -3615,6 +3616,7 @@ export type Database = {
           snapshot_id: string
           squad_features_version: string
           squad_state_builder_version: string
+          squad_state_canonical_json: string
           squad_state_contract: string
           squad_state_inputs_contract: string
           squad_state_sha256: string
@@ -3629,6 +3631,7 @@ export type Database = {
           snapshot_id?: string
           squad_features_version?: string
           squad_state_builder_version?: string
+          squad_state_canonical_json?: string
           squad_state_contract?: string
           squad_state_inputs_contract?: string
           squad_state_sha256?: string

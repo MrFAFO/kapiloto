@@ -38,19 +38,21 @@ export type PseudoCounts = {
 
 export type LineupPredicate = (typeof REPORTED_LINEUP_PREDICATES)[number];
 type AcceptedStanding = "verified" | "verified_degraded";
+type QuantifiedCategory = Exclude<AvailabilityCategory, "unknown">;
 
 export type LineupParameters = {
   version: typeof LINEUP_PARAMETERS_VERSION;
   start_prior: BetaPrior;
   appearance_prior: BetaPrior;
   /** Uncalibrated baseline values, to be benchmarked and replaced. */
-  availability_probability: Record<Exclude<AvailabilityCategory, "unknown">, number>;
+  availability_probability: Record<QuantifiedCategory, number>;
   lineup_pseudo_counts: Record<AcceptedStanding, Record<LineupPredicate, PseudoCounts>>;
   starter_minutes_fallback: number;
   sub_minutes_fallback: number;
   /** Probabilities are clamped to [epsilon, 1 - epsilon] only for logit stability. */
   logit_epsilon: number;
   solver: { lambda_min: number; lambda_max: number; iterations: number };
+  /** Fixed at 11 by the V1 contract. */
   team_starters: number;
 };
 
@@ -79,6 +81,77 @@ export const DEFAULT_LINEUP_PARAMETERS: LineupParameters = {
   team_starters: 11,
 };
 
+export const LINEUP_TEAM_STARTERS = 11;
+export const LINEUP_SOLVER_MAX_ITERATIONS = 1000;
+/** |sum of start marginals - 11| above this means the solver range did not bracket the root. */
+export const LINEUP_SOLVER_TOLERANCE = 1e-6;
+
+const QUANTIFIED_CATEGORIES: readonly QuantifiedCategory[] = ["available", "doubtful", "unavailable", "suspended", "returning"];
+const STANDINGS: readonly AcceptedStanding[] = ["verified", "verified_degraded"];
+const COUNT_FIELDS: readonly (keyof PseudoCounts)[] = ["start_successes", "start_failures", "appearance_successes", "appearance_failures"];
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+function exactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  return isRecord(value) && Object.keys(value).length === keys.length && keys.every((k) => k in value);
+}
+
+/**
+ * Fail-closed validation of a complete parameter object. Nothing is clamped:
+ * a malformed scientific parameter makes the forecast invalid_input.
+ */
+export function validateLineupParameters(parameters: unknown): string[] {
+  const issues: string[] = [];
+  if (!isRecord(parameters)) return ["parameters must be an object"];
+  const p = parameters as Partial<Record<keyof LineupParameters, unknown>>;
+  if (p.version !== LINEUP_PARAMETERS_VERSION) issues.push("unsupported parameters version");
+  if (p.team_starters !== LINEUP_TEAM_STARTERS) issues.push("team_starters must be 11");
+  for (const name of ["start_prior", "appearance_prior"] as const) {
+    const prior = p[name];
+    if (!exactKeys(prior, ["alpha", "beta"]) || !finite(prior.alpha) || !finite(prior.beta) || prior.alpha <= 0 || prior.beta <= 0) {
+      issues.push(`${name} alpha and beta must be finite and > 0`);
+    }
+  }
+  const availability = p.availability_probability;
+  if (!exactKeys(availability, QUANTIFIED_CATEGORIES)) issues.push("availability_probability must list exactly the five quantified categories");
+  else for (const category of QUANTIFIED_CATEGORIES) {
+    const v = availability[category];
+    if (!finite(v) || v < 0 || v > 1) issues.push(`availability_probability.${category} must be in [0, 1]`);
+  }
+  const counts = p.lineup_pseudo_counts;
+  if (!exactKeys(counts, STANDINGS)) issues.push("lineup_pseudo_counts must list verified and verified_degraded");
+  else for (const standing of STANDINGS) {
+    const byPredicate = counts[standing];
+    if (!exactKeys(byPredicate, REPORTED_LINEUP_PREDICATES)) {
+      issues.push(`lineup_pseudo_counts.${standing} must list starts, on_bench and not_in_squad`);
+      continue;
+    }
+    for (const predicate of REPORTED_LINEUP_PREDICATES) {
+      const c = byPredicate[predicate];
+      if (!exactKeys(c, COUNT_FIELDS) || COUNT_FIELDS.some((f) => !Number.isInteger(c[f]) || (c[f] as number) < 0)) {
+        issues.push(`lineup_pseudo_counts.${standing}.${predicate} must be non-negative integers`);
+      }
+    }
+  }
+  for (const name of ["starter_minutes_fallback", "sub_minutes_fallback"] as const) {
+    const v = p[name];
+    if (!finite(v) || v < 0 || v > 90) issues.push(`${name} must be in [0, 90]`);
+  }
+  if (!finite(p.logit_epsilon) || p.logit_epsilon <= 0 || p.logit_epsilon >= 0.5) issues.push("logit_epsilon must be in (0, 0.5)");
+  const solver = p.solver;
+  if (
+    !exactKeys(solver, ["lambda_min", "lambda_max", "iterations"]) ||
+    !finite(solver.lambda_min) || !finite(solver.lambda_max) || solver.lambda_min >= solver.lambda_max ||
+    !Number.isInteger(solver.iterations) || (solver.iterations as number) < 1 || (solver.iterations as number) > LINEUP_SOLVER_MAX_ITERATIONS
+  ) {
+    issues.push(`solver needs finite lambda_min < lambda_max and 1..${LINEUP_SOLVER_MAX_ITERATIONS} iterations`);
+  }
+  const known = new Set(Object.keys(DEFAULT_LINEUP_PARAMETERS));
+  for (const key of Object.keys(parameters)) if (!known.has(key)) issues.push(`unknown parameter ${key}`);
+  return issues;
+}
+
 export const LINEUP_MODEL_STATUSES = ["projected", "insufficient_candidates", "insufficient_start_capacity", "invalid_input"] as const;
 export type LineupModelStatus = (typeof LINEUP_MODEL_STATUSES)[number];
 
@@ -97,11 +170,13 @@ export type LineupPlayerOutput = {
   };
   availability: {
     status: "quantified" | "unknown" | "conflict";
-    category: Exclude<AvailabilityCategory, "unknown"> | null;
+    category: QuantifiedCategory | null;
     probability_bp: number | null;
   };
   lineup_evidence: {
+    /** Recognized and unrecognized predicates of affirmed accepted reports. */
     accepted_predicates: string[];
+    /** The pseudo-counts actually applied (null when none, conflicting or suppressed). */
     applied: { predicate: LineupPredicate; standing: AcceptedStanding; counts: PseudoCounts } | null;
   };
   raw_start_probability_bp: number;
@@ -124,18 +199,21 @@ export type LineupPlayerOutput = {
 export type LineupForecastOutput = {
   contract_version: typeof LINEUP_OUTPUT_CONTRACT_VERSION;
   model_version: typeof LINEUP_MODEL_VERSION;
-  parameters_version: typeof LINEUP_PARAMETERS_VERSION;
+  parameters_version: string;
   parameters: LineupParameters;
   fixture_id: string;
   subject_team_id: string;
   squad_state_sha256: string;
   status: LineupModelStatus;
+  /** Why the status is invalid_input (empty otherwise). */
+  invalid_reasons: string[];
   /** Team intercept in micro-units (lambda * 1e6, rounded); null unless projected. */
   team_lambda_micro: number | null;
   /** 110000 when projected; null otherwise. */
   team_start_total_bp: number | null;
   /** Exactly 11 canonical ids when projected; empty otherwise. A modal set, not a joint distribution. */
   modal_xi: string[];
+  /** Empty when the parameters are invalid (no per-player output is trustworthy then). */
   players: LineupPlayerOutput[];
   quality: {
     candidate_count: number;
@@ -155,7 +233,7 @@ export type LineupForecastOutput = {
 
 export type LineupModelInput = {
   state: FixtureSquadState;
-  /** SHA-256 of the exact state (canonicalSha256), frozen with the forecast. */
+  /** SHA-256 of the exact canonical state bytes, frozen with the forecast. */
   squad_state_sha256: string;
   /** The state's selected ledger observations (minutes samples are read from them). */
   selected_history: readonly HistoryObservationInput[];
@@ -183,36 +261,40 @@ export function buildLineupForecast(input: LineupModelInput, parameters: LineupP
   const base = {
     contract_version: LINEUP_OUTPUT_CONTRACT_VERSION,
     model_version: LINEUP_MODEL_VERSION,
-    parameters_version: parameters.version,
+    parameters_version: isRecord(parameters) && typeof parameters.version === "string" ? parameters.version : "invalid",
     parameters,
     fixture_id: state.fixture.fixture_id,
     subject_team_id: state.fixture.team_id,
     squad_state_sha256: input.squad_state_sha256,
   } as const;
+  const notProjected = { team_lambda_micro: null, team_start_total_bp: null, modal_xi: [] as string[] };
 
+  const parameterIssues = validateLineupParameters(parameters);
+  if (parameterIssues.length > 0) {
+    return { ...base, status: "invalid_input", invalid_reasons: parameterIssues, ...notProjected, players: [], quality: summarizeQuality([], state) };
+  }
+
+  const invalid: string[] = [];
+  if (!/^[0-9a-f]{64}$/.test(input.squad_state_sha256)) invalid.push("malformed squad-state hash");
   const selectedIds = [...input.selected_history.map((o) => o.observation_id)].sort();
   const expectedIds = [...state.provenance.ledger_observation_ids].sort();
-  const valid =
-    parameters.version === LINEUP_PARAMETERS_VERSION &&
-    /^[0-9a-f]{64}$/.test(input.squad_state_sha256) &&
-    selectedIds.length === expectedIds.length &&
-    selectedIds.every((id, i) => id === expectedIds[i]);
+  if (selectedIds.length !== expectedIds.length || selectedIds.some((id, i) => id !== expectedIds[i])) invalid.push("selected history is not the state's selection");
 
   const working = state.candidates.map((candidate) => assessPlayer(candidate, input.selected_history, parameters));
   const quality = summarizeQuality(working, state);
-  if (!valid) {
-    return { ...base, status: "invalid_input", team_lambda_micro: null, team_start_total_bp: null, modal_xi: [], players: working.map((w) => w.output), quality };
-  }
+  const players = () => working.map((w) => w.output);
+  if (invalid.length > 0) return { ...base, status: "invalid_input", invalid_reasons: invalid, ...notProjected, players: players(), quality };
 
-  const n = parameters.team_starters;
+  const n = LINEUP_TEAM_STARTERS;
   let status: LineupModelStatus = "projected";
   if (working.length < n) status = "insufficient_candidates";
   else if (working.reduce((sum, w) => sum + w.cap_bp, 0) < n * 10000) status = "insufficient_start_capacity";
-  if (status !== "projected") {
-    return { ...base, status, team_lambda_micro: null, team_start_total_bp: null, modal_xi: [], players: working.map((w) => w.output), quality };
-  }
+  if (status !== "projected") return { ...base, status, invalid_reasons: [], ...notProjected, players: players(), quality };
 
   const { lambda, probabilities } = projectTeamStarts(working.map((w) => ({ raw: w.raw_start, cap: w.cap })), n, parameters);
+  if (Math.abs(probabilities.reduce((a, b) => a + b, 0) - n) > LINEUP_SOLVER_TOLERANCE) {
+    return { ...base, status: "invalid_input", invalid_reasons: ["solver range does not bracket the team intercept"], ...notProjected, players: players(), quality };
+  }
   const startBp = allocateBasisPoints(
     working.map((w, i) => ({ id: w.candidate.canonical_player_id, value: probabilities[i] * 10000, cap: w.cap_bp })),
     n * 10000,
@@ -222,7 +304,7 @@ export function buildLineupForecast(input: LineupModelInput, parameters: LineupP
     .sort((a, b) => b.bp - a.bp || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const modal = new Set(ranked.slice(0, n).map((r) => r.id));
 
-  const players = working.map((w, i) => {
+  const projected = working.map((w, i) => {
     const start = startBp[i];
     const appearance = Math.max(start, Math.min(w.cap_bp, toBp(w.raw_appearance)));
     const minutes = (start / 10000) * w.starter_minutes + (Math.max(0, appearance - start) / 10000) * w.sub_minutes;
@@ -237,10 +319,11 @@ export function buildLineupForecast(input: LineupModelInput, parameters: LineupP
   return {
     ...base,
     status,
+    invalid_reasons: [],
     team_lambda_micro: Math.round(lambda * 1e6),
     team_start_total_bp: startBp.reduce((a, b) => a + b, 0),
     modal_xi: [...modal].sort(),
-    players,
+    players: projected,
     quality,
   };
 }
@@ -250,7 +333,7 @@ function assessPlayer(candidate: SquadCandidate, history: readonly HistoryObserv
   const conflict_flags: LineupPlayerOutput["conflict_flags"] = [];
   const quality_flags: string[] = [];
 
-  // Availability (accepted 1C evidence only).
+  // Availability family (accepted 1C evidence only).
   const availability = candidate.availability;
   let availabilityStatus: LineupPlayerOutput["availability"]["status"] = "unknown";
   let availabilityProbability: number | null = null;
@@ -263,31 +346,37 @@ function assessPlayer(candidate: SquadCandidate, history: readonly HistoryObserv
     if (availability.accepted.some((e) => e.resolution_status === "verified_degraded")) quality_flags.push("availability_verified_degraded");
   }
 
-  // Reported lineups (accepted 1C evidence only); conflicting predicates apply nothing.
-  const accepted = candidate.reported_lineup.accepted;
-  const predicates = [...new Set(accepted.map((e) => e.predicate))].sort();
+  // Reported-lineup family: affirmed accepted reports only. A negated report
+  // ("X will not start") is never guessed into a predicate, exactly as 1C
+  // keeps negated availability claims unknown.
+  const acceptedReports = candidate.reported_lineup.accepted;
+  const affirmed = acceptedReports.filter((e) => e.polarity === "affirmed");
+  if (affirmed.length !== acceptedReports.length) quality_flags.push("negated_lineup_report_ignored");
+  const predicates = [...new Set(affirmed.map((e) => e.predicate))].sort();
   const known = predicates.filter((p): p is LineupPredicate => (REPORTED_LINEUP_PREDICATES as readonly string[]).includes(p));
   if (known.length !== predicates.length) quality_flags.push("unrecognized_lineup_predicate");
-  let applied: LineupPlayerOutput["lineup_evidence"]["applied"] = null;
+  let candidateCounts: LineupPlayerOutput["lineup_evidence"]["applied"] = null;
   if (known.length > 1) {
     conflict_flags.push("lineup_evidence_conflict");
   } else if (known.length === 1) {
-    const standing: AcceptedStanding = accepted.some((e) => e.predicate === known[0] && e.resolution_status === "verified") ? "verified" : "verified_degraded";
-    applied = { predicate: known[0], standing, counts: parameters.lineup_pseudo_counts[standing][known[0]] };
+    const standing: AcceptedStanding = affirmed.some((e) => e.predicate === known[0] && e.resolution_status === "verified") ? "verified" : "verified_degraded";
+    candidateCounts = { predicate: known[0], standing, counts: parameters.lineup_pseudo_counts[standing][known[0]] };
   }
 
-  // Cross-family contradiction: out/suspended but reported in the squad.
-  const cross =
-    availabilityStatus === "quantified" &&
-    (availability.accepted_category === "unavailable" || availability.accepted_category === "suspended") &&
-    applied !== null &&
-    (applied.predicate === "starts" || applied.predicate === "on_bench");
+  // Cross-family contradiction, decided on the RAW accepted evidence sets (not
+  // on what survived each family's summarization): any accepted
+  // unavailable/suspended claim together with any affirmed accepted
+  // starts/on_bench report. It holds even when a family is itself conflicted.
+  const hasUnavailableLikeAccepted = availability.accepted.some((e) => e.category === "unavailable" || e.category === "suspended");
+  const hasSquadPresenceReportAccepted = affirmed.some((e) => e.predicate === "starts" || e.predicate === "on_bench");
+  const cross = hasUnavailableLikeAccepted && hasSquadPresenceReportAccepted;
   if (cross) {
     conflict_flags.push("cross_evidence_conflict");
     adjustments.push("claim_adjustments_suppressed_cross_conflict");
   }
-  const counts = !cross && applied ? applied.counts : null;
-  if (counts) adjustments.push(`lineup_report_${applied!.predicate}_${applied!.standing}`);
+  const applied = cross ? null : candidateCounts;
+  const counts = applied?.counts ?? null;
+  if (applied) adjustments.push(`lineup_report_${applied.predicate}_${applied.standing}`);
 
   // B0 posteriors (+ M1 pseudo-counts).
   const f = candidate.history;
@@ -311,14 +400,16 @@ function assessPlayer(candidate: SquadCandidate, history: readonly HistoryObserv
   if (cap < 1) adjustments.push("availability_cap");
   const capBp = Math.floor(cap * 10000 + 1e-9);
 
-  // Regulation minutes samples from explicit history rows (capped at 90).
+  // Conditional regulation minutes from role-known rows only (capped at 90):
+  // starter rows with explicit minutes; bench rows with appeared = true and
+  // explicit minutes. lineup_role = unknown enters neither family.
   const starterSamples: number[] = [];
   const subSamples: number[] = [];
   for (const observation of history) {
     const row = observation.players.find((p) => p.canonical_player_id === candidate.canonical_player_id);
     if (!row || row.minutes_played === null) continue;
     if (row.lineup_role === "starter") starterSamples.push(Math.min(row.minutes_played, 90));
-    else if (row.appeared === true) subSamples.push(Math.min(row.minutes_played, 90));
+    else if (row.lineup_role === "bench" && row.appeared === true) subSamples.push(Math.min(row.minutes_played, 90));
   }
   const mean = (values: number[]) => values.reduce((a, b) => a + b, 0) / values.length;
   const starterMinutes = starterSamples.length > 0 ? mean(starterSamples) : parameters.starter_minutes_fallback;
@@ -364,7 +455,8 @@ function assessPlayer(candidate: SquadCandidate, history: readonly HistoryObserv
 /**
  * One intercept lambda for the team: p_i = min(cap_i, sigmoid(logit(raw_i) +
  * lambda)), with sum p_i = n. The sum is monotone in lambda, so bisection is
- * deterministic. Caller guarantees n candidates and sum(caps) >= n.
+ * deterministic. Caller guarantees n candidates and sum(caps) >= n, and checks
+ * that the returned marginals actually sum to n (the range brackets the root).
  */
 export function projectTeamStarts(
   players: readonly { raw: number; cap: number }[],
@@ -423,7 +515,7 @@ export function allocateBasisPoints(players: readonly { id: string; value: numbe
 function summarizeQuality(working: readonly Working[], state: FixtureSquadState): LineupForecastOutput["quality"] {
   const has = (w: Working, flag: LineupPlayerOutput["conflict_flags"][number]) => w.output.conflict_flags.includes(flag);
   return {
-    candidate_count: working.length,
+    candidate_count: state.candidates.length,
     start_known_samples: working.reduce((n, w) => n + w.output.history.start_trials, 0),
     appearance_known_samples: working.reduce((n, w) => n + w.output.history.appearance_trials, 0),
     players_start_prior_only: working.filter((w) => w.output.history.start_prior_only).length,
@@ -438,3 +530,68 @@ function summarizeQuality(working: readonly Working[], state: FixtureSquadState)
   };
 }
 
+// ---------------------------------------------------------------------------
+// Output contract validation (kapiloto-lineup-output-v1)
+// ---------------------------------------------------------------------------
+
+const isBp = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 10000;
+
+/**
+ * Validates a stored lineup estimate against the V1 output contract (not the
+ * formula). `expected` pins it to the snapshot it is recorded with.
+ */
+export function validateLineupForecastOutput(
+  output: LineupForecastOutput,
+  expected: { fixtureId: string; subjectTeamId: string; squadStateSha256: string },
+): string[] {
+  const issues: string[] = [];
+  if (output.contract_version !== LINEUP_OUTPUT_CONTRACT_VERSION) issues.push("unsupported output contract");
+  if (output.model_version !== LINEUP_MODEL_VERSION) issues.push("unsupported model version");
+  if (output.parameters_version !== LINEUP_PARAMETERS_VERSION && output.status !== "invalid_input") issues.push("unsupported parameters version");
+  if (!(LINEUP_MODEL_STATUSES as readonly string[]).includes(output.status)) issues.push("unknown status");
+  if (output.fixture_id !== expected.fixtureId.toLowerCase()) issues.push("fixture does not match the snapshot");
+  if (output.subject_team_id !== expected.subjectTeamId.toLowerCase()) issues.push("subject team does not match the snapshot");
+  if (output.squad_state_sha256 !== expected.squadStateSha256) issues.push("squad-state hash does not match the frozen context");
+  if (!Array.isArray(output.players) || !Array.isArray(output.modal_xi)) return [...issues, "players and modal_xi must be arrays"];
+
+  const ids = output.players.map((p) => p.canonical_player_id);
+  if (new Set(ids).size !== ids.length) issues.push("duplicate player ids");
+  for (const p of output.players) {
+    if (!isBp(p.raw_start_probability_bp) || !isBp(p.raw_appearance_probability_bp) || !isBp(p.start_cap_bp)) issues.push(`player ${p.canonical_player_id} has out-of-range raw values or cap`);
+  }
+
+  if (output.status === "projected") {
+    if (output.team_start_total_bp !== LINEUP_TEAM_STARTERS * 10000) issues.push("team start total must be 110000");
+    const modal = new Set(output.modal_xi);
+    if (output.modal_xi.length !== LINEUP_TEAM_STARTERS || modal.size !== LINEUP_TEAM_STARTERS) issues.push("modal XI must hold exactly 11 unique players");
+    for (const id of modal) if (ids.filter((x) => x === id).length !== 1) issues.push(`modal XI player ${id} is not exactly one output player`);
+    let sum = 0;
+    for (const p of output.players) {
+      const start = p.projected_start_probability_bp;
+      const appearance = p.appearance_probability_bp;
+      const minutes = p.expected_regulation_minutes_tenths;
+      if (p.in_modal_xi !== modal.has(p.canonical_player_id)) issues.push(`player ${p.canonical_player_id} in_modal_xi disagrees with modal_xi`);
+      if (!isBp(start)) { issues.push(`player ${p.canonical_player_id} projected start must be an integer in 0..10000`); continue; }
+      sum += start;
+      if (start > p.start_cap_bp) issues.push(`player ${p.canonical_player_id} starts above the cap`);
+      if (!isBp(appearance)) issues.push(`player ${p.canonical_player_id} appearance must be an integer in 0..10000`);
+      else {
+        if (appearance < start) issues.push(`player ${p.canonical_player_id} appearance is below start`);
+        if (appearance > p.start_cap_bp) issues.push(`player ${p.canonical_player_id} appearance exceeds the cap`);
+      }
+      if (!Number.isInteger(minutes) || (minutes as number) < 0 || (minutes as number) > 900) issues.push(`player ${p.canonical_player_id} expected minutes must be an integer in 0..900 tenths`);
+    }
+    if (sum !== LINEUP_TEAM_STARTERS * 10000) issues.push("player projected starts must sum to 110000");
+    if (!Number.isInteger(output.team_lambda_micro)) issues.push("team intercept must be an integer");
+  } else {
+    if (output.modal_xi.length !== 0) issues.push("only a projected forecast has a modal XI");
+    if (output.team_start_total_bp !== null || output.team_lambda_micro !== null) issues.push("only a projected forecast has team totals");
+    for (const p of output.players) {
+      if (p.projected_start_probability_bp !== null || p.appearance_probability_bp !== null || p.expected_regulation_minutes_tenths !== null || p.in_modal_xi) {
+        issues.push(`player ${p.canonical_player_id} has projected values on a ${output.status} forecast`);
+      }
+    }
+  }
+  if (output.status === "invalid_input" ? output.invalid_reasons.length === 0 : output.invalid_reasons.length !== 0) issues.push("invalid_reasons must be given exactly for invalid_input");
+  return issues;
+}

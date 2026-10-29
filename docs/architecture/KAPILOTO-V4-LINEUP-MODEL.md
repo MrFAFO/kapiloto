@@ -16,14 +16,17 @@ wired into V3, and not a joint XI model.
 
 Each layer is separate and testable on its own:
 
-1. **Load** raw, cutoff-filtered inputs: `loadSquadStateInputs` →
-   `public.squad_state_inputs_as_of` (1C; all leakage filtering happens in the
-   database).
+1. **Load** raw, cutoff-filtered inputs: `loadLineupSquadInputs` →
+   `public.squad_state_inputs_as_of(fixture, team, cutoff, history_max_fixtures)`
+   (1C; all leakage filtering happens in the database). The history window
+   passed to the read is the policy's `maxFixtures`, the same value the
+   registry re-runs the read with at commit.
 2. **State**: the pure `buildFixtureSquadState(inputs, policy)` (1C).
 3. **Model**: the pure `buildLineupForecast(lineupModelInput(inputs, state), parameters)`.
 4. **Payload**: the pure `buildLineupForecastSnapshot(...)` →
    `buildPredictionSnapshotV2Payload(...)`.
-5. **Persist**: `recordLineupForecastSnapshot(rpc, snapshot)` validates and
+5. **Persist**: `recordLineupForecastSnapshot(rpc, snapshot)` validates the
+   snapshot, the frozen state artifact and the lineup output contract, then
    calls `public.prediction_record_snapshot_v2` (service_role only).
 
 ## Prediction Registry V2
@@ -69,7 +72,7 @@ V2 snapshots use every V1 link family and add:
 | --- | --- | --- |
 | `prediction_membership_inputs` | `(snapshot_id, membership_id → team_player_memberships, input_role, input_first_seen_at)` | membership version first seen ≤ cutoff; lineup: subject team only, role `squad_membership`; match outcome: a fixture team |
 | `prediction_tenure_inputs` | `(snapshot_id, tenure_id → team_coach_tenures, input_role, input_first_seen_at)` | tenure version first seen ≤ cutoff; lineup: subject team only, role `squad_coach_tenure`; match outcome: a fixture team |
-| `prediction_squad_state_context` | one row per lineup forecast | the versions, provider priority, history window and squad-state SHA-256 (below) |
+| `prediction_squad_state_context` | one row per lineup forecast | the versions, provider priority, history window, the exact squad-state bytes and their SHA-256 (below) |
 
 For a lineup forecast, the existing families are constrained too (trigger
 `check_prediction_lineup_scope`, after the 1B cutoff checks):
@@ -98,10 +101,42 @@ For a lineup forecast, the existing families are constrained too (trigger
 `buildLineupForecastSnapshot` freezes everything whose presence could change
 the 1C state: every considered ledger observation (selected and
 alternatives), every membership row the as-of read returned, every
-target-fixture claim with its exact resolution, every tenure, the context and
-the bindings.
+target-fixture claim with its exact resolution, every tenure, the context, the
+state artifact and the bindings.
 
-### Squad-state context and hash
+### Complete 1C capture (database-authoritative)
+
+Individually valid links are not enough: a caller could omit an inconvenient
+row and still get a valid hash for the smaller bundle. So at commit, for every
+lineup forecast, the database re-runs
+
+```
+public.squad_state_inputs_as_of(fixture_id, subject_team_id, research_cutoff_at, history_max_fixtures)
+```
+
+and requires the frozen link sets to equal what it returns, exactly:
+
+* history observation ids = all ledger links (selected and alternatives);
+* membership ids = membership links;
+* tenure ids = tenure links;
+* `(resolution_claim_id ?? claim_id, resolution_id)` pairs = claim links (the
+  same claim-id rule as the TypeScript snapshot builder).
+
+Any omitted provider alternative, membership, tenure, claim or resolution,
+and any extra valid row the read would not return (for example history
+outside the frozen window), is refused. The check runs inside the recording
+transaction (the deferred bundle constraint is forced before the RPC returns),
+so it is atomic with the write. Because every compared input is first seen at
+or before the cutoff, re-running the read at commit returns the same raw rows
+as when the forecast was built; a canonical-claim regrouping by a merge in
+between fails closed.
+
+The frozen state artifact is cross-checked against the same links: its
+`provenance.ledger_observation_ids` must equal the `squad_history_selected`
+links, and its `considered_observation_ids`, `membership_ids` and
+`tenure_ids` must equal the ledger, membership and tenure links.
+
+### Squad-state context, exact artifact and replay
 
 `prediction_squad_state_context` stores `subject_team_id`,
 `squad_state_inputs_contract` (`kapiloto-squad-state-inputs-v1`),
@@ -110,31 +145,79 @@ the bindings.
 `history_selection_policy_version`, `availability_normalization_version`,
 `target_date_policy` (`kapiloto-target-date-utc-v1`), the explicit
 `provider_priority` array (1-20 distinct provider keys), `history_max_fixtures`
-(1-10) and `squad_state_sha256`. Version columns only accept the current 1C
-versions.
+(1-10), `squad_state_canonical_json` and `squad_state_sha256`. Version columns
+only accept the current 1C versions.
 
-`squad_state_sha256 = SHA-256(canonicalJson(FixtureSquadState))`, where
-canonical JSON sorts object keys at every level, keeps array order, drops
-`undefined` and refuses non-finite numbers (`lib/kapiloto-v4/canonical-json.ts`).
+**The exact state bytes are frozen.** `squad_state_canonical_json` is
+`canonicalJson(state)`, the exact bytes the model consumed. Canonical JSON
+sorts object keys at every level, keeps array order, drops `undefined` and
+refuses non-finite numbers (`lib/kapiloto-v4/canonical-json.ts`). The column
+is `text`, never `jsonb`, so no reserialization can change the bytes. It is
+bounded (2 B to 1 MiB), and a table check requires
+`squad_state_sha256 = SHA-256(convert_to(squad_state_canonical_json, 'UTF8'))`.
+The lineup payload must reference the same SHA. On insert, a trigger parses
+the artifact and requires it to describe this snapshot and context: fixture,
+subject team, cutoff, contract/builder/inputs/features/normalization
+versions, target-date policy, history-selection policy version, provider
+priority and window.
 
-The database cannot run the TypeScript builder, so it does not recompute the
-state. At commit it verifies that the stored payload describes the frozen
-context: `lineup_estimate.fixture_id` = the snapshot fixture,
-`lineup_estimate.subject_team_id` = the subject team,
-`lineup_estimate.squad_state_sha256` = the context hash, `status = 'projected'`
-when predicted, and every `lineup_estimate.players[].canonical_player_id` has
-an identity binding. These checks apply whenever a `lineup_estimate` is
-stored, including on an abstention.
+**Historical replay** does not depend on today's identities:
 
-**Reconstruction** is done in TypeScript: `verifySquadStateReconstruction(inputs, policy, sha)`
-rebuilds the state from inputs read with `squad_state_inputs_as_of` at the
-snapshot's cutoff and the context's policy, and compares hashes. The as-of
-read at the same cutoff returns exactly the frozen link set (asserted in
-`registry-v2-db.test.ts`). One limit applies: as-of reads resolve identities
-retroactively (D-050) and group claims canonically (D-052). After a later
-identity merge, the rebuilt state uses the survivor and its hash differs on
-purpose. The frozen bindings and observed ids still prove which ids the live
-model used.
+* `parseSquadStateArtifact(text, sha)` retrieves the exact state. It throws
+  unless the bytes hash to the frozen SHA and are canonical JSON.
+* `lineupReplayInput(frozenState, sha, history)` pairs it with the
+  forecast's selected ledger observations: immutable rows, read again by id
+  through the as-of read. Each row's canonical player id is taken from the
+  **frozen** state (the candidate whose observed ids contain the row's raw
+  id), not from today's D-050 survivors.
+* `buildLineupForecast(replayInput, storedEstimate.parameters)` then
+  reproduces the stored `lineup_estimate` exactly. The identity-merge test
+  proves this after a later A→B merge.
+
+Current-day reads are separate. `verifySquadStateReconstruction` rebuilds a
+state from today's 1C inputs. It matches the artifact only while no later
+identity merge changed what the as-of read resolves; after a merge it differs
+on purpose, and the artifact remains the record.
+
+The database cannot run the TypeScript builder, so it verifies consistency,
+not derivation. At commit it checks:
+
+* complete capture;
+* artifact provenance;
+* the stored `lineup_estimate`: fixture, subject team and squad-state hash
+  match; `status = 'projected'` when predicted; the output contract
+  (below); the output players are exactly the artifact's
+  `provenance.canonical_player_ids` (none only on invalid parameters); and
+  every output player has an identity binding.
+
+These checks apply whenever a `lineup_estimate` is stored, including on an
+abstention.
+
+### Stored output contract (database)
+
+`private.prediction_lineup_estimate_issue` enforces the
+`kapiloto-lineup-output-v1` contract for direct service_role writes. It
+validates the stored scientific record, not the model formula:
+
+* output contract `kapiloto-lineup-output-v1`, model
+  `kapiloto-lineup-model-v1`, a known status;
+* `players` and `modal_xi` are arrays; every player has a canonical UUID;
+  no duplicate players; raw probabilities and start caps are integers in
+  0..10000.
+
+When `projected`:
+
+* parameters `kapiloto-lineup-parameters-v1`;
+* `team_start_total_bp = 110000` and an integer team intercept;
+* exactly 11 unique modal ids, each exactly one output player, and every
+  `in_modal_xi` flag agreeing with `modal_xi`;
+* projected start and appearance are integers in 0..10000 and minutes
+  integers in 0..900 tenths;
+* start ≤ cap and start ≤ appearance ≤ cap;
+* player starts sum to exactly 110000.
+
+Otherwise: no modal XI, no team total or intercept, and every projected
+start, appearance, minutes value is null with `in_modal_xi` false.
 
 ### Canonicalization and hashing
 
@@ -145,8 +228,8 @@ model used.
   `squad_state_context` object (or null). Unknown keys are refused at every
   level. `private.prediction_input_bundle_sha256_v2` hashes it.
 * The commit-time check rebuilds the bundle from the link rows (including the
-  three new tables) and compares it with the stored hash, dispatched by
-  contract version.
+  three new tables and the artifact text) and compares it with the stored
+  hash, dispatched by contract version.
 * The output hash is the unchanged `private.prediction_output_sha256`.
 
 ### RPC, idempotency, atomicity
@@ -167,15 +250,16 @@ the squad-state hash, identity bindings, or the lineup payload.
 Direct writes cannot bypass this. Links added after the snapshot statement
 are refused as sealed. V2 link rows on V1 snapshots are refused. A
 single-statement write of snapshot plus links is still verified at commit
-(context present, hash of links). All new rows are immutable (no update,
-delete or truncate).
+(context present, complete capture, artifact, output contract, hash of
+links). All new rows are immutable (no update, delete or truncate).
 
 ### Security
 
 The three new tables have RLS enabled, no policies, and no
 `anon`/`authenticated`/`PUBLIC` grants. Every new function is revoked from
-app roles. Only `prediction_record_snapshot_v2` and the two V2 canonical
-helpers (called by name from the invoker RPC and check) are granted to
+app roles. Only `prediction_record_snapshot_v2`, the two V2 canonical
+helpers and the two output-contract helpers (called by name from the invoker
+RPC and check, which also calls `squad_state_inputs_as_of`) are granted to
 `service_role`. Nothing is `SECURITY DEFINER`. Tests: `security.test.ts`,
 including an end-to-end V2 recording as `service_role`.
 
@@ -190,10 +274,35 @@ deterministic: no database, no randomness, no clock, no model calls.
 
 `projected`; `insufficient_candidates` (fewer than 11 candidates);
 `insufficient_start_capacity` (sum of integer caps < 110000 bp);
-`invalid_input` (wrong parameter version, malformed squad-state hash, or
-`selected_history` not exactly the state's selected observations). On any
+`invalid_input` (invalid parameters, malformed squad-state hash,
+`selected_history` not exactly the state's selected observations, or a solver
+range that does not bracket the intercept), with `invalid_reasons`. On any
 non-projected status there is no team intercept, no modal XI, and projected,
-appearance and minutes values are null. Raw per-player values are kept.
+appearance and minutes values are null. Raw per-player values are kept,
+except when the parameters themselves are invalid: then `players` is empty,
+because no per-player value computed from them is trustworthy.
+
+### Parameter validation (fail closed)
+
+`validateLineupParameters` checks the complete object, and any failure makes
+the forecast `invalid_input`. Nothing is clamped.
+
+* `version` = `kapiloto-lineup-parameters-v1` and `team_starters` = 11 (a V1
+  invariant; the model always projects 11).
+* Priors: alpha and beta finite and > 0.
+* Availability: exactly the five quantified categories, each finite in [0, 1].
+* Pseudo-counts: both standings × three predicates × four counts, each a
+  non-negative integer. The V1 values are integers, and halving them for
+  `verified_degraded` stays integral.
+* Minutes fallbacks: finite, in [0, 90].
+* Solver: `0 < logit_epsilon < 0.5`, finite `lambda_min < lambda_max`, and an
+  integer number of iterations in 1..1000.
+* No unknown keys.
+
+After solving, the start marginals must sum to 11 within 1e-6, so a range
+that does not bracket the root is refused rather than projected. Valid
+injected parameters remain possible; their output still satisfies the V1
+output contract.
 
 ### B0: historical Beta-Binomial posterior
 
@@ -229,7 +338,10 @@ the model. `verified_degraded` evidence is used and flagged
 
 ### M1: reported-lineup pseudo-counts
 
-From accepted (`verified`/`verified_degraded`) `expected_lineup` claims:
+From accepted (`verified`/`verified_degraded`), **affirmed** `expected_lineup`
+claims. A negated report ("will not start") is never guessed into a predicate.
+It is ignored and flagged `negated_lineup_report_ignored`, just as 1C keeps
+negated availability claims unknown.
 
 | Predicate | verified | verified_degraded |
 | --- | --- | --- |
@@ -246,12 +358,23 @@ If more than one predicate is accepted for a player: no adjustment,
 
 * `availability_conflict`: no availability probability, no cap.
 * `lineup_evidence_conflict`: no claim adjustment.
-* `cross_evidence_conflict`: accepted `unavailable`/`suspended` together with
-  an applied `starts`/`on_bench` report. Claim adjustments **and** the cap are
-  suppressed, and the player falls back to B0
-  (`claim_adjustments_suppressed_cross_conflict`). `unavailable`/`suspended`
-  with `not_in_squad`, or `doubtful` with `starts`, is consistent and both
-  apply.
+* `cross_evidence_conflict` is decided on the **raw accepted evidence sets**,
+  not on what survived each family's summarization:
+  `hasUnavailableLikeAccepted` (any accepted availability evidence normalized
+  to `unavailable` or `suspended`) **and** `hasSquadPresenceReportAccepted`
+  (any affirmed accepted `starts` or `on_bench` report). It holds even when
+  availability also has an accepted `available` claim, when the reports also
+  include `not_in_squad` or both `starts` and `on_bench`, and when either
+  per-family conflict is already set. When it holds:
+  * every evidence item and every per-family flag is kept;
+  * all lineup pseudo-counts and the availability cap are suppressed
+    (`claim_adjustments_suppressed_cross_conflict`, `applied = null`);
+  * raw start and appearance revert to B0 history only;
+  * availability is still displayed by its own family semantics, but never
+    caps.
+
+  `unavailable`/`suspended` with only `not_in_squad`, or `doubtful` with
+  `starts`, is consistent, and both families apply.
 
 ### Start cap
 
@@ -293,16 +416,26 @@ integer bp. There is deliberately **no bench or squad-selection probability**
 
 ### Regulation minutes (0-90)
 
-* Starter mean: mean of explicit `minutes_played` on the player's selected
-  history rows with `lineup_role = starter`, each capped at 90. Fallback 75.
-* Substitute mean: mean of explicit `minutes_played` on non-starter rows with
-  `appeared = true`, capped at 90. Fallback 18.
+Conditional minutes use only role-known observations (1C knownness):
+
+* Starter mean: explicit `minutes_played` on selected history rows with
+  `lineup_role = starter`, each capped at 90. Fallback 75.
+* Substitute mean: explicit `minutes_played` on rows with `lineup_role = bench`
+  and `appeared = true`, capped at 90. Fallback 18.
+* `lineup_role = unknown` enters neither family, even with `appeared = true`
+  and stated minutes.
 * `E[min] = p_start · E_start + max(0, p_app − p_start) · E_sub`, stored in
   tenths, clamped to 0..900; null unless projected.
 * Sample counts and `used_*_minutes_fallback` flags are stored. Unknown
   minutes are never zero.
 
 ### Output and quality
+
+`validateLineupForecastOutput(output, {fixtureId, subjectTeamId, squadStateSha256})`
+is the TypeScript form of the stored-output contract. On top of the database
+rules above, it checks the parameter version and `invalid_reasons`
+consistency. `recordLineupForecastSnapshot` runs it, and checks that the
+output players are the artifact's candidates, before calling the RPC.
 
 Per player: canonical and observed ids, presence, history counts
 (successes/trials, minutes sample counts), availability status/category/bp,
@@ -342,16 +475,19 @@ Each returns the sample count. Unknown truth is excluded, never scored as zero.
 * It also refuses stale or non-history versions that the as-of read would
   never return: superseded ledger, membership, tenure or resolution versions,
   withdrawals, retractions and upcoming-match captures.
-* The squad-state hash ties the payload to the frozen context, and the model
-  refuses a `selected_history` that is not the state's.
+* The registry re-runs the 1C as-of read at commit and refuses any frozen set
+  that differs from it (complete capture).
+* The squad-state hash ties the payload to the frozen artifact bytes, and the
+  model refuses a `selected_history` that is not the state's.
 
 ## Identity merges
 
 Outputs carry D-050 canonical ids; each player is bound with its canonical id
 (active at recording time; merged ids are refused) and an observed raw id
 when it differs. A snapshot recorded before a merge keeps its bindings and
-replays as `unchanged`. A re-run after the merge binds the survivor and
-yields a different squad-state hash.
+replays as `unchanged`. Its frozen artifact still hashes to its SHA, and
+replaying it reproduces the stored forecast exactly. A re-run after the merge
+binds the survivor and yields a different squad-state hash.
 
 ## Known limitations
 
@@ -362,8 +498,11 @@ yields a different squad-state hash.
   for such players with that flag.
 * No position, formation or joint-XI structure; no bench probability; no
   coach effect; no time decay inside the 10-match window.
-* The database verifies hash consistency and as-of version integrity, not
-  the derivation itself.
+* The database verifies complete capture, artifact/provenance consistency,
+  hash consistency, as-of version integrity and the output contract, not the
+  derivation itself. A consistently forged state that keeps the same header,
+  provenance and candidate ids is detectable only by a TypeScript replay or
+  rebuild.
 * Deterministic for a given runtime. `Math.exp`/`Math.log` are not required by
   the language to be correctly rounded, so a different JavaScript engine could
   in principle shift a basis point. The stored payload, not a recomputation, is

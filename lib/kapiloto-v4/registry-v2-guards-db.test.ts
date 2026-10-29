@@ -3,7 +3,16 @@ import test from "node:test";
 
 import type { PGlite } from "@electric-sql/pglite";
 
-import { buildLineupForecastSnapshot } from "./lineup-snapshot";
+import { canonicalJson, sha256Hex } from "./canonical-json";
+import { buildLineupForecast, type LineupForecastOutput } from "./lineup-model";
+import {
+  buildLineupForecastSnapshot,
+  lineupReplayInput,
+  loadLineupSquadInputs,
+  parseSquadStateArtifact,
+  squadStateArtifact,
+  verifySquadStateReconstruction,
+} from "./lineup-snapshot";
 import { buildMatchLedgerWithdrawalPayload } from "./match-ledger";
 import { buildPredictionSnapshotPayload, buildPredictionSnapshotV2Payload, type PredictionSnapshotV2Input } from "./prediction-registry";
 import { basePrediction, recordClaim, recordPrediction, recordResolution } from "./test-support/knowledge-fixtures";
@@ -19,6 +28,7 @@ import {
   type LineupWorld,
 } from "./test-support/lineup-fixtures";
 import { insertMembership, membershipKey } from "./test-support/roster-fixtures";
+import { historySelectionPolicy } from "./squad-state";
 
 /**
  * Prediction Registry V2 guards: contract separation, leakage, team scope,
@@ -163,7 +173,7 @@ test("a lineup forecast is scoped to its subject team, the target fixture's clai
   // The context must describe this team with a well-formed provider priority.
   await assert.rejects(attempt((p) => { p.inputs.squad_state_context.subject_team_id = away.teamId; }), /context team does not match/);
   await assert.rejects(attempt((p) => { p.inputs.squad_state_context.provider_priority = ["sportmonks", "sportmonks"]; }), /distinct provider keys/);
-  await assert.rejects(attempt((p) => { p.inputs.squad_state_context.squad_state_contract = "kapiloto-squad-state-v2"; }), /check constraint/);
+  await assert.rejects(attempt((p) => { p.inputs.squad_state_context.squad_state_contract = "kapiloto-squad-state-v2"; }), /check constraint|does not describe this snapshot/);
   await assert.rejects(attempt((p) => { p.inputs.squad_state_context.surprise = 1; }), /unknown squad-state context field: surprise/);
   await assert.rejects(attempt((p) => { p.inputs.memberships[0].surprise = 1; }), /unknown membership input field: surprise/);
 
@@ -187,7 +197,13 @@ test("the lineup payload must match its frozen squad-state context, fixture, tea
   const otherHash = "f".repeat(64);
 
   await assert.rejects(attempt((p) => { p.payload.lineup_estimate.squad_state_sha256 = otherHash; }), /hash does not match its frozen context/);
-  await assert.rejects(attempt((p) => { p.inputs.squad_state_context.squad_state_sha256 = otherHash; }), /hash does not match its frozen context/);
+  // A hash that does not hash the frozen artifact bytes is refused on its own,
+  // even when the payload is forged to the same hash.
+  await assert.rejects(attempt((p) => { p.inputs.squad_state_context.squad_state_sha256 = otherHash; }), /prediction_squad_state_context_check/);
+  await assert.rejects(attempt((p) => {
+    p.inputs.squad_state_context.squad_state_sha256 = otherHash;
+    p.payload.lineup_estimate.squad_state_sha256 = otherHash;
+  }), /prediction_squad_state_context_check/);
   await assert.rejects(attempt((p) => { p.payload.lineup_estimate.subject_team_id = world.away.teamId; }), /subject team does not match/);
   await assert.rejects(attempt((p) => { p.payload.lineup_estimate.fixture_id = world.fixtures.h1.fixtureId; }), /fixture does not match/);
   await assert.rejects(attempt((p) => { p.payload.lineup_estimate.status = "insufficient_candidates"; }), /must carry a projected lineup estimate/);
@@ -196,7 +212,7 @@ test("the lineup payload must match its frozen squad-state context, fixture, tea
     const dropped = p.payload.lineup_estimate.players[0].canonical_player_id;
     p.inputs.identities = p.inputs.identities.filter((b: Payload) => b.entity_id !== dropped);
   }), /has no identity binding/);
-  await assert.rejects(attempt((p) => { p.payload.lineup_estimate.players.push({ canonical_player_id: null }); }), /\(missing id\) has no identity binding/);
+  await assert.rejects(attempt((p) => { p.payload.lineup_estimate.players.push({ canonical_player_id: null }); }), /every player needs a canonical player id/);
   // An abstention that keeps its estimate is held to the same checks.
   await assert.rejects(attempt((p) => {
     Object.assign(p, { outcome: "abstained", abstain_reason: "manual_hold" });
@@ -287,11 +303,25 @@ test("direct writes cannot bypass the V2 RPC, and frozen V2 links are immutable"
       insert into public.prediction_squad_state_context
         (snapshot_id, subject_team_id, squad_state_inputs_contract, squad_state_contract, squad_state_builder_version,
          squad_features_version, history_selection_policy_version, availability_normalization_version, target_date_policy,
-         provider_priority, history_max_fixtures, squad_state_sha256)
-      select s.id, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 from s`,
+         provider_priority, history_max_fixtures, squad_state_sha256, squad_state_canonical_json)
+      select s.id, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12 from s`,
       [home.teamId, context.squad_state_inputs_contract, context.squad_state_contract, context.squad_state_builder_version,
         context.squad_features_version, context.history_selection_policy_version, context.availability_normalization_version,
-        context.target_date_policy, context.provider_priority, context.history_max_fixtures, context.squad_state_sha256],
+        context.target_date_policy, context.provider_priority, context.history_max_fixtures, context.squad_state_sha256,
+        context.squad_state_canonical_json],
+    ),
+    /does not freeze exactly the squad history/,
+  );
+  // The bundle hash is still verified for every V2 kind.
+  await assert.rejects(
+    db.query(`
+      insert into public.prediction_snapshots
+        (contract_version, idempotency_key, fixture_id, prediction_kind, purpose, prediction_protocol_version,
+         pipeline_version, code_revision, research_cutoff_at, kickoff_at_snapshot, generated_at, outcome, abstain_reason,
+         payload_schema_version, input_bundle_sha256, output_bundle_sha256)
+      values ('kapiloto-prediction-snapshot-v2', 'direct-outcome-hash', $1, 'match_outcome', 'shadow', 'p', 'p', 'abcdef0',
+         $2, $3, $2, 'abstained', 'x', 'v1', $4, $4)`,
+      [world.target.fixtureId, LINEUP_CUTOFF, LINEUP_KICKOFF, "c".repeat(64)],
     ),
     /do not match its input bundle hash/,
   );
@@ -346,6 +376,31 @@ test("identity merges: a lineup forecast binds active canonical ids; history kee
   );
   assert.deepEqual(frozen.rows.map((r) => r.player_id), [m, p16].sort());
   assert.equal((await recordPredictionV2(db, live.snapshot, "2026-11-05T00:00:00.000Z")).status, "unchanged");
+
+  // The exact state bytes the live model consumed are retrievable from the
+  // registry and still hash to the payload's SHA-256, even though today's 1C
+  // read resolves M to player 16.
+  const frozenContext = (await db.query<{ squad_state_canonical_json: string; squad_state_sha256: string }>(
+    "select squad_state_canonical_json, squad_state_sha256 from public.prediction_squad_state_context where snapshot_id = $1",
+    [liveRecorded.snapshot_id],
+  )).rows[0];
+  const storedEstimate = (await db.query<{ e: LineupForecastOutput }>(
+    "select payload->'lineup_estimate' as e from public.prediction_snapshots where id = $1",
+    [liveRecorded.snapshot_id],
+  )).rows[0].e;
+  assert.equal(frozenContext.squad_state_sha256, storedEstimate.squad_state_sha256);
+  assert.equal(frozenContext.squad_state_canonical_json, squadStateArtifact(live.state).canonicalJson);
+  const frozenState = parseSquadStateArtifact(frozenContext.squad_state_canonical_json, frozenContext.squad_state_sha256);
+  assert.ok(frozenState.candidates.some((c) => c.canonical_player_id === m));
+  assert.throws(() => parseSquadStateArtifact(`${frozenContext.squad_state_canonical_json} `, frozenContext.squad_state_sha256), /does not hash/);
+
+  // Today's as-of read rebuilds a different state (survivor identities) ...
+  const today = await loadLineupSquadInputs(world.rpc, { fixtureId: world.target.fixtureId, teamId: home.teamId, cutoff: LINEUP_CUTOFF, policy: LINEUP_POLICY });
+  assert.equal(verifySquadStateReconstruction(today, LINEUP_POLICY, frozenContext.squad_state_sha256), false);
+  // ... but the frozen state, with the immutable selected ledger rows mapped
+  // through the frozen identities, replays the stored forecast exactly.
+  const replayed = buildLineupForecast(lineupReplayInput(frozenState, frozenContext.squad_state_sha256, today.history), storedEstimate.parameters);
+  assert.deepEqual(replayed, storedEstimate);
 
   // A re-run binds only the survivor, keeping M as the observed raw id, and
   // derives a different squad state.
@@ -473,5 +528,113 @@ test("memberships, tenures and claim beliefs must be the versions the as-of read
   assert.deepEqual(fresh.snapshot.inputs.tenures!.map((t) => t.tenureId), [tenureV2.rows[0].id]);
   assert.equal(fresh.snapshot.inputs.claims!.find((c) => c.claimId === world.claims.starts.claimId)?.resolutionId, startsV2.resolution_id);
   assert.equal((await recordPredictionV2(db, fresh.snapshot, LINEUP_RECORDED)).status, "recorded");
+  await db.close();
+});
+
+test("complete 1C capture: omitting one valid input row, or adding one the as-of read would not return, is refused", async () => {
+  const world = await setupLineupWorld();
+  const { db } = world;
+  const { snapshot } = await homeForecast(world);
+  const attempt = attempter(db, v2Payload(snapshot), "complete");
+
+  // Each omitted row is individually harmless to the bundle hash (the RPC
+  // hashes what it is given), so only the as-of comparison can catch it.
+  await assert.rejects(attempt((p) => {
+    p.inputs.ledger = p.inputs.ledger.filter((l: Payload) => l.ledger_observation_id !== world.obs.h1af.observation_id);
+  }), /does not freeze exactly the squad history the 1C as-of read returns/);
+  await assert.rejects(attempt((p) => {
+    p.inputs.memberships = p.inputs.memberships.filter((m: Payload) => m.membership_id !== world.members.homeSigning.id);
+  }), /does not freeze exactly the memberships/);
+  await assert.rejects(attempt((p) => { p.inputs.tenures = []; }), /does not freeze exactly the coach tenures/);
+  await assert.rejects(attempt((p) => {
+    p.inputs.claims = p.inputs.claims.filter((c: Payload) => c.claim_id !== world.claims.benched.claimId);
+  }), /does not freeze exactly the target claims and resolutions/);
+
+  // A history window of 2 fixtures: H3 is a valid row (finished, before the
+  // target, latest version, the subject team's match, first seen before the
+  // cutoff) but the as-of read for this window does not return it.
+  const narrow = await forecastSnapshot(world, world.home.teamId, { policy: historySelectionPolicy(["sportmonks", "api_football"], 2) });
+  assert.equal(narrow.snapshot.inputs.ledger!.some((l) => l.ledgerObservationId === world.obs.h3.observation_id), false);
+  const narrowAttempt = attempter(db, v2Payload(narrow.snapshot), "complete-extra");
+  await assert.rejects(narrowAttempt((p) => {
+    p.inputs.ledger.push({ ledger_observation_id: world.obs.h3.observation_id, input_role: "squad_history_alternative" });
+  }), /does not freeze exactly the squad history/);
+  // Claiming a wider window than the one loaded is refused too.
+  await assert.rejects(narrowAttempt((p) => { p.inputs.squad_state_context.history_max_fixtures = 10; }), /does not describe this snapshot|does not freeze exactly/);
+  assert.equal(await count(db, "prediction_snapshots"), 0);
+  // The honest narrow forecast records.
+  assert.equal((await recordPredictionV2(db, narrow.snapshot, LINEUP_RECORDED)).status, "recorded");
+  await db.close();
+});
+
+test("a forged squad-state artifact cannot change the snapshot it describes, its provenance or its candidates", async () => {
+  const world = await setupLineupWorld();
+  const { db } = world;
+  const { snapshot, state } = await homeForecast(world);
+  const attempt = attempter(db, v2Payload(snapshot), "artifact");
+  // Re-hash a modified state consistently in the context and the payload.
+  const forge = (mutate: (s: Payload) => void) => (p: Payload) => {
+    const forged = clone(state) as unknown as Payload;
+    mutate(forged);
+    const text = canonicalJson(forged);
+    p.inputs.squad_state_context.squad_state_canonical_json = text;
+    p.inputs.squad_state_context.squad_state_sha256 = sha256Hex(text);
+    p.payload.lineup_estimate.squad_state_sha256 = sha256Hex(text);
+  };
+
+  await assert.rejects(attempt(forge((s) => { s.fixture.cutoff = "2026-10-31T12:00:00+00:00"; })), /does not describe this snapshot/);
+  await assert.rejects(attempt(forge((s) => { s.fixture.team_id = world.away.teamId; })), /does not describe this snapshot/);
+  await assert.rejects(attempt(forge((s) => { s.history_selection_policy.providerPriority = ["api_football", "sportmonks"]; })), /does not describe this snapshot/);
+  await assert.rejects(attempt(forge((s) => {
+    s.provenance.considered_observation_ids = s.provenance.considered_observation_ids.filter((id: string) => id !== world.obs.h1af.observation_id);
+  })), /do not match the provenance of its frozen squad state/);
+  await assert.rejects(attempt(forge((s) => {
+    const dropped = s.candidates.pop().canonical_player_id;
+    s.provenance.canonical_player_ids = s.provenance.canonical_player_ids.filter((id: string) => id !== dropped);
+  })), /not exactly the frozen squad-state candidates/);
+  // Bytes that are not JSON at all.
+  await assert.rejects(attempt((p) => {
+    p.inputs.squad_state_context.squad_state_canonical_json = "not json";
+    p.inputs.squad_state_context.squad_state_sha256 = sha256Hex("not json");
+    p.payload.lineup_estimate.squad_state_sha256 = sha256Hex("not json");
+  }), /invalid input syntax for type json/);
+  assert.equal(await count(db, "prediction_snapshots"), 0);
+  await db.close();
+});
+
+test("the database refuses a stored lineup output that breaks the kapiloto-lineup-output-v1 contract", async () => {
+  const world = await setupLineupWorld();
+  const { db } = world;
+  const { snapshot, output } = await homeForecast(world);
+  const attempt = attempter(db, v2Payload(snapshot), "contract");
+  const modal = new Set(output.modal_xi);
+  const nonModal = output.players.find((p) => !modal.has(p.canonical_player_id))!;
+  const modalPlayer = output.players.find((p) => modal.has(p.canonical_player_id) && p.start_cap_bp === 10000)!;
+  const capped = output.players.find((p) => p.start_cap_bp < 10000 && p.projected_start_probability_bp! > 0)!;
+  const playerOf = (p: Payload, id: string) => p.payload.lineup_estimate.players.find((x: Payload) => x.canonical_player_id === id);
+
+  const cases: [string, (p: Payload) => void, RegExp][] = [
+    ["duplicate output player", (p) => p.payload.lineup_estimate.players.push(clone(p.payload.lineup_estimate.players[0])), /duplicate player/],
+    ["duplicate modal-XI id", (p) => { p.payload.lineup_estimate.modal_xi[1] = p.payload.lineup_estimate.modal_xi[0]; }, /exactly 11 unique/],
+    ["modal XI of 10", (p) => { p.payload.lineup_estimate.modal_xi.pop(); }, /exactly 11 unique/],
+    ["modal XI of 12", (p) => { p.payload.lineup_estimate.modal_xi.push(nonModal.canonical_player_id); }, /exactly 11 unique/],
+    ["team total != 110000", (p) => { p.payload.lineup_estimate.team_start_total_bp = 109999; }, /team start total must be 110000/],
+    ["player start sum != 110000", (p) => { playerOf(p, modalPlayer.canonical_player_id).projected_start_probability_bp -= 1; }, /sum to 110000/],
+    ["appearance < start", (p) => { const x = playerOf(p, modalPlayer.canonical_player_id); x.appearance_probability_bp = x.projected_start_probability_bp - 1; }, /start <= appearance/],
+    ["probability > 10000", (p) => { playerOf(p, modalPlayer.canonical_player_id).appearance_probability_bp = 10001; }, /integers in 0\.\.10000/],
+    ["fractional probability", (p) => { playerOf(p, nonModal.canonical_player_id).projected_start_probability_bp += 0.5; }, /integers in 0\.\.10000/],
+    ["minutes > 900", (p) => { playerOf(p, modalPlayer.canonical_player_id).expected_regulation_minutes_tenths = 901; }, /minutes in 0\.\.900/],
+    ["start above cap", (p) => { playerOf(p, capped.canonical_player_id).projected_start_probability_bp = capped.start_cap_bp + 1; }, /start <= cap/],
+    ["in_modal_xi disagrees", (p) => { playerOf(p, nonModal.canonical_player_id).in_modal_xi = true; }, /in_modal_xi flags disagree/],
+    ["unsupported output contract", (p) => { p.payload.lineup_estimate.contract_version = "kapiloto-lineup-output-v2"; }, /unsupported output contract/],
+    ["projected values on an abstention", (p) => {
+      Object.assign(p, { outcome: "abstained", abstain_reason: "insufficient_candidates" });
+      p.payload.lineup_estimate.status = "insufficient_candidates";
+    }, /only a projected estimate/],
+  ];
+  for (const [label, mutate, expected] of cases) {
+    await assert.rejects(attempt(mutate), expected, label);
+  }
+  assert.equal(await count(db, "prediction_snapshots"), 0);
   await db.close();
 });

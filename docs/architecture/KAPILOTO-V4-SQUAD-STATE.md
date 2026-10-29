@@ -298,7 +298,9 @@ memberships (`squad_membership`), target-fixture claims with their exact
 resolution (`squad_availability_claim` / `squad_lineup_claim`), tenures
 (`squad_coach_tenure`), identity bindings, and a squad-state context with the
 1C versions, the explicit provider priority, the history window and
-`squad_state_sha256 = SHA-256(canonical JSON of FixtureSquadState)`. The V1
+the exact canonical JSON bytes of the state with
+`squad_state_sha256 = SHA-256(those bytes)`. At commit the registry re-runs
+`squad_state_inputs_as_of` and refuses any frozen set that differs from it. The V1
 contract and its hashes are unchanged. See
 `docs/architecture/KAPILOTO-V4-LINEUP-MODEL.md`.
 

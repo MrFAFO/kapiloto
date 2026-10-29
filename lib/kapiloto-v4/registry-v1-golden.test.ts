@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createFixture, createLedgerDatabase, seedLedger } from "./test-support/ledger-fixtures";
+import { buildPredictionSnapshotPayload } from "./prediction-registry";
 import { basePrediction, recordPrediction } from "./test-support/knowledge-fixtures";
 
 /**
@@ -63,5 +64,19 @@ test("a V1 snapshot recorded end to end keeps its golden hashes, kind and null s
   const replay = await recordPrediction(db, payload, "2026-10-30T12:11:00.000Z");
   assert.equal(replay.status, "unchanged");
   assert.equal(replay.snapshot_id, recorded.snapshot_id);
+
+  // A V1 prediction still requires 1/X/2, and V1 accepts none of the V2-only
+  // fields or input families.
+  await assert.rejects(recordPrediction(db, basePrediction(fixture.fixtureId, { probabilities: null }), "2026-10-30T12:12:00.000Z"), /check constraint/);
+  const v1 = buildPredictionSnapshotPayload(basePrediction(fixture.fixtureId)) as Record<string, any>;
+  for (const family of ["memberships", "tenures", "squad_state_context"]) {
+    await assert.rejects(
+      recordPrediction(db, { ...v1, idempotency_key: `v1-${family}`, inputs: { ...v1.inputs, [family]: family === "squad_state_context" ? {} : [] } }, "2026-10-30T12:12:00.000Z"),
+      new RegExp(`unknown prediction inputs field: ${family}`),
+    );
+  }
+  for (const field of ["prediction_kind", "subject_team_id"]) {
+    await assert.rejects(recordPrediction(db, { ...v1, idempotency_key: `v1-${field}`, [field]: null }, "2026-10-30T12:12:00.000Z"), /unknown prediction snapshot field/);
+  }
   await db.close();
 });

@@ -1,5 +1,5 @@
-import { canonicalSha256 } from "./canonical-json";
-import type { LineupForecastOutput, LineupModelInput } from "./lineup-model";
+import { canonicalJson, sha256Hex } from "./canonical-json";
+import { validateLineupForecastOutput, type LineupForecastOutput, type LineupModelInput } from "./lineup-model";
 import {
   LINEUP_INPUT_ROLES,
   PREDICTION_REGISTRY_FUNCTIONS,
@@ -11,7 +11,15 @@ import {
   type RecordPredictionSnapshotResult,
   type SquadStateContext,
 } from "./prediction-registry";
-import { buildFixtureSquadState, type FixtureSquadState, type HistorySelectionPolicy, type SquadStateInputs } from "./squad-state";
+import {
+  buildFixtureSquadState,
+  loadSquadStateInputs,
+  type FixtureSquadState,
+  type HistoryObservationInput,
+  type HistorySelectionPolicy,
+  type SquadStateInputs,
+  type SquadStateRpc,
+} from "./squad-state";
 import {
   AVAILABILITY_NORMALIZATION_VERSION,
   HISTORY_SELECTION_POLICY_VERSION,
@@ -26,16 +34,51 @@ import {
 
 /**
  * Layering (V4 1D): load squad inputs -> build squad state -> run the pure
- * lineup model -> build the V2 snapshot payload (this module) -> persist via
- * public.prediction_record_snapshot_v2. Nothing here touches the database.
+ * lineup model -> build the V2 snapshot payload -> persist via
+ * public.prediction_record_snapshot_v2. Only the load and persist helpers
+ * call the database, through injected RPC functions.
  */
 
-/** SHA-256 of the exact derived squad state (canonical JSON). */
-export function squadStateSha256(state: FixtureSquadState): string {
-  return canonicalSha256(state);
+/**
+ * Loads 1C inputs for a lineup forecast. The history window passed to the
+ * as-of read is the policy's maxFixtures: the registry re-runs exactly this
+ * read at commit and refuses any difference.
+ */
+export function loadLineupSquadInputs(
+  rpc: SquadStateRpc,
+  params: { fixtureId: string; teamId: string; cutoff: string; policy: HistorySelectionPolicy },
+): Promise<SquadStateInputs> {
+  return loadSquadStateInputs(rpc, { fixtureId: params.fixtureId, teamId: params.teamId, cutoff: params.cutoff, historyFixtureLimit: params.policy.maxFixtures });
 }
 
-/** Rebuilds the state from frozen raw inputs + policy and checks its hash. */
+/** The exact state bytes a forecast consumes, and their SHA-256. */
+export function squadStateArtifact(state: FixtureSquadState): { canonicalJson: string; sha256: string } {
+  const text = canonicalJson(state);
+  return { canonicalJson: text, sha256: sha256Hex(text) };
+}
+
+/** SHA-256 of the exact canonical state bytes. */
+export function squadStateSha256(state: FixtureSquadState): string {
+  return squadStateArtifact(state).sha256;
+}
+
+/**
+ * Retrieves the exact squad state a historical forecast consumed from its
+ * frozen artifact. Throws unless the bytes hash to the frozen SHA-256 and are
+ * canonical JSON.
+ */
+export function parseSquadStateArtifact(canonicalText: string, expectedSha256: string): FixtureSquadState {
+  if (sha256Hex(canonicalText) !== expectedSha256) throw new Error("squad-state artifact does not hash to its frozen SHA-256");
+  const state = JSON.parse(canonicalText) as FixtureSquadState;
+  if (canonicalJson(state) !== canonicalText) throw new Error("squad-state artifact is not canonical JSON");
+  return state;
+}
+
+/**
+ * Rebuilds the state from current 1C inputs and compares hashes. This only
+ * matches a historical artifact while no later identity merge changed what
+ * the as-of read resolves; the frozen artifact is the replay record.
+ */
 export function verifySquadStateReconstruction(inputs: SquadStateInputs, policy: HistorySelectionPolicy, expectedSha256: string): boolean {
   return squadStateSha256(buildFixtureSquadState(inputs, policy)) === expectedSha256;
 }
@@ -44,6 +87,25 @@ export function verifySquadStateReconstruction(inputs: SquadStateInputs, policy:
 export function lineupModelInput(inputs: SquadStateInputs, state: FixtureSquadState): LineupModelInput {
   const selected = new Set(state.provenance.ledger_observation_ids);
   return { state, squad_state_sha256: squadStateSha256(state), selected_history: inputs.history.filter((o) => selected.has(o.observation_id)) };
+}
+
+/**
+ * Replay input for a historical forecast: its frozen state plus its selected
+ * ledger observations (immutable rows, read again by id), with each row's
+ * canonical player id taken from the FROZEN state (the candidate whose
+ * observed ids contain the row's raw id), not from today's survivors.
+ */
+export function lineupReplayInput(frozenState: FixtureSquadState, frozenSha256: string, history: readonly HistoryObservationInput[]): LineupModelInput {
+  const canonicalOf = new Map<string, string>();
+  for (const candidate of frozenState.candidates) for (const id of candidate.observed_player_ids) canonicalOf.set(id, candidate.canonical_player_id);
+  const selected = new Set(frozenState.provenance.ledger_observation_ids);
+  return {
+    state: frozenState,
+    squad_state_sha256: frozenSha256,
+    selected_history: history
+      .filter((o) => selected.has(o.observation_id))
+      .map((o) => ({ ...o, players: o.players.map((p) => ({ ...p, canonical_player_id: canonicalOf.get(p.observed_player_id) ?? p.observed_player_id })) })),
+  };
 }
 
 export type LineupSnapshotMeta = {
@@ -59,8 +121,8 @@ export type LineupSnapshotMeta = {
  * Freezes everything whose presence could change the 1C state: every
  * considered ledger observation (selected and alternatives), every membership
  * the as-of read returned, every target-fixture claim with its exact
- * resolution version, every tenure, the reconstruction context and an
- * identity binding for every player in the output.
+ * resolution version, every tenure, the exact state artifact and an identity
+ * binding for every player in the output.
  */
 export function buildLineupForecastSnapshot(args: {
   inputs: SquadStateInputs;
@@ -70,8 +132,8 @@ export function buildLineupForecastSnapshot(args: {
   meta: LineupSnapshotMeta;
 }): PredictionSnapshotV2Input {
   const { inputs, state, policy, output, meta } = args;
-  const sha = squadStateSha256(state);
-  if (output.squad_state_sha256 !== sha) throw new Error("lineup output was not computed from this squad state");
+  const artifact = squadStateArtifact(state);
+  if (output.squad_state_sha256 !== artifact.sha256) throw new Error("lineup output was not computed from this squad state");
   if (output.subject_team_id !== state.fixture.team_id || inputs.team_id !== state.fixture.team_id) throw new Error("team mismatch between inputs, state and output");
 
   const selected = new Set(state.history_selection.map((s) => s.observation_id));
@@ -86,7 +148,8 @@ export function buildLineupForecastSnapshot(args: {
     targetDatePolicy: inputs.target_date_policy,
     providerPriority: [...policy.providerPriority],
     historyMaxFixtures: policy.maxFixtures,
-    squadStateSha256: sha,
+    squadStateSha256: artifact.sha256,
+    squadStateCanonicalJson: artifact.canonicalJson,
   };
 
   const identities: IdentityBinding[] = [
@@ -146,13 +209,31 @@ export type PredictionRegistryV2Rpc = (
   args: { p_snapshot: Record<string, unknown> },
 ) => Promise<unknown>;
 
-/** Persists a lineup forecast snapshot through public.prediction_record_snapshot_v2 (service_role). */
+/**
+ * Persists a lineup forecast snapshot through public.prediction_record_snapshot_v2
+ * (service_role) after validating the snapshot and its lineup output contract.
+ */
 export async function recordLineupForecastSnapshot(
   rpc: PredictionRegistryV2Rpc,
   snapshot: PredictionSnapshotV2Input,
 ): Promise<RecordPredictionSnapshotResult> {
   const issues = validatePredictionSnapshotV2(snapshot);
   if (snapshot.predictionKind !== "lineup_forecast") issues.push("not a lineup forecast");
+  const estimate = snapshot.payload?.lineup_estimate as LineupForecastOutput | undefined;
+  const context = snapshot.inputs.squadStateContext;
+  if (estimate && context && snapshot.subjectTeamId) {
+    issues.push(...validateLineupForecastOutput(estimate, { fixtureId: snapshot.fixtureId, subjectTeamId: snapshot.subjectTeamId, squadStateSha256: context.squadStateSha256 }));
+    try {
+      const state = parseSquadStateArtifact(context.squadStateCanonicalJson, context.squadStateSha256);
+      const candidates = [...state.provenance.canonical_player_ids].sort();
+      const players = estimate.players.map((p) => p.canonical_player_id).sort();
+      if (players.length > 0 && (players.length !== candidates.length || players.some((id, i) => id !== candidates[i]))) {
+        issues.push("lineup estimate players are not exactly the frozen squad-state candidates");
+      }
+    } catch (error) {
+      issues.push((error as Error).message);
+    }
+  }
   if (issues.length > 0) throw new Error(`invalid lineup forecast snapshot: ${issues.join("; ")}`);
   return (await rpc(PREDICTION_REGISTRY_FUNCTIONS.recordSnapshotV2, { p_snapshot: buildPredictionSnapshotV2Payload(snapshot) })) as RecordPredictionSnapshotResult;
 }

@@ -7,11 +7,13 @@ import {
   allocateBasisPoints,
   buildLineupForecast,
   projectTeamStarts,
+  validateLineupForecastOutput,
+  validateLineupParameters,
   type LineupForecastOutput,
   type LineupParameters,
   type LineupPlayerOutput,
 } from "./lineup-model";
-import { lineupModelInput, squadStateSha256 } from "./lineup-snapshot";
+import { buildLineupForecastSnapshot, lineupModelInput, recordLineupForecastSnapshot, squadStateSha256 } from "./lineup-snapshot";
 import type { MembershipAsOfRow } from "./roster";
 import {
   buildFixtureSquadState,
@@ -94,8 +96,14 @@ function membership(player: string): MembershipAsOfRow {
   };
 }
 
-function claim(player: string, type: "player_availability" | "expected_lineup", value: string, resolution: SquadClaimInput["resolution_status"]): SquadClaimInput {
-  const id = `claim-${player.slice(-4)}-${value}-${resolution}`;
+function claim(
+  player: string,
+  type: "player_availability" | "expected_lineup",
+  value: string,
+  resolution: SquadClaimInput["resolution_status"],
+  overrides: Partial<SquadClaimInput> = {},
+): SquadClaimInput {
+  const id = `claim-${player.slice(-4)}-${value}-${resolution}${overrides.polarity === "negated" ? "-negated" : ""}`;
   const accepted = resolution !== "unresolved";
   return {
     claim_id: id,
@@ -115,6 +123,7 @@ function claim(player: string, type: "player_availability" | "expected_lineup", 
     resolution_status: resolution,
     resolution_first_seen_at: accepted ? "2026-10-29T09:00:00+00:00" : null,
     quality_flags: resolution === "verified_degraded" ? ["missing_author"] : [],
+    ...overrides,
   };
 }
 
@@ -289,31 +298,77 @@ test("M1: accepted reported-lineup claims are transparent pseudo-observations; c
   assert.equal(output.team_start_total_bp, 110000);
 });
 
-test("cross-family conflict: out/suspended plus a squad report suppresses claim adjustments and the cap", () => {
+test("cross-family conflict is decided on the raw accepted evidence sets, even when a family is itself conflicted", () => {
   const output = forecast(inputs({
     claims: [
+      // 1. unavailable + starts
       claim(P(1), "player_availability", "out", "verified"),
       claim(P(1), "expected_lineup", "starts", "verified"),
-      claim(P(2), "player_availability", "banned", "verified"),
-      claim(P(2), "expected_lineup", "on_bench", "verified"),
-      claim(P(3), "player_availability", "banned", "verified"),
-      claim(P(3), "expected_lineup", "not_in_squad", "verified"),
-      claim(P(4), "player_availability", "doubtful", "verified"),
+      // 2. unavailable + starts + not_in_squad (the lineup family is conflicted)
+      claim(P(2), "player_availability", "out", "verified"),
+      claim(P(2), "expected_lineup", "starts", "verified"),
+      claim(P(2), "expected_lineup", "not_in_squad", "verified"),
+      // 3. available + unavailable + starts (the availability family is conflicted)
+      claim(P(3), "player_availability", "fit", "verified"),
+      claim(P(3), "player_availability", "out", "verified"),
+      claim(P(3), "expected_lineup", "starts", "verified"),
+      // 4. suspended + starts + on_bench (lineup family conflicted)
+      claim(P(4), "player_availability", "banned", "verified_degraded"),
       claim(P(4), "expected_lineup", "starts", "verified"),
+      claim(P(4), "expected_lineup", "on_bench", "verified_degraded"),
+      // both families conflicted at once
+      claim(P(5), "player_availability", "fit", "verified"),
+      claim(P(5), "player_availability", "banned", "verified"),
+      claim(P(5), "expected_lineup", "starts", "verified"),
+      claim(P(5), "expected_lineup", "on_bench", "verified"),
+      // 5. unavailable + not_in_squad only: consistent, NOT a cross conflict
+      claim(P(6), "player_availability", "out", "verified"),
+      claim(P(6), "expected_lineup", "not_in_squad", "verified"),
+      // suspended + on_bench (simple case); doubtful + starts is consistent
+      claim(P(7), "player_availability", "banned", "verified"),
+      claim(P(7), "expected_lineup", "on_bench", "verified"),
+      claim(P(8), "player_availability", "doubtful", "verified"),
+      claim(P(8), "expected_lineup", "starts", "verified"),
     ],
   }));
-  for (const n of [1, 2]) {
+  for (const n of [1, 2, 3, 4, 5, 7]) {
     const p = player(output, n);
-    assert.ok(p.conflict_flags.includes("cross_evidence_conflict"));
+    assert.ok(p.conflict_flags.includes("cross_evidence_conflict"), `cross conflict for player ${n}`);
     assert.ok(p.adjustments.includes("claim_adjustments_suppressed_cross_conflict"));
-    assert.equal(p.start_cap_bp, 10000);
-    assert.equal(p.raw_start_probability_bp, bp(11, 12)); // B0 only
+    assert.equal(p.lineup_evidence.applied, null, `no pseudo-counts for player ${n}`);
+    assert.equal(p.adjustments.some((a) => a.startsWith("lineup_report_") || a === "availability_cap"), false);
+    assert.equal(p.start_cap_bp, 10000, `no cap for player ${n}`);
+    assert.deepEqual([p.raw_start_probability_bp, p.raw_appearance_probability_bp], [bp(11, 12), bp(11, 12)], `B0 only for player ${n}`);
   }
-  // Consistent evidence (suspended + not in squad) is not a conflict.
-  assert.deepEqual([player(output, 3).conflict_flags, player(output, 3).start_cap_bp, player(output, 3).raw_start_probability_bp], [[], 0, bp(11, 20)]);
-  // Doubtful + starts is not a cross conflict: both apply.
-  assert.deepEqual([player(output, 4).start_cap_bp, player(output, 4).raw_start_probability_bp], [6000, bp(15, 16)]);
-  assert.equal(output.quality.cross_evidence_conflicts, 2);
+  // Every per-family flag and every evidence item is preserved.
+  assert.ok(player(output, 2).conflict_flags.includes("lineup_evidence_conflict"));
+  assert.deepEqual(player(output, 2).lineup_evidence.accepted_predicates, ["not_in_squad", "starts"]);
+  assert.ok(player(output, 3).conflict_flags.includes("availability_conflict"));
+  assert.ok(player(output, 4).conflict_flags.includes("lineup_evidence_conflict"));
+  assert.deepEqual(player(output, 5).conflict_flags.slice().sort(), ["availability_conflict", "cross_evidence_conflict", "lineup_evidence_conflict"]);
+  // Availability is still displayed by its own family semantics, but never caps.
+  assert.deepEqual([player(output, 1).availability.status, player(output, 1).availability.probability_bp], ["quantified", 200]);
+  assert.deepEqual([player(output, 3).availability.status, player(output, 3).availability.probability_bp], ["conflict", null]);
+  // Consistent evidence applies both families.
+  assert.deepEqual([player(output, 6).conflict_flags, player(output, 6).start_cap_bp, player(output, 6).raw_start_probability_bp], [[], 200, bp(11, 20)]);
+  assert.deepEqual([player(output, 8).start_cap_bp, player(output, 8).raw_start_probability_bp], [6000, bp(15, 16)]);
+  assert.equal(output.quality.cross_evidence_conflicts, 6);
+  assert.equal(output.status, "projected");
+});
+
+test("negated reported-lineup claims are never guessed into a predicate", () => {
+  const output = forecast(inputs({
+    claims: [
+      claim(P(12), "expected_lineup", "starts", "verified", { polarity: "negated" }),
+      claim(P(1), "player_availability", "out", "verified"),
+      claim(P(1), "expected_lineup", "starts", "verified", { polarity: "negated" }),
+    ],
+  }));
+  // "Will not start" adds no start pseudo-counts ...
+  assert.deepEqual([player(output, 12).lineup_evidence.applied, player(output, 12).raw_start_probability_bp], [null, bp(4, 12)]);
+  assert.ok(player(output, 12).quality_flags.includes("negated_lineup_report_ignored"));
+  // ... and is not a squad-presence report, so out + "not starting" is no cross conflict.
+  assert.deepEqual([player(output, 1).conflict_flags, player(output, 1).start_cap_bp], [[], 200]);
 });
 
 test("team projection: one intercept, caps respected, exactly 110000 bp, deterministic modal XI", () => {
@@ -422,6 +477,19 @@ test("appearance and regulation minutes: p_app >= p_start, explicit samples capp
   assert.deepEqual([unused.starter_minutes_mean_tenths, unused.used_starter_minutes_fallback, unused.sub_minutes_mean_tenths, unused.used_sub_minutes_fallback], [750, true, 180, true]);
   assert.deepEqual([player(output, 1).used_starter_minutes_fallback, player(output, 1).used_sub_minutes_fallback], [false, true]);
   assert.equal(output.quality.players_starter_minutes_fallback, output.players.filter((p) => p.used_starter_minutes_fallback).length);
+  // lineup_role = unknown enters neither conditional family, even with
+  // appeared = true and stated minutes.
+  const unknownRole = inputs({
+    history: squadHistory().map((o) => (o.fixture_id === "fx-01"
+      ? { ...o, players: o.players.map((r) => (r.canonical_player_id === P(13) ? { ...r, lineup_role: "unknown" as const, appeared: true, minutes_played: 30 } : r)) }
+      : o)),
+  });
+  const withUnknown = player(forecast(unknownRole), 13);
+  assert.deepEqual(
+    [withUnknown.history.starter_minutes_samples, withUnknown.history.sub_minutes_samples, withUnknown.used_starter_minutes_fallback, withUnknown.used_sub_minutes_fallback],
+    [unused.history.starter_minutes_samples, unused.history.sub_minutes_samples, true, true],
+  );
+  assert.deepEqual([withUnknown.starter_minutes_mean_tenths, withUnknown.sub_minutes_mean_tenths], [750, 180]);
   // Unknown minutes are never treated as zero.
   const unknownMinutes = inputs({ history: squadHistory().map((o) => ({ ...o, players: o.players.map((r) => (r.canonical_player_id === P(10) ? { ...r, minutes_played: null } : r)) })) });
   assert.deepEqual([player(forecast(unknownMinutes), 10).used_starter_minutes_fallback, player(forecast(unknownMinutes), 10).starter_minutes_mean_tenths], [true, 750]);
@@ -457,4 +525,106 @@ test("solver and integer allocation are deterministic and exact", () => {
   assert.deepEqual(allocateBasisPoints([{ id: "a", value: 3.0000000001, cap: 10 }, { id: "b", value: 2.4, cap: 10 }], 5), [3, 2]);
   assert.deepEqual(allocateBasisPoints([{ id: "a", value: 3, cap: 10 }, { id: "b", value: 3, cap: 10 }], 5), [3, 2]);
   assert.throws(() => allocateBasisPoints([{ id: "a", value: 1, cap: 1 }, { id: "b", value: 1, cap: 1 }], 5), /exceeds the caps/);
+});
+
+test("parameter validation fails closed: malformed same-version parameters make the forecast invalid_input", () => {
+  assert.deepEqual(validateLineupParameters(DEFAULT_LINEUP_PARAMETERS), []);
+  const p = DEFAULT_LINEUP_PARAMETERS;
+  const bad: [string, unknown][] = [
+    ["team_starters = 10", { ...p, team_starters: 10 }],
+    ["negative prior", { ...p, start_prior: { alpha: -1, beta: 1 } }],
+    ["zero prior", { ...p, appearance_prior: { alpha: 1, beta: 0 } }],
+    ["probability > 1", { ...p, availability_probability: { ...p.availability_probability, doubtful: 1.2 } }],
+    ["NaN probability", { ...p, availability_probability: { ...p.availability_probability, available: Number.NaN } }],
+    ["Infinity prior", { ...p, start_prior: { alpha: Number.POSITIVE_INFINITY, beta: 1 } }],
+    ["missing category", { ...p, availability_probability: { available: 0.98, doubtful: 0.6, unavailable: 0.02, suspended: 0 } }],
+    ["negative pseudo-count", { ...p, lineup_pseudo_counts: { ...p.lineup_pseudo_counts, verified: { ...p.lineup_pseudo_counts.verified, starts: { ...p.lineup_pseudo_counts.verified.starts, start_successes: -4 } } } }],
+    ["fractional pseudo-count", { ...p, lineup_pseudo_counts: { ...p.lineup_pseudo_counts, verified_degraded: { ...p.lineup_pseudo_counts.verified_degraded, on_bench: { ...p.lineup_pseudo_counts.verified_degraded.on_bench, start_failures: 1.5 } } } }],
+    ["minutes fallback > 90", { ...p, starter_minutes_fallback: 95 }],
+    ["negative minutes fallback", { ...p, sub_minutes_fallback: -1 }],
+    ["epsilon = 0", { ...p, logit_epsilon: 0 }],
+    ["epsilon = 0.5", { ...p, logit_epsilon: 0.5 }],
+    ["lambda_min >= lambda_max", { ...p, solver: { lambda_min: 5, lambda_max: 5, iterations: 200 } }],
+    ["infinite lambda bound", { ...p, solver: { lambda_min: Number.NEGATIVE_INFINITY, lambda_max: 60, iterations: 200 } }],
+    ["zero iterations", { ...p, solver: { ...p.solver, iterations: 0 } }],
+    ["too many iterations", { ...p, solver: { ...p.solver, iterations: 1_000_000 } }],
+    ["unknown parameter", { ...p, decay: 0.9 }],
+    ["wrong version", { ...p, version: "kapiloto-lineup-parameters-v0" }],
+  ];
+  for (const [label, parameters] of bad) {
+    assert.ok(validateLineupParameters(parameters).length > 0, label);
+    const output = forecast(inputs(), parameters as LineupParameters);
+    assert.equal(output.status, "invalid_input", label);
+    assert.ok(output.invalid_reasons.length > 0, label);
+    assert.deepEqual([output.modal_xi, output.team_start_total_bp, output.team_lambda_micro, output.players], [[], null, null, []], label);
+    assert.equal(output.quality.candidate_count, 17, label);
+  }
+  // A well-formed range that does not bracket the intercept is refused, not
+  // silently projected.
+  const narrow = forecast(inputs(), { ...p, solver: { lambda_min: -0.001, lambda_max: 0.001, iterations: 200 } });
+  assert.deepEqual([narrow.status, narrow.invalid_reasons], ["invalid_input", ["solver range does not bracket the team intercept"]]);
+  assert.ok(narrow.players.every((x) => x.projected_start_probability_bp === null));
+  // Valid injected parameters still obey the V1 output contract.
+  const custom = forecast(inputs(), { ...p, start_prior: { alpha: 2, beta: 3 }, starter_minutes_fallback: 80 });
+  assert.equal(custom.status, "projected");
+  assert.deepEqual(validateLineupForecastOutput(custom, { fixtureId: "fx-target", subjectTeamId: TEAM, squadStateSha256: custom.squad_state_sha256 }), []);
+});
+
+test("lineup output contract: every projected and non-projected invariant is validated, and recording refuses violations before the RPC", async () => {
+  const inp = inputs({ claims: [claim(P(2), "player_availability", "doubtful", "verified")] });
+  const state = buildFixtureSquadState(inp, POLICY);
+  const output = buildLineupForecast(lineupModelInput(inp, state));
+  const expected = { fixtureId: "fx-target", subjectTeamId: TEAM, squadStateSha256: output.squad_state_sha256 };
+  assert.deepEqual(validateLineupForecastOutput(output, expected), []);
+  const clone = (): LineupForecastOutput => JSON.parse(JSON.stringify(output));
+  const modal = new Set(output.modal_xi);
+  const idx = (pred: (p: LineupPlayerOutput) => boolean) => output.players.findIndex(pred);
+  const modalIdx = idx((p) => modal.has(p.canonical_player_id) && p.start_cap_bp === 10000);
+  const benchIdx = idx((p) => !modal.has(p.canonical_player_id));
+  const cappedIdx = idx((p) => p.start_cap_bp === 6000);
+
+  const cases: [string, (o: LineupForecastOutput) => void, RegExp][] = [
+    ["wrong fixture", (o) => { o.fixture_id = "fx-other"; }, /fixture does not match/],
+    ["wrong team", (o) => { o.subject_team_id = OPPONENT; }, /subject team does not match/],
+    ["wrong hash", (o) => { o.squad_state_sha256 = "e".repeat(64); }, /squad-state hash/],
+    ["wrong output contract", (o) => { (o as { contract_version: string }).contract_version = "kapiloto-lineup-output-v2"; }, /unsupported output contract/],
+    ["team total", (o) => { o.team_start_total_bp = 109999; }, /team start total must be 110000/],
+    ["duplicate player", (o) => { o.players.push(o.players[0]); }, /duplicate player ids/],
+    ["duplicate modal id", (o) => { o.modal_xi[1] = o.modal_xi[0]; }, /exactly 11 unique/],
+    ["modal XI of 10", (o) => { o.modal_xi.pop(); }, /exactly 11 unique/],
+    ["modal XI of 12", (o) => { o.modal_xi.push(o.players[benchIdx].canonical_player_id); }, /exactly 11 unique/],
+    ["modal id not a player", (o) => { o.modal_xi[0] = "c0000000-0000-4000-8000-999999999999"; }, /not exactly one output player/],
+    ["flag disagrees", (o) => { o.players[benchIdx].in_modal_xi = true; }, /in_modal_xi disagrees/],
+    ["start sum", (o) => { o.players[modalIdx].projected_start_probability_bp! -= 1; }, /sum to 110000/],
+    ["start > cap", (o) => { o.players[cappedIdx].projected_start_probability_bp = 6001; }, /starts above the cap/],
+    ["start > 10000", (o) => { o.players[modalIdx].projected_start_probability_bp = 10001; }, /projected start must be an integer/],
+    ["fractional start", (o) => { o.players[benchIdx].projected_start_probability_bp! += 0.5; }, /projected start must be an integer/],
+    ["appearance < start", (o) => { o.players[modalIdx].appearance_probability_bp = o.players[modalIdx].projected_start_probability_bp! - 1; }, /appearance is below start/],
+    ["appearance > 10000", (o) => { o.players[modalIdx].appearance_probability_bp = 10001; }, /appearance must be an integer/],
+    ["appearance > cap", (o) => { o.players[cappedIdx].appearance_probability_bp = 6001; }, /appearance exceeds the cap/],
+    ["minutes > 900", (o) => { o.players[modalIdx].expected_regulation_minutes_tenths = 901; }, /expected minutes must be an integer in 0\.\.900/],
+    ["non-projected keeps values", (o) => { o.status = "insufficient_candidates"; }, /only a projected forecast has a modal XI/],
+    ["invalid_input without reasons", (o) => { o.status = "invalid_input"; o.modal_xi = []; o.team_start_total_bp = null; o.team_lambda_micro = null; for (const p of o.players) Object.assign(p, { projected_start_probability_bp: null, appearance_probability_bp: null, expected_regulation_minutes_tenths: null, in_modal_xi: false }); }, /invalid_reasons/],
+  ];
+  for (const [label, mutate, pattern] of cases) {
+    const o = clone();
+    mutate(o);
+    const issues = validateLineupForecastOutput(o, expected);
+    assert.ok(issues.some((i) => pattern.test(i)), `${label}: ${issues.join("; ")}`);
+  }
+
+  // Recording validates the output contract before calling the RPC.
+  const meta = { idempotencyKey: "contract", purpose: "shadow" as const, predictionProtocolVersion: "p", pipelineVersion: "p", codeRevision: "abcdef0", generatedAt: "2026-10-30T12:05:00+00:00" };
+  const snapshot = buildLineupForecastSnapshot({ inputs: inp, state, policy: POLICY, output, meta });
+  let calls = 0;
+  const rpc = async () => { calls += 1; return { status: "recorded" }; };
+  const broken = clone();
+  broken.team_start_total_bp = 109999;
+  await assert.rejects(recordLineupForecastSnapshot(rpc, { ...snapshot, payload: { lineup_estimate: broken } }), /team start total must be 110000/);
+  const dropped = clone();
+  dropped.players = dropped.players.slice(1).map((p) => ({ ...p }));
+  await assert.rejects(recordLineupForecastSnapshot(rpc, { ...snapshot, payload: { lineup_estimate: dropped } }), /not exactly the frozen squad-state candidates|sum to 110000/);
+  assert.equal(calls, 0);
+  await recordLineupForecastSnapshot(rpc, snapshot);
+  assert.equal(calls, 1);
 });

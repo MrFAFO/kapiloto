@@ -2,9 +2,9 @@ import type { PGlite } from "@electric-sql/pglite";
 
 import type { ResolutionStatus } from "../claims";
 import { buildLineupForecast } from "../lineup-model";
-import { buildLineupForecastSnapshot, lineupModelInput, type LineupSnapshotMeta } from "../lineup-snapshot";
+import { buildLineupForecastSnapshot, lineupModelInput, loadLineupSquadInputs, type LineupSnapshotMeta } from "../lineup-snapshot";
 import { buildPredictionSnapshotV2Payload, type PredictionSnapshotV2Input, type RecordPredictionSnapshotResult } from "../prediction-registry";
-import { buildFixtureSquadState, historySelectionPolicy, loadSquadStateInputs, type SquadStateRpc } from "../squad-state";
+import { buildFixtureSquadState, historySelectionPolicy, type HistorySelectionPolicy, type SquadStateRpc } from "../squad-state";
 import { addObservation, articleInput, recordClaim, recordDocument, recordResolution } from "./knowledge-fixtures";
 import { createFixture, createLedgerDatabase, realisticObservation, recordObservation, seedLedger, setClock, type LedgerSeed } from "./ledger-fixtures";
 import { insertMembership, membershipKey } from "./roster-fixtures";
@@ -178,16 +178,17 @@ let snapshotCounter = 0;
 export async function forecastSnapshot(
   world: Pick<LineupWorld, "rpc" | "target">,
   teamId: string,
-  overrides: Partial<LineupSnapshotMeta> & { cutoff?: string; kickoff?: string } = {},
+  overrides: Partial<LineupSnapshotMeta> & { cutoff?: string; policy?: HistorySelectionPolicy } = {},
 ) {
   snapshotCounter += 1;
-  const inputs = await loadSquadStateInputs(world.rpc, { fixtureId: world.target.fixtureId, teamId, cutoff: overrides.cutoff ?? LINEUP_CUTOFF });
-  const state = buildFixtureSquadState(inputs, LINEUP_POLICY);
+  const policy = overrides.policy ?? LINEUP_POLICY;
+  const inputs = await loadLineupSquadInputs(world.rpc, { fixtureId: world.target.fixtureId, teamId, cutoff: overrides.cutoff ?? LINEUP_CUTOFF, policy });
+  const state = buildFixtureSquadState(inputs, policy);
   const output = buildLineupForecast(lineupModelInput(inputs, state));
   const snapshot = buildLineupForecastSnapshot({
     inputs,
     state,
-    policy: LINEUP_POLICY,
+    policy,
     output,
     meta: {
       idempotencyKey: overrides.idempotencyKey ?? `lineup-test-${snapshotCounter}`,

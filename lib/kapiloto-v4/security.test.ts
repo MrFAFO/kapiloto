@@ -92,6 +92,8 @@ const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.prediction_input_bundle_sha256(jsonb)",
   "private.prediction_canonical_inputs_v2(jsonb)",
   "private.prediction_input_bundle_sha256_v2(jsonb)",
+  "private.prediction_json_int_between(jsonb, integer, integer)",
+  "private.prediction_lineup_estimate_issue(jsonb)",
 ];
 
 test("every V4 table is RLS-protected, policy-free and invisible to app users", async () => {
