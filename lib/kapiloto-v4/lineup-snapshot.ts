@@ -12,11 +12,13 @@ import {
   type SquadStateContext,
 } from "./prediction-registry";
 import {
-  buildFixtureSquadState,
+  buildFixtureSquadStateFor,
+  isSupportedSquadStateBuild,
   loadSquadStateInputs,
   type FixtureSquadState,
   type HistoryObservationInput,
   type HistorySelectionPolicy,
+  type SquadStateBuilderVersion,
   type SquadStateInputs,
   type SquadStateRpc,
 } from "./squad-state";
@@ -26,7 +28,6 @@ import {
   LINEUP_MODEL_VERSION,
   LINEUP_OUTPUT_CONTRACT_VERSION,
   LINEUP_PARAMETERS_VERSION,
-  SQUAD_FEATURES_VERSION,
   SQUAD_STATE_BUILDER_VERSION,
   SQUAD_STATE_CONTRACT_VERSION,
   SQUAD_STATE_INPUTS_CONTRACT_VERSION,
@@ -71,6 +72,9 @@ export function parseSquadStateArtifact(canonicalText: string, expectedSha256: s
   if (sha256Hex(canonicalText) !== expectedSha256) throw new Error("squad-state artifact does not hash to its frozen SHA-256");
   const state = JSON.parse(canonicalText) as FixtureSquadState;
   if (canonicalJson(state) !== canonicalText) throw new Error("squad-state artifact is not canonical JSON");
+  if (state.contract_version !== SQUAD_STATE_CONTRACT_VERSION || !isSupportedSquadStateBuild(state.builder_version, state.features_version)) {
+    throw new Error("squad-state artifact has an unsupported contract or builder/features version");
+  }
   return state;
 }
 
@@ -79,8 +83,13 @@ export function parseSquadStateArtifact(canonicalText: string, expectedSha256: s
  * matches a historical artifact while no later identity merge changed what
  * the as-of read resolves; the frozen artifact is the replay record.
  */
-export function verifySquadStateReconstruction(inputs: SquadStateInputs, policy: HistorySelectionPolicy, expectedSha256: string): boolean {
-  return squadStateSha256(buildFixtureSquadState(inputs, policy)) === expectedSha256;
+export function verifySquadStateReconstruction(
+  inputs: SquadStateInputs,
+  policy: HistorySelectionPolicy,
+  expectedSha256: string,
+  builderVersion: SquadStateBuilderVersion = SQUAD_STATE_BUILDER_VERSION,
+): boolean {
+  return squadStateSha256(buildFixtureSquadStateFor(builderVersion, inputs, policy)) === expectedSha256;
 }
 
 /** The lineup model's input for a state: the state, its hash and its selected ledger observations. */
@@ -134,6 +143,9 @@ export function buildLineupForecastSnapshot(args: {
   const { inputs, state, policy, output, meta } = args;
   const artifact = squadStateArtifact(state);
   if (output.squad_state_sha256 !== artifact.sha256) throw new Error("lineup output was not computed from this squad state");
+  if (state.contract_version !== SQUAD_STATE_CONTRACT_VERSION || !isSupportedSquadStateBuild(state.builder_version, state.features_version)) {
+    throw new Error("unsupported squad-state contract or builder/features version");
+  }
   if (output.subject_team_id !== state.fixture.team_id || inputs.team_id !== state.fixture.team_id) throw new Error("team mismatch between inputs, state and output");
 
   const selected = new Set(state.history_selection.map((s) => s.observation_id));
@@ -141,8 +153,9 @@ export function buildLineupForecastSnapshot(args: {
     subjectTeamId: state.fixture.team_id,
     squadStateInputsContract: SQUAD_STATE_INPUTS_CONTRACT_VERSION,
     squadStateContract: SQUAD_STATE_CONTRACT_VERSION,
-    squadStateBuilderVersion: SQUAD_STATE_BUILDER_VERSION,
-    squadFeaturesVersion: SQUAD_FEATURES_VERSION,
+    // The versions the state itself was built with (never assumed).
+    squadStateBuilderVersion: state.builder_version,
+    squadFeaturesVersion: state.features_version,
     historySelectionPolicyVersion: HISTORY_SELECTION_POLICY_VERSION,
     availabilityNormalizationVersion: AVAILABILITY_NORMALIZATION_VERSION,
     targetDatePolicy: inputs.target_date_policy,
@@ -176,7 +189,10 @@ export function buildLineupForecastSnapshot(args: {
     pipelineVersion: meta.pipelineVersion,
     codeRevision: meta.codeRevision,
     modelIdentifiers: { lineup_model: LINEUP_MODEL_VERSION, lineup_parameters: LINEUP_PARAMETERS_VERSION },
-    featureVersions: { squad_features: SQUAD_FEATURES_VERSION, history_selection: HISTORY_SELECTION_POLICY_VERSION },
+    featureVersions: state.builder_version === SQUAD_STATE_BUILDER_VERSION
+      // Unchanged for V1 states, so their snapshots keep their exact header.
+      ? { squad_features: state.features_version, history_selection: HISTORY_SELECTION_POLICY_VERSION }
+      : { squad_features: state.features_version, squad_state_builder: state.builder_version, history_selection: HISTORY_SELECTION_POLICY_VERSION },
     researchCutoffAt: state.fixture.cutoff,
     kickoffAtSnapshot: state.fixture.kickoff_at,
     generatedAt: meta.generatedAt,

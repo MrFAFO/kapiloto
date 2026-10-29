@@ -1,11 +1,13 @@
 import type { ClaimKind, ClaimPolarity, ResolutionStatus } from "./claims";
 import { tenureCoversDate, type TenureRole } from "./entities";
 import type { DataStatus, LineupRole, PositionCode, TeamSide } from "./match-ledger";
-import type { MembershipAsOfRow, MembershipCoverage, SquadGroup } from "./roster";
+import { membershipCoverage, type MembershipAsOfRow, type MembershipCoverage, type SquadGroup } from "./roster";
 import {
   AVAILABILITY_NORMALIZATION_VERSION,
   HISTORY_SELECTION_POLICY_VERSION,
+  SQUAD_FEATURES_V2_VERSION,
   SQUAD_FEATURES_VERSION,
+  SQUAD_STATE_BUILDER_V2_VERSION,
   SQUAD_STATE_BUILDER_VERSION,
   SQUAD_STATE_CONTRACT_VERSION,
   SQUAD_STATE_INPUTS_CONTRACT_VERSION,
@@ -515,13 +517,34 @@ export type SquadQuality = {
   unattributed_claim_ids: string[];
 };
 
+/**
+ * Supported builders, each with the one feature contract it produces. Both
+ * emit the same state contract (kapiloto-squad-state-v1: same shape and field
+ * meanings) from the same raw inputs; they differ only in which historical
+ * absences count as known non-starts.
+ */
+export const SQUAD_STATE_BUILDERS = {
+  [SQUAD_STATE_BUILDER_VERSION]: SQUAD_FEATURES_VERSION,
+  [SQUAD_STATE_BUILDER_V2_VERSION]: SQUAD_FEATURES_V2_VERSION,
+} as const;
+export type SquadStateBuilderVersion = keyof typeof SQUAD_STATE_BUILDERS;
+export type SquadFeaturesVersion = (typeof SQUAD_STATE_BUILDERS)[SquadStateBuilderVersion];
+
+export function isSupportedSquadStateBuild(builderVersion: unknown, featuresVersion: unknown): builderVersion is SquadStateBuilderVersion {
+  return (
+    typeof builderVersion === "string" &&
+    Object.prototype.hasOwnProperty.call(SQUAD_STATE_BUILDERS, builderVersion) &&
+    SQUAD_STATE_BUILDERS[builderVersion as SquadStateBuilderVersion] === featuresVersion
+  );
+}
+
 export type FixtureSquadState = {
   contract_version: typeof SQUAD_STATE_CONTRACT_VERSION;
-  builder_version: typeof SQUAD_STATE_BUILDER_VERSION;
+  builder_version: SquadStateBuilderVersion;
   inputs_contract_version: typeof SQUAD_STATE_INPUTS_CONTRACT_VERSION;
   history_selection_policy: HistorySelectionPolicy;
   availability_normalization_version: typeof AVAILABILITY_NORMALIZATION_VERSION;
-  features_version: typeof SQUAD_FEATURES_VERSION;
+  features_version: SquadFeaturesVersion;
   fixture: {
     fixture_id: string;
     team_id: string;
@@ -558,8 +581,77 @@ export type FixtureSquadState = {
 
 const WINDOWS = [3, 5, 10] as const;
 
-/** Pure and deterministic: same inputs and policy, same state. */
+/**
+ * kapiloto-squad-state-builder-v1 / kapiloto-squad-features-v1. Kept exactly
+ * as shipped in 1C so every frozen 1D snapshot replays byte-for-byte. New
+ * states should use buildFixtureSquadStateV2.
+ */
 export function buildFixtureSquadState(inputs: SquadStateInputs, policy: HistorySelectionPolicy): FixtureSquadState {
+  return buildState(inputs, policy, SQUAD_STATE_BUILDER_VERSION);
+}
+
+/**
+ * kapiloto-squad-state-builder-v2 / kapiloto-squad-features-v2: V1 with
+ * membership-aware historical start knownness (historicalAbsenceStartKnown).
+ * Pure and deterministic over the same frozen raw inputs.
+ */
+export function buildFixtureSquadStateV2(inputs: SquadStateInputs, policy: HistorySelectionPolicy): FixtureSquadState {
+  return buildState(inputs, policy, SQUAD_STATE_BUILDER_V2_VERSION);
+}
+
+/** Builds with the named builder (for replay and reconstruction checks). */
+export function buildFixtureSquadStateFor(
+  builderVersion: SquadStateBuilderVersion,
+  inputs: SquadStateInputs,
+  policy: HistorySelectionPolicy,
+): FixtureSquadState {
+  if (!Object.prototype.hasOwnProperty.call(SQUAD_STATE_BUILDERS, builderVersion)) throw new Error(`unsupported squad-state builder ${builderVersion}`);
+  return buildState(inputs, policy, builderVersion);
+}
+
+/** UTC calendar date (YYYY-MM-DD) of a historical observation's kickoff: the same rule as kapiloto-target-date-utc-v1. */
+export function historicalFixtureDate(kickoffAt: string): string {
+  const ms = Date.parse(kickoffAt);
+  if (!Number.isFinite(ms)) throw new Error(`invalid historical kickoff ${kickoffAt}`);
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/**
+ * Membership of one player in the subject team on one historical date, from
+ * the frozen membership assertions (latest visible asserted version per key,
+ * as returned at the cutoff). Each assertion is positive evidence within its
+ * own bounds and is evaluated with membershipCoverage; assertions are never
+ * read as negative evidence, so the strongest coverage wins:
+ * certain if any assertion is certain, possible if any is possible, else
+ * outside (no applicable assertion counts as outside).
+ */
+export function historicalMembershipCoverage(memberships: readonly MembershipAsOfRow[], date: string): MembershipCoverage {
+  let best: MembershipCoverage = "outside";
+  for (const m of memberships) {
+    const coverage = membershipCoverage(m, date);
+    if (coverage === "certain") return "certain";
+    if (coverage === "possible") best = "possible";
+  }
+  return best;
+}
+
+/** V1 rule: absence from a complete historical lineup is a known non-start. */
+const completeLineupAbsenceKnown = (observation: HistoryObservationInput) => observation.lineup_status === "complete";
+
+/**
+ * V2 rule for a player with NO row in a selected historical observation: the
+ * absence is a known non-start only if the lineup is complete AND the frozen
+ * memberships make the player certainly a member on that fixture's UTC date.
+ * possible, outside or no membership -> unknown (fail closed). A row, when
+ * present, is direct evidence and is never overridden by membership.
+ */
+export function historicalAbsenceStartKnown(memberships: readonly MembershipAsOfRow[]): (observation: HistoryObservationInput) => boolean {
+  return (observation) =>
+    observation.lineup_status === "complete" &&
+    historicalMembershipCoverage(memberships, historicalFixtureDate(observation.kickoff_at)) === "certain";
+}
+
+function buildState(inputs: SquadStateInputs, policy: HistorySelectionPolicy, builderVersion: SquadStateBuilderVersion): FixtureSquadState {
   if (inputs.contract_version !== SQUAD_STATE_INPUTS_CONTRACT_VERSION) throw new Error("unsupported squad-state inputs contract");
   if (Date.parse(inputs.cutoff) > Date.parse(inputs.kickoff_at)) throw new Error("squad-state cutoff is after the fixture kickoff");
 
@@ -580,8 +672,14 @@ export function buildFixtureSquadState(inputs: SquadStateInputs, policy: History
   const unattributed = inputs.claims.filter((c) => !attributable(c)).map((c) => c.canonical_claim_id).sort();
 
   const universe = new Set<string>([...rosterPlayers, ...historyPlayers, ...claims.map((c) => c.canonical_player_id)]);
+  // V2 reads every frozen membership assertion (not only those active on the
+  // target date) because historical knownness is about historical dates.
+  const absenceStartKnown = (playerId: string) =>
+    builderVersion === SQUAD_STATE_BUILDER_V2_VERSION
+      ? historicalAbsenceStartKnown(inputs.memberships.filter((m) => m.canonical_player_id === playerId))
+      : completeLineupAbsenceKnown;
   const candidates = [...universe].sort().map((playerId) =>
-    buildCandidate(playerId, inputs, activeMemberships, selectedObservations, claims, rosterPlayers.has(playerId), historyPlayers.has(playerId)),
+    buildCandidate(playerId, inputs, activeMemberships, selectedObservations, claims, rosterPlayers.has(playerId), historyPlayers.has(playerId), absenceStartKnown(playerId)),
   );
 
   const replacement_patterns = buildReplacementPatterns(selectedObservations);
@@ -605,11 +703,11 @@ export function buildFixtureSquadState(inputs: SquadStateInputs, policy: History
 
   return {
     contract_version: SQUAD_STATE_CONTRACT_VERSION,
-    builder_version: SQUAD_STATE_BUILDER_VERSION,
+    builder_version: builderVersion,
     inputs_contract_version: SQUAD_STATE_INPUTS_CONTRACT_VERSION,
     history_selection_policy: policy,
     availability_normalization_version: AVAILABILITY_NORMALIZATION_VERSION,
-    features_version: SQUAD_FEATURES_VERSION,
+    features_version: SQUAD_STATE_BUILDERS[builderVersion],
     fixture: {
       fixture_id: inputs.fixture_id,
       team_id: inputs.team_id,
@@ -648,6 +746,7 @@ function buildCandidate(
   claims: readonly SquadClaimInput[],
   hasRoster: boolean,
   hasHistory: boolean,
+  absenceStartKnown: (observation: HistoryObservationInput) => boolean,
 ): SquadCandidate {
   const own = memberships.filter((m) => m.canonical_player_id === playerId);
   const playerClaims = claims.filter((c) => c.canonical_player_id === playerId);
@@ -676,19 +775,28 @@ function buildCandidate(
       squad_groups: [...new Set(own.map((m) => m.squad_group))].sort(),
       shirt_numbers: [...new Set(own.flatMap((m) => (m.shirt_number === null ? [] : [m.shirt_number])))].sort((a, b) => a - b),
     },
-    history: playerHistoryFeatures(playerId, history),
+    history: playerHistoryFeatures(playerId, history, absenceStartKnown),
     availability: summarizeAvailability(availabilityClaims),
     reported_lineup: summarizeReportedLineup(lineupClaims),
   };
 }
 
-/** Raw counts over the selected fixtures (most recent first); no weights. */
-export function playerHistoryFeatures(playerId: string, history: readonly HistoryObservationInput[]): PlayerHistoryFeatures {
+/**
+ * Raw counts over the selected fixtures (most recent first); no weights.
+ * `absenceStartKnown` decides when a fixture WITHOUT a row for the player is
+ * a known non-start: the V1 default is "the lineup is complete"
+ * (kapiloto-squad-features-v1); V2 passes historicalAbsenceStartKnown.
+ */
+export function playerHistoryFeatures(
+  playerId: string,
+  history: readonly HistoryObservationInput[],
+  absenceStartKnown: (observation: HistoryObservationInput) => boolean = completeLineupAbsenceKnown,
+): PlayerHistoryFeatures {
   const rows = history.map((observation) => {
     const player = observation.players.find((p) => p.canonical_player_id === playerId) ?? null;
-    // Start: a starter/bench row, or absence from a lineup whose 11 starters
-    // the database proves are all listed.
-    const startKnown = player !== null ? player.lineup_role !== "unknown" : observation.lineup_status === "complete";
+    // Start: a starter/bench row (direct evidence, never overridden), or an
+    // absence the knownness rule accepts as a non-start.
+    const startKnown = player !== null ? player.lineup_role !== "unknown" : absenceStartKnown(observation);
     // Appearance: a starter appeared; otherwise only an explicit flag counts.
     const appearanceKnown = player !== null && (player.lineup_role === "starter" || player.appeared !== null);
     // Minutes: stated, or zero when the row says he did not appear.

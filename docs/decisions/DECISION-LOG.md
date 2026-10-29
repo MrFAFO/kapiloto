@@ -320,3 +320,15 @@ Decision:
 Details: `docs/architecture/KAPILOTO-V4-LINEUP-MODEL.md`.
 
 Reason: A lineup forecast is only scientifically useful if it can be replayed and audited: exactly which roster, tenure, history, claim and identity inputs it saw before the cutoff, and which derivation produced it. Extending the V1 bundle in place would have silently changed the meaning and hashes of existing snapshots, so V2 is a separate, versioned contract. A transparent Beta-Binomial baseline with explicit evidence rules is the benchmark every later lineup model must beat.
+
+## D-055 — V4 membership-aware squad features (features V2, builder V2)
+Decision:
+- **Defect.** `kapiloto-squad-features-v1` counts absence from a complete historical lineup as a known non-start even for matches before the player joined the team, so new signings get manufactured non-starts in `start_known_matches`, `starts_last`, `consecutive_starts` and the 1D start probability.
+- **V2 rule.** `kapiloto-squad-state-builder-v2` produces `kapiloto-squad-features-v2`: an absence is a known non-start only if the lineup is complete **and** the frozen memberships make the player certainly a member on the fixture's UTC kickoff date (inclusive bounds, `membershipCoverage` semantics, strongest applicable assertion wins). `possible`, `outside` or no membership is unknown. Rows are always authoritative. Absence still proves only "did not start".
+- **No silent change.** Builder V1 and features V1 stay callable and byte-identical (golden-pinned) for replaying frozen 1D snapshots. The state contract (`kapiloto-squad-state-v1`), raw-input contract (`kapiloto-squad-state-inputs-v1`), lineup model (`kapiloto-lineup-model-v1`) and snapshot contract (`kapiloto-prediction-snapshot-v2`) are unchanged, because their shapes and meanings did not change.
+- **Registry.** An additive migration lets `prediction_squad_state_context` freeze the pair builder-v2/features-v2 next to builder-v1/features-v1, as a closed pair. Canonicalization, hashing, complete capture and the artifact-to-context version check are unchanged and already cover it.
+- **Before 1E.** Lineup deviation and lineup strength depend most on squad changes, which is exactly where V1 knownness is wrong. New forecasts use builder V2.
+
+Details: `docs/architecture/KAPILOTO-V4-SQUAD-STATE.md`.
+
+Reason: Versioned science. Frozen artifacts must keep their meaning, and a corrected rule must be a new, named derivation from the same frozen inputs rather than an edit behind an existing version string.

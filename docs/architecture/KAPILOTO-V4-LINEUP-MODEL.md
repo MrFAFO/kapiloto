@@ -21,7 +21,10 @@ Each layer is separate and testable on its own:
    (1C; all leakage filtering happens in the database). The history window
    passed to the read is the policy's `maxFixtures`, the same value the
    registry re-runs the read with at commit.
-2. **State**: the pure `buildFixtureSquadState(inputs, policy)` (1C).
+2. **State**: the pure `buildFixtureSquadStateV2(inputs, policy)` for new
+   forecasts (membership-aware features, D-055), or `buildFixtureSquadState`
+   (builder V1) to replay frozen V1 snapshots. The lineup model reads the same
+   fields from either, so `kapiloto-lineup-model-v1` is unchanged.
 3. **Model**: the pure `buildLineupForecast(lineupModelInput(inputs, state), parameters)`.
 4. **Payload**: the pure `buildLineupForecastSnapshot(...)` →
    `buildPredictionSnapshotV2Payload(...)`.
@@ -146,7 +149,27 @@ links, and its `considered_observation_ids`, `membership_ids` and
 `target_date_policy` (`kapiloto-target-date-utc-v1`), the explicit
 `provider_priority` array (1-20 distinct provider keys), `history_max_fixtures`
 (1-10), `squad_state_canonical_json` and `squad_state_sha256`. Version columns
-only accept the current 1C versions.
+only accept known versions. Builder and features versions are a closed pair:
+`kapiloto-squad-state-builder-v1` with `kapiloto-squad-features-v1` (frozen 1D
+snapshots), or `kapiloto-squad-state-builder-v2` with
+`kapiloto-squad-features-v2` (D-055; migration
+`20261029211641_kapiloto_v4_squad_state_features_v2.sql`). The snapshot
+builder copies the versions from the state itself, never from constants.
+
+**Registry compatibility for V2 states.** No new snapshot contract is needed,
+and V1 hashes are unchanged:
+
+* the V2 canonical bundle already carries the builder and features versions
+  and the exact state bytes, so canonicalization and hashing are the same
+  for both pairs;
+* the artifact trigger already requires the artifact's own version fields
+  to equal its context row's, so relabelling an artifact without recomputing
+  it is refused;
+* the raw-input contract and complete capture are unchanged;
+* a V1-context snapshot's canonical bundle hash is pinned by a golden test.
+
+The snapshot header's `feature_versions` is exactly as before for V1 states
+and also names `squad_state_builder` for V2 states.
 
 **The exact state bytes are frozen.** `squad_state_canonical_json` is
 `canonicalJson(state)`, the exact bytes the model consumed. Canonical JSON
@@ -164,7 +187,8 @@ priority and window.
 **Historical replay** does not depend on today's identities:
 
 * `parseSquadStateArtifact(text, sha)` retrieves the exact state. It throws
-  unless the bytes hash to the frozen SHA and are canonical JSON.
+  unless the bytes hash to the frozen SHA, are canonical JSON, and declare a
+  supported contract and builder/features pair.
 * `lineupReplayInput(frozenState, sha, history)` pairs it with the
   forecast's selected ledger observations: immutable rows, read again by id
   through the as-of read. Each row's canonical player id is taken from the
@@ -174,8 +198,8 @@ priority and window.
   reproduces the stored `lineup_estimate` exactly. The identity-merge test
   proves this after a later A→B merge.
 
-Current-day reads are separate. `verifySquadStateReconstruction` rebuilds a
-state from today's 1C inputs. It matches the artifact only while no later
+Current-day reads are separate. `verifySquadStateReconstruction(inputs, policy, sha, builder)`
+rebuilds a state from today's 1C inputs with the declared builder. It matches the artifact only while no later
 identity merge changed what the as-of read resolves; after a merge it differs
 on purpose, and the artifact remains the record.
 
@@ -502,7 +526,8 @@ binds the survivor and yields a different squad-state hash.
   hash consistency, as-of version integrity and the output contract, not the
   derivation itself. A consistently forged state that keeps the same header,
   provenance and candidate ids is detectable only by a TypeScript replay or
-  rebuild.
+  rebuild. That includes a V1 state whose version fields are rewritten to V2
+  and re-hashed: rebuilding with the declared builder exposes it (tested).
 * Deterministic for a given runtime. `Math.exp`/`Math.log` are not required by
   the language to be correctly rounded, so a different JavaScript engine could
   in principle shift a basis point. The stored payload, not a recomputation, is

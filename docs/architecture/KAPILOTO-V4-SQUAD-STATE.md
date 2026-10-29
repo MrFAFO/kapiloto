@@ -1,6 +1,7 @@
 # Kapiloto V4 Foundation 1C: roster membership and pre-match squad state
 
-Status: implemented (storage, deterministic derivation, audit only). Decision D-053.
+Status: implemented (storage, deterministic derivation, audit only). Decision D-053;
+membership-aware features V2: D-055 (Foundation 1E-A1, see below).
 Migration: `supabase/migrations/20261029074019_kapiloto_v4_roster_squad_state.sql`.
 Contracts: `lib/kapiloto-v4/roster.ts`, `lib/kapiloto-v4/squad-state.ts`.
 
@@ -92,8 +93,11 @@ time zones are a future schema concern.
 - **tenures:** `team_coach_tenures_as_of(team, cutoff)`.
 
 `loadSquadStateInputs` calls it through a minimal RPC caller.
-`buildFixtureSquadState(inputs, policy)` is a pure, deterministic function
-with no database calls. Its output (`kapiloto-squad-state-v1`) carries:
+`buildFixtureSquadState(inputs, policy)` (builder V1) and
+`buildFixtureSquadStateV2(inputs, policy)` (builder V2, membership-aware
+features; see below) are pure, deterministic functions with no database
+calls. Both output the same state contract (`kapiloto-squad-state-v1`) from
+the same raw inputs, which carries:
 
 - the fixture context (side, opponent, canonical kickoff, cutoff);
 - the builder, selection and normalization versions;
@@ -187,6 +191,126 @@ the pitch for all of regulation time. It is not "full match": whether an
 extra-time match was played to 120 is not derived. A starter with no stated
 minutes and no exit never counts, because a missing exit is not evidence of
 playing on.
+
+## Membership-aware historical knownness (`kapiloto-squad-features-v2`, D-055)
+
+**The defect in features V1.** `kapiloto-squad-features-v1` treats absence
+from a `complete` historical lineup as a known non-start, whether or not the
+player belonged to the team on that date. For a new signing, the club's
+matches *before he joined* become "did not start" evidence. That contaminates:
+
+* `start_known_matches`, `starts_last` and `consecutive_starts`;
+* the 1D Beta-Binomial start probability;
+* any later lineup-strength or deviation estimate built on it.
+
+For example, a player who joins on Oct 20 and starts on Oct 25, after the
+club's complete Oct 5 and Oct 12 lineups without him, gets 1 start in 3
+known matches. He should get 1 in 1.
+
+**Why V1 is not changed.** Foundation 1D snapshots freeze
+`kapiloto-squad-state-builder-v1` / `kapiloto-squad-features-v1` together
+with the exact canonical state bytes. Changing the implementation behind
+those strings would make historical artifacts unreproducible and silently
+redefine what they mean. V1 therefore stays callable and byte-identical:
+`squad-state-v1-golden.test.ts` pins its state hash, the 1D lineup output on
+it, and the V2 canonical bundle hash of a V1-context snapshot, all captured
+on `main` before V2 existed.
+
+**V2 rule (`kapiloto-squad-state-builder-v2` → `kapiloto-squad-features-v2`).**
+For each selected historical fixture and one player:
+
+1. **The player has a row.** Every V1 rule is unchanged, and a row is direct
+   evidence that membership inference never overrides:
+   * a starter row is a known start;
+   * a bench row is a known non-start;
+   * `lineup_role = unknown` stays unknown.
+2. **The player has no row.** The absence is a known non-start **only if**:
+   * the lineup is `complete`; **and**
+   * the frozen memberships make him **certainly** a member of the subject
+     team on that fixture's date.
+
+   Membership that is `possible`, `outside`, or missing makes the start
+   **unknown** (fail closed).
+
+Absence from a complete starting XI still proves only "did not start". V2
+never infers "not in the squad", "did not appear" or "0 minutes". Appearance,
+minutes and squad knownness never used absences, so they are identical in V1
+and V2.
+
+**Historical date.** The UTC calendar date of the selected observation's
+`kickoff_at` (`historicalFixtureDate`). This is the same rule as
+`kapiloto-target-date-utc-v1`, applied to each historical fixture, and it is
+part of the features-v2 definition. Membership bounds are inclusive dates,
+evaluated with the same interval semantics as `membershipCoverage` and the
+database's coverage rule:
+
+* `outside` when the date is before `starts_on_earliest` or after
+  `ends_on_latest`;
+* `certain` when the date is on or after `starts_on_latest` and the
+  membership is open or the date is on or before `ends_on_earliest`;
+* `possible` otherwise.
+
+The target-date `coverage` field returned by the as-of read describes the
+target fixture's date, so V2 never uses it for history.
+
+**Multiple assertions.** V2 reads every membership row in the frozen inputs
+for the candidate's canonical id. These are the latest visible, asserted
+version of each key at the cutoff, whatever their target-date coverage, so a
+player who has since left still has his historical stint. A membership
+assertion is positive evidence within its own bounds. Overlapping assertions
+from different sources, or several stints, are allowed and never resolved
+into transfer truth (1C rule). An assertion that does not cover a date is
+therefore not evidence that the player was *not* a member. The rule is the
+strongest applicable coverage:
+
+* `certain` if any assertion is certain on the date;
+* else `possible` if any is possible;
+* else `outside`.
+
+This matches how 1C derives a candidate's target-date roster coverage (any
+`certain` wins). Assertion order is irrelevant.
+
+**Identity merges.** Memberships, rows and candidates are matched by
+canonical id. A membership stored for a since-merged raw id counts for its
+survivor, as 1C's candidate construction already does.
+
+**Information time.** V2 reads only the frozen raw inputs. A membership first
+seen after the cutoff is invisible because `squad_state_inputs_as_of` never
+returns it. The builder performs no fresh roster lookup, so the same inputs
+always give the same V2 state.
+
+**Consequence: V2 depends on roster coverage.** Without certain memberships,
+V2 has no absence-based non-starts at all; denominators then come from
+explicit rows only. That is the correct fail-closed behavior. It also means
+the 1D start probabilities of rarely listed players move toward the prior
+until roster ingestion exists.
+
+**Versions.**
+
+| String | Changed? | Why |
+| --- | --- | --- |
+| `kapiloto-squad-features-v2` | new | the start-knownness rule for absences changes |
+| `kapiloto-squad-state-builder-v2` | new | the builder producing features v2 |
+| `kapiloto-squad-state-v1` (state contract) | unchanged | same shape and field meanings; `features_version` already names the knownness rule |
+| `kapiloto-squad-state-inputs-v1` | unchanged | the membership assertions V2 needs are already in the frozen inputs |
+| `kapiloto-history-selection-v1`, `kapiloto-availability-normalization-v1`, `kapiloto-target-date-utc-v1` | unchanged | not affected |
+
+The builders form a closed pair set (`SQUAD_STATE_BUILDERS`): builder-v1
+always produces features-v1, and builder-v2 always produces features-v2.
+`buildFixtureSquadStateFor(builder, ...)` rebuilds with a named builder for
+replay and reconstruction checks. V1 and V2 states built from the same raw
+inputs have different hashes by design. They differ only in the version
+fields and in `start_known_matches`, `starts_last` and `consecutive_starts`
+of players whose absences lacked certain membership (tested).
+
+**Decision: why this comes before Player Impact / lineup deviation.** A
+lineup-deviation model compares each projected start probability with the
+player's historical start share, and lineup deltas matter most when the
+squad changes. V1's knownness under-forecasts exactly the players involved:
+new signings, and returning or since-departed players. A deviation model
+trained or evaluated on V1 states would learn from manufactured
+non-starts. New forecasts should use builder V2; V1 remains for replaying
+frozen snapshots.
 
 ## Replacement patterns
 
@@ -302,7 +426,8 @@ the exact canonical JSON bytes of the state with
 `squad_state_sha256 = SHA-256(those bytes)`. At commit the registry re-runs
 `squad_state_inputs_as_of` and refuses any frozen set that differs from it. The V1
 contract and its hashes are unchanged. See
-`docs/architecture/KAPILOTO-V4-LINEUP-MODEL.md`.
+`docs/architecture/KAPILOTO-V4-LINEUP-MODEL.md`. Since D-055 the context may
+freeze either builder-v1/features-v1 or builder-v2/features-v2.
 
 ## Not in Foundation 1C
 
