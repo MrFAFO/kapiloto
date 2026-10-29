@@ -1,0 +1,23 @@
+name: A2-A validation
+on:
+  push:
+    branches:
+      - feat/v4-match-ledger-provider-ingest-a2a-validation
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:kapiloto-v4
+      - run: npm run test:kapiloto
+      - run: npm run test:research-v2
+      - run: npm test
+      - run: npm run build

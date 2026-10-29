@@ -96,3 +96,27 @@ export const LINEUP_PARAMETERS_VERSION = "kapiloto-lineup-parameters-v1";
 
 /** Shape of the lineup_estimate payload section. */
 export const LINEUP_OUTPUT_CONTRACT_VERSION = "kapiloto-lineup-output-v1";
+
+
+/** Provider-native payload accepted by public.match_ledger_ingest_provider_fixture. */
+export const PROVIDER_MATCH_OBSERVATION_CONTRACT_VERSION =
+  "kapiloto-provider-match-observation-v1";
+
+/** Pure Sportmonks -> provider-native Match Ledger mapping. */
+export const SPORTMONKS_LEDGER_MAPPING_VERSION =
+  "kapiloto-sportmonks-ledger-mapping-v1";
+
+/** Training-only effective-availability convention for finalized historical backfill. */
+export const RETROSPECTIVE_TRAINING_AVAILABILITY_VERSION =
+  "kapiloto-retrospective-training-availability-v1";
+
+/** Model-facing strict/retrospective team-match statistics read contract. */
+export const TEAM_MATCH_STATS_CONTRACT_VERSION =
+  "kapiloto-team-match-stats-v1";
+
+/** Reviewed Sportmonks statistic identity set; live payloads still verify developer_name. */
+export const SPORTMONKS_STAT_DEFINITION_VERSION = "sm-2024-08";
+
+/** Provider entitlement snapshot contract produced by the later A2-B operator workflow. */
+export const PROVIDER_ENTITLEMENT_SNAPSHOT_VERSION =
+  "kapiloto-provider-entitlement-snapshot-v1";

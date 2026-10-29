@@ -46,6 +46,10 @@ const V4_TABLES = [
   "prediction_membership_inputs",
   "prediction_tenure_inputs",
   "prediction_squad_state_context",
+  "provider_ingest_runs",
+  "provider_ingest_items",
+  "match_ledger_fixture_mints",
+  "match_ledger_observation_provider_refs",
 ];
 
 const V4_PUBLIC_FUNCTIONS = [
@@ -70,6 +74,10 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.team_player_memberships_as_of(uuid, timestamptz, date)",
   "public.squad_state_inputs_as_of(uuid, uuid, timestamptz, integer)",
   "public.prediction_record_snapshot_v2(jsonb)",
+  "public.provider_ingest_record_failure(uuid, text, text, text, jsonb)",
+  "public.match_ledger_ingest_provider_fixture(jsonb)",
+  "public.match_ledger_team_match_stats_as_of(text, uuid[], timestamptz, timestamptz)",
+  "public.match_ledger_team_match_stats_for_training(text, uuid[], timestamptz, timestamptz, text)",
 ];
 
 const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
@@ -94,6 +102,11 @@ const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.prediction_input_bundle_sha256_v2(jsonb)",
   "private.prediction_json_int_between(jsonb, integer, integer)",
   "private.prediction_lineup_estimate_issue(jsonb)",
+  "private.prepare_match_ledger_observation_provider_ref()",
+  "private.provider_ingest_append_item(uuid, text, text, text, text, uuid, uuid, jsonb)",
+  "private.match_ledger_ingest_quarantine(uuid, text, text, text, uuid, text, jsonb)",
+  "private.match_ledger_effective_versions(text, timestamptz, text, text)",
+  "private.match_ledger_team_match_stats_read(text, uuid[], timestamptz, timestamptz, text, text)",
 ];
 
 test("every V4 table is RLS-protected, policy-free and invisible to app users", async () => {
@@ -154,6 +167,12 @@ test("every V4 table is RLS-protected, policy-free and invisible to app users", 
     await assert.rejects(db.query("select * from public.prediction_snapshots"), /permission denied/, role);
     await assert.rejects(db.query("select public.prediction_record_snapshot('{}'::jsonb)"), /permission denied/, role);
     await assert.rejects(db.query("select public.prediction_record_snapshot_v2('{}'::jsonb)"), /permission denied/, role);
+    await assert.rejects(db.query("select public.match_ledger_ingest_provider_fixture('{}'::jsonb)"), /permission denied/, role);
+    await assert.rejects(
+      db.query("select * from public.match_ledger_team_match_stats_for_training('sportmonks', array[]::uuid[], now() - interval '1 day', now(), 'kapiloto-retrospective-training-availability-v1')"),
+      /permission denied/,
+      role,
+    );
     for (const table of ["prediction_membership_inputs", "prediction_tenure_inputs", "prediction_squad_state_context"]) {
       await assert.rejects(db.query(`select * from public.${table}`), /permission denied/, `${role} ${table}`);
     }
@@ -226,6 +245,7 @@ test("no function defined by a V4 migration is executable by app roles or securi
     "supabase/migrations/20261029074019_kapiloto_v4_roster_squad_state.sql",
     "supabase/migrations/20261029085303_kapiloto_v4_lineup_prediction_registry_v2.sql",
     "supabase/migrations/20261029211641_kapiloto_v4_squad_state_features_v2.sql",
+    "supabase/migrations/20261029231924_kapiloto_v4_provider_ingest.sql",
   ]) {
     for (const match of readFileSync(file, "utf8").matchAll(/create or replace function (?:public|private)\.([a-z_0-9]+)\(/g)) {
       names.add(match[1]);

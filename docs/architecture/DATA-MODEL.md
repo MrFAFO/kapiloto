@@ -834,3 +834,16 @@ Administrative corrections to fixture mapping, settlement or membership must be 
 Prefer SQL views/materialized views for derived metrics until scale proves persistent aggregates are required.
 
 Source facts and historical snapshots are persisted; easy-to-recompute statistics should not be duplicated prematurely.
+
+
+## V4 provider-native ingestion and retrospective training reads (1E-A2-A)
+
+- `provider_ingest_runs` / `provider_ingest_items`: immutable operator-ingest audit records and append-only per-fixture attempts.
+- `match_ledger_fixture_mints`: immutable provenance for canonical fixtures created by the provider-native ingest RPC under an explicit caller cutoff.
+- `match_ledger_observation_provider_refs`: sealed immutable Sportmonks league, season, home-team and away-team refs for each A2-A observation version.
+- `provider_player_mappings.mapping_basis`: optional provenance for provider-native player bootstrap.
+- `match_ledger_ingest_provider_fixture(jsonb)`: one READ COMMITTED, service-only, fail-closed transaction from provider ids to the unchanged 1A Match Ledger writer.
+- `match_ledger_team_match_stats_as_of`: strict actual-information-time team/stat history.
+- `match_ledger_team_match_stats_for_training`: explicitly retrospective finalized-data history under `kapiloto-retrospective-training-availability-v1`; never a production as-of API.
+
+See `docs/architecture/KAPILOTO-V4-PROVIDER-INGEST.md`.

@@ -332,3 +332,17 @@ Decision:
 Details: `docs/architecture/KAPILOTO-V4-SQUAD-STATE.md`.
 
 Reason: Versioned science. Frozen artifacts must keep their meaning, and a corrected rule must be a new, named derivation from the same frozen inputs rather than an edit behind an existing version string.
+
+
+## D-056 — V4 provider-native Match Ledger ingest and retrospective training availability
+
+Decision:
+- **Atomic provider-native ingest.** A new service-only, security-invoker RPC resolves Sportmonks competition/team ids only through authoritative mappings, serializes provider-fixture and canonical fixture-pair identity, attaches an unambiguous canonical fixture or mints a finished historical fixture only under an explicit caller policy, bootstraps provider-native players as confirmed one-to-one mappings, and calls the unchanged 1A Match Ledger writer in the same READ COMMITTED statement. A2-A never creates teams or competitions and never name/fuzzy-matches identity.
+- **Provider identity sidecar.** Every A2-A-recorded observation seals the Sportmonks league, season, home-team and away-team refs in the same statement. A later ref mismatch is `provider_ref_drift` and is quarantined; the sidecar is never mutated and the 1A V1 content hash stays unchanged.
+- **Reviewed stat identities.** Sportmonks xG, xGoT and npxG are separate versioned keys under `sm-2024-08`, alongside a small shots/possession/corners allow-list. Ingestion requires the expected developer name; missing values create no stat row and never become zero.
+- **Two time contracts.** Existing strict as-of semantics remain `first_seen_at` only. `kapiloto-retrospective-training-availability-v1` is a separate training convention: only a finished first-version `backfill` observation may use `min(first_seen_at, kickoff + 24h)`; every correction, withdrawal, scheduled sync and manual import uses actual information time. This convention supports retrospective fitting/forward-chained evaluation on finalized data and explicitly does **not** support claims about what Kapiloto could have known live historically.
+- **A2 boundary.** A2-A is offline schema/contracts/parsing only. Provider entitlement discovery, team/competition reconciliation, rate-limited historical backfill, pilot execution and coverage reporting belong to A2-B. Team Strength and Player Impact remain out of A2.
+
+Details: `docs/architecture/KAPILOTO-V4-PROVIDER-INGEST.md`.
+
+Reason: real historical data is useful only if ingestion cannot split identities, collide with V3, mutate provider provenance, convert missing statistics to zeros, or backdate knowledge. Keeping retrospective finalized-data availability separate from actual information time lets A3 train on history without corrupting Prediction Registry or live-performance claims.

@@ -459,3 +459,12 @@ archive, claims, claim resolutions and the prediction registry. A provider
 response can be archived as a `provider_response` document version. Linking
 `raw_observation_id` to it is left to the ingestion task (the column has no
 foreign key).
+
+
+## Foundation 1E-A2-A: provider-native ingestion contracts
+
+Decision D-056 adds the offline contracts needed to feed real provider history into the existing Match Ledger without changing 1A information-time semantics. The outer provider-native RPC resolves only authoritative team/competition mappings, attaches or policy-mints canonical fixtures fail-closed, bootstraps provider-native players, records immutable provider identity refs, and delegates the canonical observation to the unchanged 1A writer in the same READ COMMITTED statement.
+
+Strict model-facing reads remain actual-knowledge reads. A separate `kapiloto-retrospective-training-availability-v1` API can expose finalized first-version backfill at `min(first_seen_at, kickoff + 24h)` for retrospective fitting/evaluation only. It is not a reconstruction of historical live knowledge and is forbidden for Squad State, lineup snapshots, research or Prediction Registry inputs.
+
+Details: `docs/architecture/KAPILOTO-V4-PROVIDER-INGEST.md`.

@@ -11,6 +11,7 @@ const V4_MIGRATIONS = [
   /_kapiloto_v4_roster_squad_state\.sql$/,
   /_kapiloto_v4_lineup_prediction_registry_v2\.sql$/,
   /_kapiloto_v4_squad_state_features_v2\.sql$/,
+  /_kapiloto_v4_provider_ingest\.sql$/,
 ];
 const V4_TABLES = new Set([
   "players",
@@ -46,6 +47,10 @@ const V4_TABLES = new Set([
   "prediction_membership_inputs",
   "prediction_tenure_inputs",
   "prediction_squad_state_context",
+  "provider_ingest_runs",
+  "provider_ingest_items",
+  "match_ledger_fixture_mints",
+  "match_ledger_observation_provider_refs",
 ]);
 
 function sourceFiles(dir: string): string[] {
@@ -82,7 +87,7 @@ test("the V4 migrations are the latest, in order, and strictly additive", () => 
     assert.equal(matches.length, 1, String(pattern));
     return matches[0];
   });
-  // 1A, 1B, 1C, 1D, 1E-A1 in order, and nothing after them.
+  // 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A in order, and nothing after them.
   assert.deepEqual(files.slice(-v4.length), v4);
   for (const file of v4) {
     const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
@@ -118,7 +123,7 @@ test("the 1D migration does not redefine any V1 prediction registry function", (
   assert.ok(sql.includes("create or replace function public.prediction_record_snapshot_v2("));
 });
 
-// Foundation 1A, 1B, 1C and 1D are applied to production; their migrations
+// Foundation 1A, 1B, 1C, 1D and 1E-A1 are applied to production; their migrations
 // must never change (line endings normalized so CRLF checkouts hash the same).
 test("the applied V4 migrations are byte-for-byte unchanged", () => {
   const applied: Record<string, string> = {
@@ -126,9 +131,23 @@ test("the applied V4 migrations are byte-for-byte unchanged", () => {
     "20261028132857_kapiloto_v4_knowledge_prediction_registry.sql": "baf08e5b5616568bf1a929823413163f3cd3d57d2ee47c9337319e722853132e",
     "20261029074019_kapiloto_v4_roster_squad_state.sql": "48fcddd3fa9588afaf7a5a8f461b92fe7bf9d956c27a39a6a7b79a9e9ceb0199",
     "20261029085303_kapiloto_v4_lineup_prediction_registry_v2.sql": "0e9b51be73b69544864a1a2dd53b350d0942cb9ec883e638a941ffc0917e9297",
+    "20261029211641_kapiloto_v4_squad_state_features_v2.sql": "421b3df180e9a745d44c184111838a423e771b12bee0e74b3a35419aee51ca6b",
   };
   for (const [file, sha256] of Object.entries(applied)) {
     const text = readFileSync(join(ROOT, "supabase", "migrations", file), "utf8").replace(/\r\n/g, "\n");
     assert.equal(createHash("sha256").update(text).digest("hex"), sha256, file);
   }
+});
+
+
+test("production prediction and squad modules cannot import retrospective training reads", () => {
+  const protectedModules = [
+    "squad-state.ts",
+    "lineup-snapshot.ts",
+    "lineup-model.ts",
+    "prediction-registry.ts",
+  ];
+  const offenders = protectedModules
+    .filter((name) => /training\//.test(readFileSync(join(ROOT, "lib", "kapiloto-v4", name), "utf8")));
+  assert.deepEqual(offenders, []);
 });
