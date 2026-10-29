@@ -3355,6 +3355,42 @@ export type Database = {
           },
         ]
       }
+      prediction_membership_inputs: {
+        Row: {
+          input_first_seen_at: string
+          input_role: string
+          membership_id: string
+          snapshot_id: string
+        }
+        Insert: {
+          input_first_seen_at: string
+          input_role: string
+          membership_id: string
+          snapshot_id: string
+        }
+        Update: {
+          input_first_seen_at?: string
+          input_role?: string
+          membership_id?: string
+          snapshot_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_membership_inputs_membership_id_fkey"
+            columns: ["membership_id"]
+            isOneToOne: false
+            referencedRelation: "team_player_memberships"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_membership_inputs_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "prediction_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       prediction_reference_inputs: {
         Row: {
           fact_snapshot_id: string | null
@@ -3451,6 +3487,7 @@ export type Database = {
           payload: Json
           payload_schema_version: string
           pipeline_version: string
+          prediction_kind: string
           prediction_protocol_version: string
           prompt_hashes: Json
           purpose: string
@@ -3458,6 +3495,7 @@ export type Database = {
           research_cutoff_at: string
           round_game_id: string | null
           settlement_rule: string | null
+          subject_team_id: string | null
           uncertainty: Json
         }
         Insert: {
@@ -3484,6 +3522,7 @@ export type Database = {
           payload?: Json
           payload_schema_version: string
           pipeline_version: string
+          prediction_kind?: string
           prediction_protocol_version: string
           prompt_hashes?: Json
           purpose: string
@@ -3491,6 +3530,7 @@ export type Database = {
           research_cutoff_at: string
           round_game_id?: string | null
           settlement_rule?: string | null
+          subject_team_id?: string | null
           uncertainty?: Json
         }
         Update: {
@@ -3517,6 +3557,7 @@ export type Database = {
           payload?: Json
           payload_schema_version?: string
           pipeline_version?: string
+          prediction_kind?: string
           prediction_protocol_version?: string
           prompt_hashes?: Json
           purpose?: string
@@ -3524,6 +3565,7 @@ export type Database = {
           research_cutoff_at?: string
           round_game_id?: string | null
           settlement_rule?: string | null
+          subject_team_id?: string | null
           uncertainty?: Json
         }
         Relationships: [
@@ -3539,6 +3581,109 @@ export type Database = {
             columns: ["round_game_id"]
             isOneToOne: false
             referencedRelation: "round_games"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_snapshots_subject_team_id_fkey"
+            columns: ["subject_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_squad_state_context: {
+        Row: {
+          availability_normalization_version: string
+          history_max_fixtures: number
+          history_selection_policy_version: string
+          provider_priority: string[]
+          snapshot_id: string
+          squad_features_version: string
+          squad_state_builder_version: string
+          squad_state_contract: string
+          squad_state_inputs_contract: string
+          squad_state_sha256: string
+          subject_team_id: string
+          target_date_policy: string
+        }
+        Insert: {
+          availability_normalization_version: string
+          history_max_fixtures: number
+          history_selection_policy_version: string
+          provider_priority: string[]
+          snapshot_id: string
+          squad_features_version: string
+          squad_state_builder_version: string
+          squad_state_contract: string
+          squad_state_inputs_contract: string
+          squad_state_sha256: string
+          subject_team_id: string
+          target_date_policy: string
+        }
+        Update: {
+          availability_normalization_version?: string
+          history_max_fixtures?: number
+          history_selection_policy_version?: string
+          provider_priority?: string[]
+          snapshot_id?: string
+          squad_features_version?: string
+          squad_state_builder_version?: string
+          squad_state_contract?: string
+          squad_state_inputs_contract?: string
+          squad_state_sha256?: string
+          subject_team_id?: string
+          target_date_policy?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_squad_state_context_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: true
+            referencedRelation: "prediction_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_squad_state_context_subject_team_id_fkey"
+            columns: ["subject_team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      prediction_tenure_inputs: {
+        Row: {
+          input_first_seen_at: string
+          input_role: string
+          tenure_id: string
+          snapshot_id: string
+        }
+        Insert: {
+          input_first_seen_at: string
+          input_role: string
+          tenure_id: string
+          snapshot_id: string
+        }
+        Update: {
+          input_first_seen_at?: string
+          input_role?: string
+          tenure_id?: string
+          snapshot_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prediction_tenure_inputs_tenure_id_fkey"
+            columns: ["tenure_id"]
+            isOneToOne: false
+            referencedRelation: "team_coach_tenures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prediction_tenure_inputs_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "prediction_snapshots"
             referencedColumns: ["id"]
           },
         ]
@@ -4703,6 +4848,10 @@ export type Database = {
         }[]
       }
       prediction_record_snapshot: {
+        Args: { p_snapshot: Json }
+        Returns: Json
+      }
+      prediction_record_snapshot_v2: {
         Args: { p_snapshot: Json }
         Returns: Json
       }

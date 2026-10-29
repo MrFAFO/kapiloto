@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { buildMatchLedgerObservationPayload } from "./match-ledger";
+import { buildPredictionSnapshotV2Payload } from "./prediction-registry";
+import { LINEUP_RECORDED, forecastSnapshot, setupLineupWorld } from "./test-support/lineup-fixtures";
 import {
   createFixture,
   createLedgerDatabase,
@@ -41,6 +43,9 @@ const V4_TABLES = [
   "prediction_reference_inputs",
   "prediction_identity_bindings",
   "team_player_memberships",
+  "prediction_membership_inputs",
+  "prediction_tenure_inputs",
+  "prediction_squad_state_context",
 ];
 
 const V4_PUBLIC_FUNCTIONS = [
@@ -64,6 +69,7 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.knowledge_canonical_claims(uuid[])",
   "public.team_player_memberships_as_of(uuid, timestamptz, date)",
   "public.squad_state_inputs_as_of(uuid, uuid, timestamptz, integer)",
+  "public.prediction_record_snapshot_v2(jsonb)",
 ];
 
 const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
@@ -84,6 +90,8 @@ const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.prediction_output_sha256(text, text, smallint, smallint, smallint, numeric, jsonb, text, jsonb)",
   "private.prediction_canonical_inputs(jsonb)",
   "private.prediction_input_bundle_sha256(jsonb)",
+  "private.prediction_canonical_inputs_v2(jsonb)",
+  "private.prediction_input_bundle_sha256_v2(jsonb)",
 ];
 
 test("every V4 table is RLS-protected, policy-free and invisible to app users", async () => {
@@ -143,6 +151,10 @@ test("every V4 table is RLS-protected, policy-free and invisible to app users", 
     await assert.rejects(db.query("select * from public.knowledge_claims"), /permission denied/, role);
     await assert.rejects(db.query("select * from public.prediction_snapshots"), /permission denied/, role);
     await assert.rejects(db.query("select public.prediction_record_snapshot('{}'::jsonb)"), /permission denied/, role);
+    await assert.rejects(db.query("select public.prediction_record_snapshot_v2('{}'::jsonb)"), /permission denied/, role);
+    for (const table of ["prediction_membership_inputs", "prediction_tenure_inputs", "prediction_squad_state_context"]) {
+      await assert.rejects(db.query(`select * from public.${table}`), /permission denied/, `${role} ${table}`);
+    }
     await db.exec("reset role");
   }
   await db.close();
@@ -184,6 +196,25 @@ test("service_role can ingest through the RPC but cannot override the informatio
   await db.close();
 });
 
+test("service_role records a lineup forecast through the V2 RPC (security invoker) and cannot rewrite it", async () => {
+  const world = await setupLineupWorld({ supabaseDefaultPrivileges: true });
+  const { db } = world;
+  const { snapshot } = await forecastSnapshot(world, world.home.teamId);
+  await db.query("select set_config('kapiloto.test_clock', $1, false)", [LINEUP_RECORDED]);
+  await db.exec("set role service_role");
+  const result = await db.query<{ result: { status: string; snapshot_id: string } }>(
+    "select public.prediction_record_snapshot_v2($1::jsonb) as result",
+    [JSON.stringify(buildPredictionSnapshotV2Payload(snapshot))],
+  );
+  assert.equal(result.rows[0].result.status, "recorded");
+  const context = await db.query("select squad_state_sha256 from public.prediction_squad_state_context where snapshot_id = $1", [result.rows[0].result.snapshot_id]);
+  assert.equal(context.rows.length, 1);
+  await assert.rejects(db.query("delete from public.prediction_membership_inputs"), /immutable/);
+  await assert.rejects(db.query("update public.prediction_squad_state_context set history_max_fixtures = 1"), /immutable/);
+  await db.exec("reset role");
+  await db.close();
+});
+
 test("no function defined by a V4 migration is executable by app roles or security definer", async () => {
   const db = await createLedgerDatabase({ supabaseDefaultPrivileges: true, testClock: false });
   const names = new Set<string>();
@@ -191,6 +222,7 @@ test("no function defined by a V4 migration is executable by app roles or securi
     "supabase/migrations/20261028010437_kapiloto_v4_entities_match_ledger.sql",
     "supabase/migrations/20261028132857_kapiloto_v4_knowledge_prediction_registry.sql",
     "supabase/migrations/20261029074019_kapiloto_v4_roster_squad_state.sql",
+    "supabase/migrations/20261029085303_kapiloto_v4_lineup_prediction_registry_v2.sql",
   ]) {
     for (const match of readFileSync(file, "utf8").matchAll(/create or replace function (?:public|private)\.([a-z_0-9]+)\(/g)) {
       names.add(match[1]);

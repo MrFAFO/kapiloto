@@ -766,7 +766,17 @@ Added by D-053; not read by V1/V2/V3 code and no existing table is altered. Full
 
 - `team_player_memberships`: immutable, versioned roster assertions (`membership_key`, `membership_version`, team, player, `squad_group`, shirt number, inclusive start/end date bounds, `assertion_status` asserted/retracted, source provenance with optional `document_version_id`, DB-stamped `first_seen_at`). RLS enabled, no policies, no `anon`/`authenticated` grants. Writes name surviving canonical players; a key never changes team or person.
 - RPCs (service_role only): `team_player_memberships_as_of(team, cutoff, date)` (latest visible version per key, retractions dropped, coverage `certain`/`possible`/`outside`, observed and canonical player ids) and `squad_state_inputs_as_of(fixture, team, cutoff, limit)` (cutoff-filtered raw inputs: per-provider history, memberships, target-fixture claim groups with as-of beliefs, tenures).
-- The fixture squad state itself (`kapiloto-squad-state-v1`) is derived in memory by `buildFixtureSquadState` and is not persisted. The Prediction Registry is unchanged; freezing roster and tenure inputs is a 1D prerequisite.
+- The fixture squad state itself (`kapiloto-squad-state-v1`) is derived in memory by `buildFixtureSquadState` and is not persisted. The Prediction Registry is unchanged; freezing roster and tenure inputs is a 1D prerequisite (done in 1D, D-054).
+
+## V4 foundation 1D: lineup forecast baseline and Prediction Registry V2 (server-only)
+Added by D-054; not read by V1/V2/V3 code. Full semantics in `docs/architecture/KAPILOTO-V4-LINEUP-MODEL.md`. New tables have RLS enabled, no policies and no `anon`/`authenticated` grants; all rows are immutable.
+
+- `prediction_snapshots` (V4 table, additive columns): `prediction_kind` (`match_outcome` default for every existing row, or `lineup_forecast`; V2 only) and `subject_team_id` (nullable FK to `teams`; required for lineup forecasts, home or away of the fixture; null for match outcomes). Contract `kapiloto-prediction-snapshot-v2` is accepted alongside V1; the 1/X/2 rule is unchanged for match outcomes; lineup forecasts have no 1/X/2 and require `payload.lineup_estimate` when predicted.
+- `prediction_membership_inputs`: `(snapshot_id, membership_id -> team_player_memberships, input_role, input_first_seen_at)`; first seen at or before the cutoff; subject team only for lineup forecasts.
+- `prediction_tenure_inputs`: `(snapshot_id, tenure_id -> team_coach_tenures, input_role, input_first_seen_at)`; same rules.
+- `prediction_squad_state_context`: one row per lineup forecast with the 1C contract/builder/features/history-selection/availability-normalization/target-date versions, `provider_priority text[]`, `history_max_fixtures`, and `squad_state_sha256`.
+- RPC (service_role only): `prediction_record_snapshot_v2` (V2 canonical bundle = V1 families + memberships + tenures + context; atomic, idempotent, fail closed). The V1 RPC is unchanged.
+- The lineup forecast itself (`kapiloto-lineup-model-v1`, output `kapiloto-lineup-output-v1`) is computed in memory and stored only as the snapshot's `lineup_estimate` payload.
 
 ## AI personas
 ### Kapiloto

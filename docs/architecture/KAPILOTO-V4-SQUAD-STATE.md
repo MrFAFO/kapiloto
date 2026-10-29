@@ -291,6 +291,17 @@ family under a new snapshot contract version). It must not change the meaning
 or hash of existing `kapiloto-prediction-snapshot-v1` records. The existing
 input-bundle hash contract must not be silently extended.
 
+**Satisfied by Foundation 1D (D-054).** `kapiloto-prediction-snapshot-v2`
+freezes every input that can change this state: selected and alternative
+ledger observations (`squad_history_selected` / `squad_history_alternative`),
+memberships (`squad_membership`), target-fixture claims with their exact
+resolution (`squad_availability_claim` / `squad_lineup_claim`), tenures
+(`squad_coach_tenure`), identity bindings, and a squad-state context with the
+1C versions, the explicit provider priority, the history window and
+`squad_state_sha256 = SHA-256(canonical JSON of FixtureSquadState)`. The V1
+contract and its hashes are unchanged. See
+`docs/architecture/KAPILOTO-V4-LINEUP-MODEL.md`.
+
 ## Not in Foundation 1C
 
 Expected XI, starting, bench or minutes probabilities; availability or
