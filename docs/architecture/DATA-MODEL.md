@@ -761,6 +761,13 @@ Added by D-051; not read by V1/V2/V3 code and no existing table is altered. Full
 - RPCs (service_role only): `knowledge_record_document_version`, `knowledge_record_claim` (merge-aware: joins the current canonical proposition), `knowledge_record_claim_resolution`, `prediction_record_snapshot` (refuses any input first seen after the cutoff and any fixture-scoped reference of another fixture); reads `knowledge_document_version_as_of`, `knowledge_claim_resolutions_as_of` and `knowledge_claim_support_as_of` (both aggregate the current canonical proposition), `knowledge_canonical_claims` (groups, representative, collisions).
 - Canonical claims after merges (D-052): raw claims are immutable; the current proposition groups raw claims whose player/coach subjects resolve to the same survivors; collisions are exposed, never hidden.
 
+## V4 foundation 1C: roster membership and pre-match squad state (server-only)
+Added by D-053; not read by V1/V2/V3 code and no existing table is altered. Full semantics in `docs/architecture/KAPILOTO-V4-SQUAD-STATE.md`.
+
+- `team_player_memberships`: immutable, versioned roster assertions (`membership_key`, `membership_version`, team, player, `squad_group`, shirt number, inclusive start/end date bounds, `assertion_status` asserted/retracted, source provenance with optional `document_version_id`, DB-stamped `first_seen_at`). RLS enabled, no policies, no `anon`/`authenticated` grants. Writes name surviving canonical players; a key never changes team or person.
+- RPCs (service_role only): `team_player_memberships_as_of(team, cutoff, date)` (latest visible version per key, retractions dropped, coverage `certain`/`possible`/`outside`, observed and canonical player ids) and `squad_state_inputs_as_of(fixture, team, cutoff, limit)` (cutoff-filtered raw inputs: per-provider history, memberships, target-fixture claim groups with as-of beliefs, tenures).
+- The fixture squad state itself (`kapiloto-squad-state-v1`) is derived in memory by `buildFixtureSquadState` and is not persisted. The Prediction Registry is unchanged; freezing roster and tenure inputs is a 1D prerequisite.
+
 ## AI personas
 ### Kapiloto
 Fixture research only, including round-relative double value for that fixture.

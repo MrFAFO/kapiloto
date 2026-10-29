@@ -45,3 +45,21 @@ export const UNCERTAINTY_DECOMPOSITION_VERSION = "kapiloto-uncertainty-v1";
 
 /** Merge-aware claim identity (knowledge_canonical_claims). */
 export const CANONICAL_CLAIM_RULE_VERSION = "kapiloto-canonical-claim-v1";
+
+/** Row contract of public.team_player_memberships. */
+export const TEAM_PLAYER_MEMBERSHIP_CONTRACT_VERSION = "kapiloto-team-player-membership-v1";
+
+/** JSON returned by public.squad_state_inputs_as_of. */
+export const SQUAD_STATE_INPUTS_CONTRACT_VERSION = "kapiloto-squad-state-inputs-v1";
+
+/** Derived, in-memory squad state built by buildFixtureSquadState. */
+export const SQUAD_STATE_CONTRACT_VERSION = "kapiloto-squad-state-v1";
+
+/** Implementation version of buildFixtureSquadState. */
+export const SQUAD_STATE_BUILDER_VERSION = "kapiloto-squad-state-builder-v1";
+
+/** One observation per historical fixture: complete over partial, then provider priority. */
+export const HISTORY_SELECTION_POLICY_VERSION = "kapiloto-history-selection-v1";
+
+/** Raw availability status -> small derived category (normalizeAvailabilityStatus). */
+export const AVAILABILITY_NORMALIZATION_VERSION = "kapiloto-availability-normalization-v1";

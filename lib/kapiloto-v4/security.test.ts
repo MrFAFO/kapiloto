@@ -40,6 +40,7 @@ const V4_TABLES = [
   "prediction_claim_observation_inputs",
   "prediction_reference_inputs",
   "prediction_identity_bindings",
+  "team_player_memberships",
 ];
 
 const V4_PUBLIC_FUNCTIONS = [
@@ -61,6 +62,8 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.knowledge_claim_resolutions_as_of(uuid[], timestamptz)",
   "public.knowledge_claim_support_as_of(uuid, timestamptz)",
   "public.knowledge_canonical_claims(uuid[])",
+  "public.team_player_memberships_as_of(uuid, timestamptz, date)",
+  "public.squad_state_inputs_as_of(uuid, uuid, timestamptz, integer)",
 ];
 
 const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
@@ -187,6 +190,7 @@ test("no function defined by a V4 migration is executable by app roles or securi
   for (const file of [
     "supabase/migrations/20261028010437_kapiloto_v4_entities_match_ledger.sql",
     "supabase/migrations/20261028132857_kapiloto_v4_knowledge_prediction_registry.sql",
+    "supabase/migrations/20261029074019_kapiloto_v4_roster_squad_state.sql",
   ]) {
     for (const match of readFileSync(file, "utf8").matchAll(/create or replace function (?:public|private)\.([a-z_0-9]+)\(/g)) {
       names.add(match[1]);
