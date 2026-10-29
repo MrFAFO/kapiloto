@@ -72,3 +72,15 @@ export const SQUAD_FEATURES_VERSION = "kapiloto-squad-features-v1";
  * canonical kickoff. Deterministic, not necessarily the competition-local date.
  */
 export const SQUAD_TARGET_DATE_POLICY_VERSION = "kapiloto-target-date-utc-v1";
+
+/** JSON payload accepted by public.prediction_record_snapshot_v2 (kinds, subject team, frozen 1C inputs). */
+export const PREDICTION_SNAPSHOT_V2_CONTRACT_VERSION = "kapiloto-prediction-snapshot-v2";
+
+/** Lineup forecast baseline model (B0 Beta history + M1 claim pseudo-counts, team projection). */
+export const LINEUP_MODEL_VERSION = "kapiloto-lineup-model-v1";
+
+/** Versioned, injectable parameters of the lineup model (uncalibrated baseline values). */
+export const LINEUP_PARAMETERS_VERSION = "kapiloto-lineup-parameters-v1";
+
+/** Shape of the lineup_estimate payload section. */
+export const LINEUP_OUTPUT_CONTRACT_VERSION = "kapiloto-lineup-output-v1";

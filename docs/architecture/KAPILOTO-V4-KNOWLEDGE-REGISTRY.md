@@ -258,6 +258,19 @@ the statement that wrote the snapshot. For fixture-scoped references,
 linked, so a later edit to a mutable source table (such as V1
 `fixture_market_snapshots`) is detectable.
 
+### Prediction Registry V2 (Foundation 1D, D-054)
+
+`kapiloto-prediction-snapshot-v2` adds `prediction_kind` (`match_outcome`,
+`lineup_forecast`) and `subject_team_id`, frozen roster-membership and
+coach-tenure links (`prediction_membership_inputs`, `prediction_tenure_inputs`)
+and one `prediction_squad_state_context` per lineup forecast, recorded through
+`public.prediction_record_snapshot_v2`. V1 is untouched: the V1 RPC, the V1
+canonical bundle and the output hash are not modified, existing rows are
+`match_outcome` with no subject team, and golden tests pin the V1 hashes. A
+lineup forecast has no 1/X/2, is scoped to one team of the fixture, and its
+`lineup_estimate` must match the frozen squad-state hash. Full semantics:
+`docs/architecture/KAPILOTO-V4-LINEUP-MODEL.md`.
+
 ## Anti-leakage guarantees
 
 `prediction_record_snapshot` (and any direct insert) refuses a link whose

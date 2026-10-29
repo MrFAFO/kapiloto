@@ -298,3 +298,25 @@ Decision:
 Details: `docs/architecture/KAPILOTO-V4-SQUAD-STATE.md`.
 
 Reason: Availability, expected lineups, minutes and replacements all need a reproducible, leakage-free picture of the squad before kickoff. Without explicit provider fusion, partial-data denominators and evidence standing, a lineup model would double-count matches, mistake missing data for absence, or let a single unverified report decide the team.
+
+## D-054 — V4 lineup forecast baseline and Prediction Registry V2
+Decision:
+- **Registry V2, V1 untouched.** A new contract `kapiloto-prediction-snapshot-v2` and RPC `prediction_record_snapshot_v2` persist team-scoped lineup forecasts. The V1 RPC, the V1 canonical input bundle and the output hash are not modified; every existing row is `match_outcome` with no subject team; golden tests pin the V1 input/output hashes captured before the migration.
+- **Kinds.** `match_outcome` keeps the 1/X/2 rule (V1 and V2). `lineup_forecast` (V2 only) has no 1/X/2, a frozen `subject_team_id` that plays the fixture, and requires `payload.lineup_estimate` when predicted. `abstained` is never used to carry a forecast that was made. One forecast per team.
+- **Frozen 1C inputs.** Memberships and tenures get their own link tables. Lineup forecasts must use squad roles: selected/alternative ledger history of the subject team (never the target fixture), target-fixture claims about the subject team with their exact resolution, memberships, tenures and identity bindings. Everything is first seen at or before the cutoff and is the version the 1C as-of reads return (latest visible version, finished observations only, no withdrawals or retractions).
+- **Squad-state context and hash.** One context row freezes the 1C versions, the explicit provider priority, the history window, the exact canonical JSON bytes of the state (`squad_state_canonical_json`) and `squad_state_sha256 = SHA-256(those bytes)`. The database verifies that any stored `lineup_estimate` matches the snapshot's fixture, subject team and context hash, that a predicted one is `projected`, and that every output player has an identity binding. Historical replay uses the frozen artifact, not a current re-read: today's 1C reads resolve today's survivors, so a rebuilt state differs after a later merge on purpose.
+- **Version-specific canonicalization.** V2 bundle = V1 canonical families + sorted memberships + sorted tenures + normalized context; the commit-time check rebuilds it from the link rows and dispatches by contract version.
+- **Baseline model (`kapiloto-lineup-model-v1`, parameters `kapiloto-lineup-parameters-v1`, output `kapiloto-lineup-output-v1`).** Pure and deterministic. B0 is a Beta(1,1) posterior over last-10 known starts and appearances. M1 treats accepted reported-lineup claims as pseudo-counts (verified: starts +4/+4, on_bench +4 start failures/+2 appearances, not_in_squad +8/+8; degraded is half). Accepted availability caps the start probability (available 0.98, doubtful 0.60, unavailable 0.02, suspended 0, returning 0.75; unknown or conflicting means no cap). Cross-family conflicts suppress claim adjustments and the cap. One team intercept makes the start marginals sum to exactly 11, allocated as integer basis points summing to 110000 with caps respected. The modal XI is the top 11 (a set, not a joint distribution). Appearance is max(start, min(cap, raw)). Expected regulation minutes are 0-90 with explicit starter/substitute samples or 75/18 fallbacks. The values are uncalibrated; there is no bench or squad-selection probability.
+- **Benchmarks.** Start Brier, log loss (epsilon 1e-6), modal-XI hits and minutes MAE, over known truth only.
+- **Replay and correctness hardening (before activation).**
+  - *Complete capture.* At commit, the registry re-runs `squad_state_inputs_as_of(fixture, subject team, cutoff, history_max_fixtures)` and requires the frozen history, membership, tenure and claim/resolution sets to equal it exactly.
+  - *Frozen state artifact.* It stores the exact canonical JSON bytes of the squad state as text, with a SHA-256 check, so a historical forecast's state is retrievable and its output replayable after later identity merges.
+  - *Output contract.* The database and TypeScript validate the stored `kapiloto-lineup-output-v1` contract.
+  - *Cross-family conflicts.* They are decided on the raw accepted evidence sets.
+  - *Minutes.* Conditional minutes use only role-known rows.
+  - *Negated reports.* Negated lineup reports are ignored.
+  - *Parameters.* The complete parameter object is validated fail closed, with `team_starters` = 11.
+
+Details: `docs/architecture/KAPILOTO-V4-LINEUP-MODEL.md`.
+
+Reason: A lineup forecast is only scientifically useful if it can be replayed and audited: exactly which roster, tenure, history, claim and identity inputs it saw before the cutoff, and which derivation produced it. Extending the V1 bundle in place would have silently changed the meaning and hashes of existing snapshots, so V2 is a separate, versioned contract. A transparent Beta-Binomial baseline with explicit evidence rules is the benchmark every later lineup model must beat.

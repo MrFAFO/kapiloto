@@ -1,4 +1,16 @@
-import { PREDICTION_SNAPSHOT_CONTRACT_VERSION, UNCERTAINTY_DECOMPOSITION_VERSION } from "./versions";
+import { sha256Hex } from "./canonical-json";
+import {
+  AVAILABILITY_NORMALIZATION_VERSION,
+  HISTORY_SELECTION_POLICY_VERSION,
+  PREDICTION_SNAPSHOT_CONTRACT_VERSION,
+  PREDICTION_SNAPSHOT_V2_CONTRACT_VERSION,
+  SQUAD_FEATURES_VERSION,
+  SQUAD_STATE_BUILDER_VERSION,
+  SQUAD_STATE_CONTRACT_VERSION,
+  SQUAD_STATE_INPUTS_CONTRACT_VERSION,
+  SQUAD_TARGET_DATE_POLICY_VERSION,
+  UNCERTAINTY_DECOMPOSITION_VERSION,
+} from "./versions";
 
 /**
  * Prediction Registry contracts (V4 Foundation 1B).
@@ -250,4 +262,114 @@ export function buildPredictionSnapshotPayload(input: PredictionSnapshotInput): 
 
 export const PREDICTION_REGISTRY_FUNCTIONS = {
   recordSnapshot: "prediction_record_snapshot",
+  recordSnapshotV2: "prediction_record_snapshot_v2",
 } as const;
+
+// ---------------------------------------------------------------------------
+// Prediction Registry V2 (kapiloto-prediction-snapshot-v2)
+// ---------------------------------------------------------------------------
+
+/**
+ * V1 snapshots are always match_outcome. V2 adds lineup_forecast: no 1/X/2,
+ * team-scoped by subjectTeamId, lineup_estimate payload required when
+ * predicted. A V2 snapshot freezes the 1C inputs too.
+ */
+export const PREDICTION_KINDS = ["match_outcome", "lineup_forecast"] as const;
+export type PredictionKind = (typeof PREDICTION_KINDS)[number];
+
+/** Input roles a lineup forecast must use (enforced by the database). */
+export const LINEUP_INPUT_ROLES = {
+  historySelected: "squad_history_selected",
+  historyAlternative: "squad_history_alternative",
+  membership: "squad_membership",
+  availabilityClaim: "squad_availability_claim",
+  lineupClaim: "squad_lineup_claim",
+  coachTenure: "squad_coach_tenure",
+} as const;
+
+/** One row of prediction_squad_state_context: the exact 1C state a lineup forecast consumed. */
+export type SquadStateContext = {
+  subjectTeamId: string;
+  squadStateInputsContract: typeof SQUAD_STATE_INPUTS_CONTRACT_VERSION;
+  squadStateContract: typeof SQUAD_STATE_CONTRACT_VERSION;
+  squadStateBuilderVersion: typeof SQUAD_STATE_BUILDER_VERSION;
+  squadFeaturesVersion: typeof SQUAD_FEATURES_VERSION;
+  historySelectionPolicyVersion: typeof HISTORY_SELECTION_POLICY_VERSION;
+  availabilityNormalizationVersion: typeof AVAILABILITY_NORMALIZATION_VERSION;
+  targetDatePolicy: typeof SQUAD_TARGET_DATE_POLICY_VERSION;
+  providerPriority: string[];
+  historyMaxFixtures: number;
+  squadStateSha256: string;
+  /** canonicalJson(state): the exact bytes the model consumed; squadStateSha256 is their SHA-256. */
+  squadStateCanonicalJson: string;
+};
+
+export type PredictionInputsV2 = PredictionInputs & {
+  memberships?: { membershipId: string; inputRole?: string }[];
+  tenures?: { tenureId: string; inputRole?: string }[];
+  squadStateContext?: SquadStateContext | null;
+};
+
+export type PredictionSnapshotV2Input = Omit<PredictionSnapshotInput, "inputs"> & {
+  predictionKind: PredictionKind;
+  /** Required for lineup_forecast (home or away of the fixture); null for match_outcome. */
+  subjectTeamId: string | null;
+  inputs: PredictionInputsV2;
+};
+
+export function validatePredictionSnapshotV2(input: PredictionSnapshotV2Input): string[] {
+  if (input.predictionKind === "match_outcome") {
+    const issues = validatePredictionSnapshot({ ...input, inputs: input.inputs });
+    if (input.subjectTeamId) issues.push("a match outcome has no subject team");
+    if (input.inputs.squadStateContext) issues.push("only lineup forecasts carry a squad-state context");
+    return issues;
+  }
+  const issues: string[] = [];
+  if (!input.subjectTeamId) issues.push("a lineup forecast needs a subject team");
+  if (input.probabilities) issues.push("a lineup forecast has no 1/X/2 probabilities");
+  if (input.outcome === "predicted" && !input.payload?.lineup_estimate) issues.push("a predicted lineup forecast needs lineup_estimate");
+  if (input.outcome === "abstained" && !input.abstainReason) issues.push("an abstained snapshot needs an abstain reason");
+  if (!input.inputs.squadStateContext) issues.push("a lineup forecast needs its squad-state context");
+  else {
+    if (input.inputs.squadStateContext.subjectTeamId.toLowerCase() !== input.subjectTeamId?.toLowerCase()) {
+      issues.push("squad-state context team differs from the subject team");
+    }
+    if (sha256Hex(input.inputs.squadStateContext.squadStateCanonicalJson) !== input.inputs.squadStateContext.squadStateSha256) {
+      issues.push("squad-state artifact does not hash to its SHA-256");
+    }
+  }
+  if (Date.parse(input.researchCutoffAt) > Date.parse(input.kickoffAtSnapshot)) issues.push("research cutoff is after kickoff");
+  return issues;
+}
+
+/** V1 payload fields plus kind, subject team and the V2 input families. */
+export function buildPredictionSnapshotV2Payload(input: PredictionSnapshotV2Input): Record<string, unknown> {
+  const { memberships, tenures, squadStateContext, ...v1Inputs } = input.inputs;
+  const base = buildPredictionSnapshotPayload({ ...input, inputs: v1Inputs });
+  const context = squadStateContext ?? null;
+  return {
+    ...base,
+    contract_version: PREDICTION_SNAPSHOT_V2_CONTRACT_VERSION,
+    prediction_kind: input.predictionKind,
+    subject_team_id: lowerId(input.subjectTeamId),
+    inputs: {
+      ...(base.inputs as Record<string, unknown>),
+      memberships: (memberships ?? []).map((item) => ({ membership_id: item.membershipId.toLowerCase(), input_role: item.inputRole ?? null })),
+      tenures: (tenures ?? []).map((item) => ({ tenure_id: item.tenureId.toLowerCase(), input_role: item.inputRole ?? null })),
+      squad_state_context: context && {
+        subject_team_id: context.subjectTeamId.toLowerCase(),
+        squad_state_inputs_contract: context.squadStateInputsContract,
+        squad_state_contract: context.squadStateContract,
+        squad_state_builder_version: context.squadStateBuilderVersion,
+        squad_features_version: context.squadFeaturesVersion,
+        history_selection_policy_version: context.historySelectionPolicyVersion,
+        availability_normalization_version: context.availabilityNormalizationVersion,
+        target_date_policy: context.targetDatePolicy,
+        provider_priority: [...context.providerPriority],
+        history_max_fixtures: context.historyMaxFixtures,
+        squad_state_sha256: context.squadStateSha256,
+        squad_state_canonical_json: context.squadStateCanonicalJson,
+      },
+    },
+  };
+}
