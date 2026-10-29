@@ -3,7 +3,6 @@ on:
   push:
     branches:
       - feat/v4-match-ledger-provider-ingest-a2a-validation
-
 jobs:
   validate:
     runs-on: ubuntu-latest

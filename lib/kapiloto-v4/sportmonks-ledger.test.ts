@@ -119,7 +119,10 @@ test("duplicate jerseys become null and non-finished fixtures are not emitted", 
   const parsed = parseSportmonksLedgerFixture(row, options)!;
   const dupes = parsed.players.filter((p) => p.provider_team_id === "101" && ["101", "102"].includes(p.provider_player_id));
   assert.ok(dupes.every((p) => p.shirt_number === null));
-  assert.equal((parseSportmonksLedgerFixture(rawFixture({ state: { developer_name: "NS" } }), options), null);
+  assert.equal(
+    parseSportmonksLedgerFixture(rawFixture({ state: { developer_name: "NS" } }), options),
+    null,
+  );
 });
 
 test("raw payload hash is deterministic and seeded definition contract is exact", () => {
