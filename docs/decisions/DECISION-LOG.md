@@ -384,3 +384,20 @@ Decision:
 Details: `docs/architecture/KAPILOTO-V4-PROVIDER-INGEST.md`.
 
 Reason: Historical team strength needs many finished matches, and the ledger must not acquire wrong identities, silent zeros or leaked knowledge on the way in. Teams and competitions cannot be merged later (D-050), so they are never guessed. Missing data must stay distinguishable from absent events. Backfilled history must be usable for training without being presented as what was known live.
+
+## D-057 — Contain V3 Sportmonks mapping writes and pause historical ingest (Stage 0)
+Decision:
+- **Observed.** On 2026-10-30 the five A2-B pilot competitions (Sportmonks 8, 82, 372, 384, 564) were promoted to `manual_override` at about 20:34:57 UTC. By 20:45:05 UTC V3's structured sync had upserted 8, 372 and 384 back to `confirmed`; 82 and 564 were not in the current round.
+- **Cause.** The V3 Sportmonks store upserts team, competition and fixture mappings with `ON CONFLICT DO UPDATE` on every structured sync (the daily cron and the 15-minute precompute job). Each sync can re-point an identity and reset its status. A name-matched mapping (confidence 0.9) is rewritten at confidence 1 once V3 fetches the fixture by its own mapped id. So A2-A's trust rule (`manual_override`, or `confirmed` at confidence 1) rests on columns an automated writer controls.
+- **Guard.** Migration `20261030211645_kapiloto_v4_identity_mapping_guard.sql` adds a row-level `BEFORE UPDATE` trigger (`private.guard_v3_identity_mapping_update`) to `provider_team_mappings`, `provider_competition_mappings` and `provider_fixture_mappings`. For every Sportmonks row and every `manual_override` row it returns `NULL`, so the update is skipped:
+  - no error, and V3's sync continues;
+  - INSERT of a missing mapping and DELETE (including cascades) are unchanged;
+  - other providers' non-`manual_override` rows are unaffected.
+- **Operator override.** An operator changes a guarded row only in a transaction that runs `set local kapiloto.identity_operator = 'on'`.
+- **Pause.** `service_role` loses EXECUTE on `match_ledger_ingest_provider_fixture`. Existing `confirmed`/1 Sportmonks rows are suspect until re-attested.
+- **Scope.** This is the one deliberate exception to "V4 adds no trigger to V3 tables". No V3 code changes. No data changes: re-promotion is a separate operator step after the migration is applied.
+- **Next (Stage 1).** Historical trust moves to V4-owned attestations, requiring mapping and attestation agreement, with one provider id per canonical team or competition. Fixture trust is derived from attested teams, competition and kickoff. The ingest grant returns with it.
+
+Details: `docs/architecture/KAPILOTO-V4-PROVIDER-INGEST.md` ("Stage 0 containment"), `docs/operations/2026-10-30-sportmonks-mapping-overwrite.md`.
+
+Reason: An identity mapping that an automated sync can rewrite every 15 minutes cannot carry historical-ingest trust, and an operator's `manual_override` must not be silently undone. Suppressing the mutation in the database stops it immediately without a deploy and without interrupting V3's structured snapshots. Pausing ingest keeps laundered rows from reaching the ledger before the trust model changes.

@@ -12,7 +12,12 @@ const V4_MIGRATIONS = [
   /_kapiloto_v4_lineup_prediction_registry_v2\.sql$/,
   /_kapiloto_v4_squad_state_features_v2\.sql$/,
   /_kapiloto_v4_provider_ingest\.sql$/,
+  /_kapiloto_v4_identity_mapping_guard\.sql$/,
 ];
+// The one deliberate exception to "no trigger on a V3 table" (D-057): a
+// row-level BEFORE UPDATE guard on the three V3 identity mapping tables.
+const IDENTITY_GUARD_MIGRATION = /_kapiloto_v4_identity_mapping_guard\.sql$/;
+const IDENTITY_GUARDED_TABLES = ["provider_competition_mappings", "provider_fixture_mappings", "provider_team_mappings"];
 const V4_TABLES = new Set([
   "players",
   "player_aliases",
@@ -88,7 +93,7 @@ test("the V4 migrations are the latest, in order, and strictly additive", () => 
     assert.equal(matches.length, 1, String(pattern));
     return matches[0];
   });
-  // 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A in order, and nothing after them.
+  // 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A, the D-057 guard in order, and nothing after them.
   assert.deepEqual(files.slice(-v4.length), v4);
   for (const file of v4) {
     const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
@@ -104,13 +109,33 @@ test("the V4 migrations are the latest, in order, and strictly additive", () => 
       assert.ok(V4_TABLES.has(match[1]), `${file} creates unexpected table ${match[1]}`);
     }
   }
-  // 1B onwards add no trigger, constraint or index to an existing (pre-V4) table.
+  // 1B onwards add no trigger, constraint or index to an existing (pre-V4)
+  // table, except the D-057 guard checked below.
   for (const file of v4.slice(1)) {
     const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
+    const allowed = IDENTITY_GUARD_MIGRATION.test(file) ? new Set(IDENTITY_GUARDED_TABLES) : new Set<string>();
     for (const match of sql.matchAll(/\bon\s+public\.([a-z_]+)/g)) {
-      assert.ok(V4_TABLES.has(match[1]), `${file} attaches to existing table ${match[1]}`);
+      assert.ok(V4_TABLES.has(match[1]) || allowed.has(match[1]), `${file} attaches to existing table ${match[1]}`);
     }
   }
+});
+
+test("the D-057 guard migration only adds BEFORE UPDATE row triggers to the V3 mapping tables and pauses ingest", () => {
+  const dir = join(ROOT, "supabase", "migrations");
+  const file = readdirSync(dir).find((name) => IDENTITY_GUARD_MIGRATION.test(name))!;
+  const sql = readFileSync(join(dir, file), "utf8").toLowerCase().replace(/\r\n/g, "\n");
+  const code = sql.split("\n").filter((line) => !line.trimStart().startsWith("--")).join("\n");
+  const triggers = [...code.matchAll(
+    /create trigger ([a-z_]+)\s+before update on public\.([a-z_]+)\s+for each row\s+when \(old\.provider = 'sportmonks' or old\.mapping_status = 'manual_override'\)\s+execute function private\.guard_v3_identity_mapping_update\(\);/g,
+  )].map((match) => [match[2], match[1]]);
+  assert.deepEqual(
+    triggers.slice().sort(),
+    IDENTITY_GUARDED_TABLES.map((table) => [table, `${table}_identity_guard`]),
+  );
+  assert.equal((code.match(/\bcreate trigger\b/g) ?? []).length, 3);
+  assert.doesNotMatch(code, /\b(alter table|create (unique )?index|constraint|insert into|update public\.|delete from)\b/);
+  assert.match(code, /revoke execute on function public\.match_ledger_ingest_provider_fixture\(jsonb\) from service_role;/);
+  assert.doesNotMatch(code, /\bgrant\b/);
 });
 
 // 1D adds V2 alongside V1: it never redefines the V1 RPC or the V1 hashing.

@@ -77,13 +77,16 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.team_player_memberships_as_of(uuid, timestamptz, date)",
   "public.squad_state_inputs_as_of(uuid, uuid, timestamptz, integer)",
   "public.prediction_record_snapshot_v2(jsonb)",
-  "public.match_ledger_ingest_provider_fixture(jsonb)",
   "public.provider_ingest_record_failure(uuid, text, text, text, jsonb)",
   "public.match_ledger_team_match_stats_as_of(text, uuid[], timestamptz, timestamptz)",
   "public.match_ledger_team_match_stats_for_training(text, uuid[], timestamptz, timestamptz, text)",
   "public.match_ledger_retrospective_training_exclusions(text, uuid[], timestamptz, timestamptz, text)",
   "public.match_ledger_provider_ref_conflicts(text)",
 ];
+
+// Historical ingest is paused (D-057): not executable even by service_role
+// until Stage 1 replaces the mapping trust columns with attestations.
+const V4_PAUSED_PUBLIC_FUNCTIONS = ["public.match_ledger_ingest_provider_fixture(jsonb)"];
 
 const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.kapiloto_information_clock()",
@@ -146,6 +149,16 @@ test("every V4 table is RLS-protected, policy-free and invisible to app users", 
       [fn],
     );
     assert.deepEqual(privileges.rows[0], { anon: false, authenticated: false, service_role: true, definer: false }, fn);
+  }
+  for (const fn of V4_PAUSED_PUBLIC_FUNCTIONS) {
+    const privileges = await db.query<{ anon: boolean; authenticated: boolean; service_role: boolean; definer: boolean }>(
+      `select has_function_privilege('anon', $1::regprocedure, 'execute') as anon,
+              has_function_privilege('authenticated', $1::regprocedure, 'execute') as authenticated,
+              has_function_privilege('service_role', $1::regprocedure, 'execute') as service_role,
+              (select prosecdef from pg_proc where oid = $1::regprocedure) as definer`,
+      [fn],
+    );
+    assert.deepEqual(privileges.rows[0], { anon: false, authenticated: false, service_role: false, definer: false }, fn);
   }
   for (const fn of V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE) {
     const privileges = await db.query<{ authenticated: boolean; service_role: boolean }>(
@@ -257,6 +270,7 @@ test("no function defined by a V4 migration is executable by app roles or securi
     "supabase/migrations/20261029085303_kapiloto_v4_lineup_prediction_registry_v2.sql",
     "supabase/migrations/20261029211641_kapiloto_v4_squad_state_features_v2.sql",
     "supabase/migrations/20261030101247_kapiloto_v4_provider_ingest.sql",
+    "supabase/migrations/20261030211645_kapiloto_v4_identity_mapping_guard.sql",
   ]) {
     for (const match of readFileSync(file, "utf8").matchAll(/create or replace function (?:public|private)\.([a-z_0-9]+)\(/g)) {
       names.add(match[1]);
@@ -276,17 +290,25 @@ test("no function defined by a V4 migration is executable by app roles or securi
   await db.close();
 });
 
-test("service_role ingests a provider fixture and reads team match stats (security invoker); audit rows stay immutable", async () => {
+test("service_role cannot ingest while paused; with the grant restored it ingests and reads team match stats (security invoker); audit rows stay immutable", async () => {
   const db = await createLedgerDatabase({ supabaseDefaultPrivileges: true });
   const seed = await seedIngestIdentities(db);
   const run = await createIngestRun(db);
   const capture = syntheticCapture({ kickoffAt: "2026-08-15T18:00:00.000Z", capturedAt: "2026-10-30T08:59:00.000Z" });
   await db.query("select set_config('kapiloto.test_clock', '2026-10-30T09:00:00.000Z', false)");
+  const payload = JSON.stringify(buildProviderMatchObservationPayload(observationFrom(capture, { runId: run })));
 
+  // D-057 pause.
+  await db.exec("set role service_role");
+  await assert.rejects(db.query("select public.match_ledger_ingest_provider_fixture($1::jsonb)", [payload]), /permission denied/);
+  await db.exec("reset role");
+
+  // The grant Stage 1 restores: the RPC then runs with service_role's own privileges.
+  await db.exec("grant execute on function public.match_ledger_ingest_provider_fixture(jsonb) to service_role");
   await db.exec("set role service_role");
   const result = await db.query<{ result: { status: string; fixture_resolution: string } }>(
     "select public.match_ledger_ingest_provider_fixture($1::jsonb) as result",
-    [JSON.stringify(buildProviderMatchObservationPayload(observationFrom(capture, { runId: run })))],
+    [payload],
   );
   assert.deepEqual([result.rows[0].result.status, result.rows[0].result.fixture_resolution], ["recorded", "minted"]);
   const rows = await db.query("select * from public.match_ledger_team_match_stats_as_of('sportmonks', $1::uuid[], null, now())", [[seed.competitionId]]);

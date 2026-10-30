@@ -7,6 +7,7 @@ import { buildMatchLedgerObservationPayload } from "./match-ledger";
 import { PROVIDER_REF_CONFLICT_CODES, loadProviderRefConflicts, type ProviderRefConflict } from "./provider-ingest";
 import { createFixture, createLedgerDatabase, realisticObservation, recordObservation, seedLedger } from "./test-support/ledger-fixtures";
 import {
+  asIdentityOperator,
   ingest,
   observationFrom,
   pgliteRpc,
@@ -70,9 +71,10 @@ test("team refs: missing, untrusted and drift are reported with deterministic co
   await ingest(db, observationFrom(s.capture()), SEEN);
   const elsewhere = await otherTeam(db, "Repointed FC");
 
-  // V3-style repoint of the home team (trusted, different team) and a name-resolved away team.
-  await db.query("update public.provider_team_mappings set team_id = $1 where provider = 'sportmonks' and provider_team_id = $2", [elsewhere, s.ids.homeTeamId]);
-  await db.query("update public.provider_team_mappings set mapping_confidence = 0.9 where provider = 'sportmonks' and provider_team_id = $1", [s.ids.awayTeamId]);
+  // A repoint of the home team (trusted, different team) and a name-resolved
+  // away team. Since D-057 only an operator can still change these rows.
+  await asIdentityOperator(db, "update public.provider_team_mappings set team_id = $1 where provider = 'sportmonks' and provider_team_id = $2", [elsewhere, s.ids.homeTeamId]);
+  await asIdentityOperator(db, "update public.provider_team_mappings set mapping_confidence = 0.9 where provider = 'sportmonks' and provider_team_id = $1", [s.ids.awayTeamId]);
   const first = await conflicts(db);
   assert.deepEqual(brief(first), [
     ["team_mapping_untrusted", "team_away", s.ids.awayTeamId, 1, true, s.seed.awayTeamId, s.seed.awayTeamId],
@@ -82,7 +84,7 @@ test("team refs: missing, untrusted and drift are reported with deterministic co
   assert.deepEqual(await conflicts(db), first);
 
   // An untrusted mapping that also points elsewhere reports both; a missing one reports only "missing".
-  await db.query("update public.provider_team_mappings set team_id = $1, mapping_status = 'unverified' where provider = 'sportmonks' and provider_team_id = $2", [elsewhere, s.ids.awayTeamId]);
+  await asIdentityOperator(db, "update public.provider_team_mappings set team_id = $1, mapping_status = 'unverified' where provider = 'sportmonks' and provider_team_id = $2", [elsewhere, s.ids.awayTeamId]);
   await db.query("delete from public.provider_team_mappings where provider = 'sportmonks' and provider_team_id = $1", [s.ids.homeTeamId]);
   assert.deepEqual(brief(await conflicts(db)), [
     ["team_mapping_drift", "team_away", s.ids.awayTeamId, 1, true, s.seed.awayTeamId, elsewhere],
@@ -99,11 +101,12 @@ test("competition refs: missing, untrusted, drift and fixture competition drift"
   const other = await seedIngestIdentities(db, { mapCompetition: false, mapTeams: false });
 
   // Plain V3 'confirmed' is below the historical trust boundary.
-  await db.query("update public.provider_competition_mappings set mapping_status = 'confirmed' where provider = 'sportmonks' and provider_competition_id = $1", [s.ids.leagueId]);
+  await asIdentityOperator(db, "update public.provider_competition_mappings set mapping_status = 'confirmed' where provider = 'sportmonks' and provider_competition_id = $1", [s.ids.leagueId]);
   assert.deepEqual(brief(await conflicts(db)), [["competition_mapping_untrusted", "league", s.ids.leagueId, 1, true, s.seed.competitionId, s.seed.competitionId]]);
 
   // Repointed to another competition under manual_override.
-  await db.query(
+  await asIdentityOperator(
+    db,
     "update public.provider_competition_mappings set mapping_status = 'manual_override', competition_id = $1 where provider = 'sportmonks' and provider_competition_id = $2",
     [other.competitionId, s.ids.leagueId],
   );
@@ -132,7 +135,7 @@ test("reconciliation covers every observation version, marks the current one, ig
   await recordObservation(db, buildMatchLedgerObservationPayload(realisticObservation(legacy, fixture, { kickoffAt: KICKOFF, retrievedAt: CAPTURED })), SEEN);
 
   const elsewhere = await otherTeam(db, "Moved FC");
-  await db.query("update public.provider_team_mappings set team_id = $1 where provider = 'sportmonks' and provider_team_id = $2", [elsewhere, s.ids.homeTeamId]);
+  await asIdentityOperator(db, "update public.provider_team_mappings set team_id = $1 where provider = 'sportmonks' and provider_team_id = $2", [elsewhere, s.ids.homeTeamId]);
   const before = await writeFootprint(db);
   const rows = await conflicts(db);
   assert.deepEqual(rows.map((r) => [r.issue_code, r.observation_version, r.is_current_version]), [
@@ -145,7 +148,7 @@ test("reconciliation covers every observation version, marks the current one, ig
   assert.equal(volatility, "s");
 
   // The 1A fixture reconciliation is unchanged and still reports fixture-mapping drift.
-  await db.query("update public.provider_fixture_mappings set provider_fixture_id = 'moved' where provider = 'sportmonks' and provider_fixture_id = $1", [String(15_000_000 + n)]);
+  await asIdentityOperator(db, "update public.provider_fixture_mappings set provider_fixture_id = 'moved' where provider = 'sportmonks' and provider_fixture_id = $1", [String(15_000_000 + n)]);
   await db.query("insert into public.provider_fixture_mappings (fixture_id, provider, provider_fixture_id, mapping_confidence) values ($1, 'sportmonks', $2, 1)", [fixture.fixtureId, String(15_000_000 + n)]);
   const fixtureDrift = await db.query<{ conflict_kind: string }>("select conflict_kind from public.match_ledger_mapping_conflicts('sportmonks') where conflict_kind = 'fixture'");
   assert.equal(fixtureDrift.rows.length, 1);
