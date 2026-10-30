@@ -67,4 +67,9 @@ backfill had run.
 - Continue observing at least two natural precompute cycles and the next 05:22
   UTC structured sync. Existing guarded Sportmonks rows must not change.
 
+V3 code alignment was then deployed to production in commit
+`aa5568a78b67646496ad3159617bfb90284bb69e`: Sportmonks identity mapping
+writes are insert-only and remain weak evidence at confidence 0.9. The D-057
+database trigger remains the hard safety boundary.
+
 Historical ingest stays paused until Stage 1 (V4 attestations) lands.
