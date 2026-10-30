@@ -332,3 +332,38 @@ Decision:
 Details: `docs/architecture/KAPILOTO-V4-SQUAD-STATE.md`.
 
 Reason: Versioned science. Frozen artifacts must keep their meaning, and a corrected rule must be a new, named derivation from the same frozen inputs rather than an edit behind an existing version string.
+
+## D-056 — V4 provider-native Match Ledger ingest contracts (1E-A2-A)
+Decision:
+- **Contracts only.** A2-A adds:
+  - a captured Sportmonks bundle (`kapiloto-sportmonks-ledger-capture-v1`);
+  - a pure offline parser (`kapiloto-sportmonks-ledger-mapping-v1`, which is also the ledger `ingest_version`);
+  - the ingest RPC `match_ledger_ingest_provider_fixture` (`kapiloto-provider-match-observation-v1`);
+  - an append-only ingest audit;
+  - the per-team stats read `kapiloto-team-match-stats-v1`.
+
+  Nothing calls a provider, runs a backfill or lists competitions; that is A2-B. The 1A RPC, the as-of reads, the content hash and `first_seen_at` are unchanged.
+- **Raw hash.** `raw_payload_sha256` is the SHA-256 of one raw response body. Only the capturer supplies it; the parser never computes it, and it is null otherwise. Per-family response hashes are audit-only.
+- **Explicit missingness.** Every family carries `fetched` / `not_requested` / `failed`. An empty array never means "provided".
+  - Extra time is `not_separable`.
+  - A fetched family whose key is absent or unusable is `not_observed`.
+  - A family that was not requested, or that has no recorded status, is `family_not_provided`.
+  - A failed family is quarantined, never frozen.
+
+  Statuses are sealed per observation version in `match_ledger_observation_family_fetches`. A downgrade is quarantined. An upgrade with unchanged content cannot be versioned and is quarantined (`family_status_drift`).
+- **Identity.**
+  - Canonical teams and competitions are never created by ingest; they resolve only through confirmed or manual mappings.
+  - An existing provider fixture mapping wins if it is authoritative and consistent. Otherwise a competition-scoped canonical-key search attaches only a unique ±48 h candidate with no ±14-day, ±180-day postponed or unknown-competition alternatives, and quarantines anything else.
+  - A fixture is minted only under an explicit caller policy whose `kickoff_before` A2-B derives as now − (V3 scoring lookback + 1 day). No window is hardcoded in the database.
+  - Players: confirmed and manual mappings resolve to survivors. A missing mapping bootstraps a canonical player with a confirmed mapping (`mapping_basis = 'provider_native_bootstrap'`). An unverified mapping quarantines `player_mapping_unverified`, with no writes, no promotion and no second mapping.
+- **Provider-ref drift.** League, season and team refs are sealed per version in `match_ledger_observation_provider_refs`. A payload that disagrees with the latest version's refs is quarantined (`provider_ref_drift`), and so is a latest version without refs (`provider_refs_unrecorded`). A withdrawal resets the attachment. The ledger stays on contract V1.
+- **Stat definitions.** Seven Sportmonks definitions are seeded at `sm-2024-08`. They were verified against the Sportmonks v3 fixture-statistics and expected-value type references: 5304, 5305 and 7943 (three distinct xG keys), and 42, 86, 45 and 34. Rows are kept only when `type.developer_name` matches. A documentation/payload mismatch found later gets a new `definition_version`.
+- **Two availability classes.**
+  - The strict read uses actual `first_seen_at`.
+  - The training-only read (`kapiloto-retrospective-training-availability-v1`) makes version 1 of a finished backfill observation available at `min(first_seen_at, kickoff_at + 24h)`. Later versions and withdrawals keep their actual time. Rows are labelled `retrospective`.
+
+  The training loader is not exported from the V4 index and must not be imported by live or registry code. The registry already refuses ledger inputs first seen after the cutoff.
+
+Details: `docs/architecture/KAPILOTO-V4-PROVIDER-INGEST.md`.
+
+Reason: Historical team strength needs many finished matches, and the ledger must not acquire wrong identities, silent zeros or leaked knowledge on the way in. Teams and competitions cannot be merged later (D-050), so they are never guessed. Missing data must stay distinguishable from absent events. Backfilled history must be usable for training without being presented as what was known live.

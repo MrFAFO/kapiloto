@@ -2525,6 +2525,48 @@ export type Database = {
           },
         ]
       }
+      match_ledger_fixture_mints: {
+        Row: {
+          fixture_id: string
+          kickoff_before: string
+          minted_at: string
+          provider: string
+          provider_fixture_id: string
+          run_id: string | null
+        }
+        Insert: {
+          fixture_id: string
+          kickoff_before: string
+          minted_at?: string
+          provider: string
+          provider_fixture_id: string
+          run_id?: string | null
+        }
+        Update: {
+          fixture_id?: string
+          kickoff_before?: string
+          minted_at?: string
+          provider?: string
+          provider_fixture_id?: string
+          run_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_fixture_mints_fixture_id_fkey"
+            columns: ["fixture_id"]
+            isOneToOne: true
+            referencedRelation: "fixtures"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_ledger_fixture_mints_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "provider_ingest_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       match_ledger_game_state_segments: {
         Row: {
           derivation_version: string
@@ -2590,6 +2632,58 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "match_ledger_team_records"
             referencedColumns: ["observation_id", "team_id"]
+          },
+        ]
+      }
+      match_ledger_observation_family_fetches: {
+        Row: {
+          family: string
+          fetch_status: string
+          observation_id: string
+        }
+        Insert: {
+          family: string
+          fetch_status: string
+          observation_id: string
+        }
+        Update: {
+          family?: string
+          fetch_status?: string
+          observation_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_observation_family_fetches_observation_id_fkey"
+            columns: ["observation_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_observations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      match_ledger_observation_provider_refs: {
+        Row: {
+          observation_id: string
+          provider_ref: string
+          ref_kind: string
+        }
+        Insert: {
+          observation_id: string
+          provider_ref: string
+          ref_kind: string
+        }
+        Update: {
+          observation_id?: string
+          provider_ref?: string
+          ref_kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_observation_provider_refs_observation_id_fkey"
+            columns: ["observation_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_observations"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -3845,10 +3939,102 @@ export type Database = {
           },
         ]
       }
+      provider_ingest_items: {
+        Row: {
+          attempt_no: number
+          created_at: string
+          detail: Json
+          fixture_id: string | null
+          id: string
+          observation_id: string | null
+          provider: string
+          provider_fixture_id: string
+          reason_code: string | null
+          run_id: string
+          status: string
+        }
+        Insert: {
+          attempt_no: number
+          created_at?: string
+          detail?: Json
+          fixture_id?: string | null
+          id?: string
+          observation_id?: string | null
+          provider: string
+          provider_fixture_id: string
+          reason_code?: string | null
+          run_id: string
+          status: string
+        }
+        Update: {
+          attempt_no?: number
+          created_at?: string
+          detail?: Json
+          fixture_id?: string | null
+          id?: string
+          observation_id?: string | null
+          provider?: string
+          provider_fixture_id?: string
+          reason_code?: string | null
+          run_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_ingest_items_observation_id_fkey"
+            columns: ["observation_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_observations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "provider_ingest_items_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "provider_ingest_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      provider_ingest_runs: {
+        Row: {
+          created_at: string
+          entitlement_snapshot_sha256: string | null
+          fixture_mint_kickoff_before: string | null
+          id: string
+          ingest_version: string
+          provider: string
+          purpose: string
+          scope: Json
+        }
+        Insert: {
+          created_at?: string
+          entitlement_snapshot_sha256?: string | null
+          fixture_mint_kickoff_before?: string | null
+          id?: string
+          ingest_version: string
+          provider: string
+          purpose: string
+          scope?: Json
+        }
+        Update: {
+          created_at?: string
+          entitlement_snapshot_sha256?: string | null
+          fixture_mint_kickoff_before?: string | null
+          id?: string
+          ingest_version?: string
+          provider?: string
+          purpose?: string
+          scope?: Json
+        }
+        Relationships: [
+        ]
+      }
       provider_player_mappings: {
         Row: {
           created_at: string
           last_verified_at: string | null
+          mapping_basis: string | null
           mapping_confidence: number | null
           mapping_status: string
           player_id: string
@@ -3860,6 +4046,7 @@ export type Database = {
         Insert: {
           created_at?: string
           last_verified_at?: string | null
+          mapping_basis?: string | null
           mapping_confidence?: number | null
           mapping_status?: string
           player_id: string
@@ -3871,6 +4058,7 @@ export type Database = {
         Update: {
           created_at?: string
           last_verified_at?: string | null
+          mapping_basis?: string | null
           mapping_confidence?: number | null
           mapping_status?: string
           player_id?: string
@@ -4768,6 +4956,10 @@ export type Database = {
         Args: { p_document: Json }
         Returns: Json
       }
+      match_ledger_ingest_provider_fixture: {
+        Args: { p_observation: Json }
+        Returns: Json
+      }
       match_ledger_mapping_conflicts: {
         Args: { p_provider: string }
         Returns: {
@@ -4843,6 +5035,25 @@ export type Database = {
         Args: { p_observation: Json }
         Returns: Json
       }
+      match_ledger_team_match_stats_as_of: {
+        Args: {
+          p_competition_ids: string[] | null
+          p_from: string | null
+          p_provider: string
+          p_cutoff: string
+        }
+        Returns: Json[]
+      }
+      match_ledger_team_match_stats_for_training: {
+        Args: {
+          p_competition_ids: string[] | null
+          p_from: string | null
+          p_provider: string
+          p_policy: string
+          p_training_cutoff: string
+        }
+        Returns: Json[]
+      }
       player_alias_candidates: {
         Args: { p_alias: string }
         Returns: {
@@ -4856,6 +5067,16 @@ export type Database = {
       }
       prediction_record_snapshot_v2: {
         Args: { p_snapshot: Json }
+        Returns: Json
+      }
+      provider_ingest_record_failure: {
+        Args: {
+          p_detail?: Json
+          p_provider: string
+          p_provider_fixture_id: string
+          p_reason_code: string
+          p_run_id: string
+        }
         Returns: Json
       }
       resolve_provider_coach_ids: {

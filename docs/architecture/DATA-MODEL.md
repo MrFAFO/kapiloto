@@ -778,6 +778,28 @@ Added by D-054; not read by V1/V2/V3 code. Full semantics in `docs/architecture/
 - RPC (service_role only): `prediction_record_snapshot_v2` (V2 canonical bundle = V1 families + memberships + tenures + context; atomic, idempotent, fail closed). The V1 RPC is unchanged.
 - The lineup forecast itself (`kapiloto-lineup-model-v1`, output `kapiloto-lineup-output-v1`) is computed in memory and stored only as the snapshot's `lineup_estimate` payload.
 
+## V4 foundation 1E-A2-A: provider-native ingest and team match stats (server-only)
+Added by D-056. It is not read by V1/V2/V3 code, and no trigger, constraint or index is added to a V3 table. Full semantics are in `docs/architecture/KAPILOTO-V4-PROVIDER-INGEST.md`. New tables have RLS enabled, no policies and no `anon`/`authenticated` grants; all their rows are immutable.
+
+- `provider_player_mappings` (V4 table): additive column `mapping_basis` (`provider_native_bootstrap` / `operator` / `name_resolution`, null before D-056).
+- `match_ledger_stat_definitions`: seven verified Sportmonks definitions are seeded at `sm-2024-08`:
+  - xG family: 5304 `expected_goals`, 5305 `expected_goals_on_target`, 7943 `expected_non_penalty_goals`;
+  - statistics family: 42 `shots_total`, 86 `shots_on_target`, 45 `possession_pct`, 34 `corners`.
+- `provider_ingest_runs`: immutable run header (provider, purpose `backfill`/`test`, `ingest_version`, `entitlement_snapshot_sha256`, `scope`, `fixture_mint_kickoff_before`).
+- `provider_ingest_items`: append-only attempts.
+  - Key: `(run_id, provider, provider_fixture_id, attempt_no)`.
+  - `status`: `recorded` / `unchanged` / `quarantined` / `failed`, with a reason code for quarantined and failed items.
+  - Each item also has `observation_id`, a soft `fixture_id` (no foreign key) and a bounded `detail`.
+- `match_ledger_observation_provider_refs`: `(observation_id, ref_kind league/season/team_home/team_away, provider_ref)`, sealed to the writing statement of the observation version.
+- `match_ledger_observation_family_fetches`: `(observation_id, family lineups/formations/statistics/xg, fetch_status fetched/not_requested)`, also sealed.
+- `match_ledger_fixture_mints`: `(fixture_id, provider, provider_fixture_id, run_id, kickoff_before, minted_at)` for canonical fixtures created by ingest.
+- RPCs (service_role only):
+  - `match_ledger_ingest_provider_fixture` (`kapiloto-provider-match-observation-v1`): resolves provider identities, attaches, mints or quarantines, then writes through the unchanged 1A RPC; it never creates teams or competitions.
+  - `provider_ingest_record_failure`.
+  - `match_ledger_team_match_stats_as_of` (strict actual knowledge).
+  - `match_ledger_team_match_stats_for_training` (policy `kapiloto-retrospective-training-availability-v1`, training only).
+- V3 tables are written only by ingest: minted `fixtures` rows (kickoff before the caller's bound, outside V3's scoring lookback) and confirmed Sportmonks `provider_fixture_mappings`.
+
 ## AI personas
 ### Kapiloto
 Fixture research only, including round-relative double value for that fixture.

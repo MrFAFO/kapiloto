@@ -381,6 +381,13 @@ is refused, as are repeated provider event ids within one version, merged
 canonical ids in any position, and one coach leading both teams.
 `buildMatchLedgerWithdrawalPayload` builds the withdrawal form.
 
+Provider-native ingest (1E-A2-A, D-056) does not change this contract.
+`match_ledger_ingest_provider_fixture` takes provider identities and resolves
+the competition, teams, canonical fixture and players. It then calls
+`match_ledger_record_observation` with a canonical V1 payload and seals the
+version's provider refs and family fetch statuses next to it. See
+`KAPILOTO-V4-PROVIDER-INGEST.md`.
+
 ## How later V4 components consume this layer
 
 | Component | Reads |
