@@ -206,13 +206,28 @@ content cannot carry the new status. Phase 2 is rolled back (savepoint) and
 the result is the quarantine `family_status_drift`. Any other exception aborts
 the whole call: no mint, player or ledger row survives.
 
-Lock order:
+Global lock order. Every ingest takes its locks in this order, on every
+path; a test checks it from the executed nested plans:
 
-1. 1A provider-fixture lock.
-2. `kapiloto_canonical_fixture_pair:<lower team id>:<higher team id>`, only
-   when this provider fixture id has no mapping.
-3. 1A fixture/provider lock.
-4. Players identity lock, exclusive.
+1. 1A provider-fixture advisory lock, exclusive.
+2. The competition mapping row, `FOR SHARE`.
+3. Both team mapping rows in one statement, ordered by `provider_team_id
+   COLLATE "C"`, `FOR SHARE`.
+4. The incoming provider fixture mapping row, if it exists, `FOR SHARE`.
+5. Only when that mapping does not exist:
+   - the unordered team-pair advisory lock
+     `kapiloto_canonical_fixture_pair:<lower team id>:<higher team id>`,
+     exclusive;
+   - then every existing mapping row of this provider on a candidate
+     fixture, ordered by `provider_fixture_id COLLATE "C"`, `FOR SHARE`.
+6. Writes in the attach or mint branch. Their foreign-key checks take the
+   standard `FOR KEY SHARE` on the referenced competition, team and fixture
+   rows.
+7. 1A fixture/provider advisory lock, exclusive.
+8. Players identity advisory lock, exclusive. Player mappings are V4 rows
+   whose writes take this lock, so they are stable once it is held.
+
+See "Mapping row locks" for why these modes and this order.
 
 Result: `{status, reason_code, fixture_id, observation_id, attempt_no,
 fixture_resolution, observation_version, provider_refs_status, players_minted}`.
@@ -313,10 +328,137 @@ fixture_resolution, observation_version, provider_refs_status, players_minted}`.
 
 Writers that do not take this lock are not covered: the V3 Sportmonks store
 and the Toto import. The `same` state and the 1A mapping checks are the
-fail-closed backstop. The PGlite test proves the sequential half (the first
+fail-closed backstop, and the existing mapping rows are additionally row-locked
+(next section). The PGlite test proves the sequential half (the first
 transaction commits under the lock, the second takes the same key and cannot
 mint). True parallel blocking needs two connections and is not testable on
 PGlite's single connection.
+
+### Mapping row locks
+
+V3 stays active and upserts `provider_team_mappings` on `(provider,
+provider_team_id)`, `provider_competition_mappings` and
+`provider_fixture_mappings`. An upsert can repoint `team_id` or
+`competition_id`, change `mapping_status`, or move a fixture mapping. Under
+READ COMMITTED, every statement of the RPC takes a fresh snapshot. So without
+row locks, an identity resolved early in the call could be changed by a V3
+commit before the immutable observation commits, and later statements could
+mix old and new mapping states.
+
+**Mode: `FOR SHARE`, held to commit.**
+- Every V3 mapping row the call resolves is locked this way:
+  - the competition row;
+  - both team rows;
+  - the existing mapping for the incoming provider fixture id;
+  - the existing mapping rows of candidate fixtures, which are the
+    identity-conflict evidence.
+- Each row is locked before its state is checked, so a quarantine holds the
+  lock too.
+- PostgreSQL's row-lock table:
+  - `FOR SHARE` conflicts with `FOR NO KEY UPDATE` and `FOR UPDATE`.
+  - Every `UPDATE` takes at least `FOR NO KEY UPDATE`.
+  - `INSERT ... ON CONFLICT DO UPDATE` locks the existing row the same way
+    before updating it.
+  - `DELETE` takes `FOR UPDATE`.
+- So a concurrent V3 upsert, update or delete of a locked row waits until the
+  ingest commits or rolls back. At lock time, READ COMMITTED re-reads the
+  latest committed row version, so the call resolves the current state and
+  that state then cannot change under it.
+- **Why not weaker:** `FOR KEY SHARE` would only block deletes and key
+  updates. `team_id`, `competition_id` and `mapping_status` are not key
+  columns, and an `UPDATE` of non-key columns takes `FOR NO KEY UPDATE`,
+  which `FOR KEY SHARE` allows. That is exactly the repoint this must
+  prevent.
+- **Why not stronger:** `FOR SHARE` locks never conflict with each other, so
+  concurrent ingests never wait on mapping rows. A test reads the heap tuple
+  header bits (lock-only, with the exclusive and key-share bits both set) to
+  show that the ingest transaction holds `FOR SHARE` on exactly these rows,
+  and nothing else, until commit.
+
+**Deterministic order and deadlocks.**
+- Both team rows are locked by one statement whose `LockRows` node runs above
+  a `Sort` on `provider_team_id COLLATE "C"`. A home=A/away=B ingest and a
+  home=B/away=A ingest therefore acquire the rows in the same order. A test
+  shows the identical plan for both orientations, with only the IN-list
+  literal swapped.
+- Between ingests, the row locks are all shared and cannot deadlock. The
+  exclusive advisory locks are taken in one global order: provider fixture,
+  then team pair, then 1A fixture, then identity. An ingest waiting for the
+  team-pair lock holds only its own provider-fixture lock and shared row
+  locks, which the holder never needs.
+- The order is forced by data dependencies:
+  - The team-pair key needs the canonical team ids, so the team rows (step 3)
+    must be locked before the pair lock (step 5).
+  - The candidate mapping rows must be read after the pair lock, or a mapping
+    committed by an earlier pair holder could be missed.
+- A deadlock is still possible against a V3 transaction that takes exclusive
+  row locks on several mapping rows in its own order, because V3 takes none
+  of our locks. PostgreSQL's deadlock detector then aborts one of the
+  transactions. If that is the ingest, the whole call rolls back and the run
+  records a failed or retryable attempt. Nothing partial is written.
+
+**Defense in depth.** After the 1A write, the call re-checks that all of these
+still match:
+- the competition mapping;
+- both team mappings;
+- the incoming provider fixture mapping (to the fixture written, confirmed or
+  manual).
+
+Otherwise it raises, and everything rolls back. Against concurrent writers the
+row locks already guarantee this. The check turns any bypass into a full
+rollback instead of a ledger observation under a stale identity: a writer in
+the ingest's own transaction, or a future refactor that drops a lock. A test
+simulates such a bypass with a same-transaction trigger, for a team repoint, a
+status demotion, a competition repoint, and a fixture mapping repoint or
+delete.
+
+**Residual concurrency while V3 is unchanged.** These cases are fail-closed or
+serial-equivalent; none produces a wrong ledger observation:
+
+1. **A new mapping row inserted concurrently by a non-ingest writer.** There
+   is no row to lock, and V3 does not take the team-pair lock.
+   - If it is for the incoming provider fixture id, the ingest's own insert
+     violates the `(provider, provider_fixture_id)` primary key.
+   - If it is for the fixture being attached, the insert violates
+     `unique (fixture_id, provider)`.
+   - Either way the statement errors after the conflicting transaction
+     commits, and the whole call rolls back.
+   - If it lands on a candidate the call did not attach to, the result is
+     what a serial schedule with the ingest first would produce: a mint needs
+     no guarded candidate at all, so a new mapping on a candidate cannot turn
+     a mint into a wrong attach.
+2. **V3 updates after the ingest commits.** The locks end at commit. A later
+   repoint does not touch the stored observation, which keeps the identity
+   resolved under the locks. The next ingest of that fixture quarantines:
+   - `fixture_mapping_conflict` for repointed teams or competitions;
+   - `provider_fixture_id_drift` or `fixture_provider_identity_conflict` for
+     repointed fixture mappings.
+
+   A V3 `ON CONFLICT (fixture_id, provider) DO UPDATE` on a mapping the
+   ingest just inserted waits for the ingest to commit and then repoints it.
+   That is the documented V3 hazard, detected the same way.
+3. **Candidate fixture rows are not row-locked.** Their kickoff, status and
+   competition decide the guard windows, but a V3 update to them commutes
+   with the ingest's writes: the outcome equals the ingest-first serial order.
+   The fixture an observation is written to is protected against deletion by
+   the ledger's foreign key (`FOR KEY SHARE`).
+4. **V3 creating a new canonical fixture concurrently with a mint.** Toto
+   import and round-scoped structured sync do not take the team-pair lock.
+   Minting is bounded to kickoffs older than V3's scoring lookback plus one
+   day, while V3 creates fixtures for current rounds, so the windows are
+   disjoint in practice. They are not enforced by a lock. A duplicate created
+   this way is detected by the next ingest of either provider id
+   (`fixture_provider_identity_conflict`).
+
+**Test limitations.**
+- The tests prove which row locks the ingest transaction holds (pageinspect
+  tuple bits) and the order in which every lock is taken (auto_explain nested
+  plans, in execution order).
+- PGlite is a single-user backend and does not enforce row-lock conflicts
+  between transactions. Even a prepared transaction's `FOR SHARE` did not
+  refuse `FOR UPDATE NOWAIT` in a probe. So the blocking of a concurrent V3
+  writer rests on PostgreSQL's row-lock conflict table above, and no test
+  claims to demonstrate it.
 
 ### Provider refs and family statuses
 
@@ -465,6 +607,10 @@ Known V3 hazards are documented, not fixed in A2-A:
   `(fixture_id, provider)`; a V3 write for a fixture A2 minted collides on
   `(provider, provider_fixture_id)`.
 - The Toto import creates teams by exact lower-cased name.
+
+While an ingest runs, the competition, team and fixture mapping rows it
+resolved are held `FOR SHARE`, so a V3 upsert of them waits for the ingest to
+finish (see "Mapping row locks").
 
 The 1A `match_ledger_mapping_conflicts()` read detects fixture-mapping drift.
 A2-B must reconcile team identities before ingesting a competition.

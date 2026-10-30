@@ -279,9 +279,29 @@ $$;
 --
 -- Phase 1 decides read-only and quarantines without writing anything but the
 -- optional audit item. Phase 2 writes (attach/mint, players, the 1A ledger
--- write, annotations). Lock order: 1A provider-fixture -> canonical pairing
--- key -> 1A fixture/provider -> players identity (exclusive). Any exception
--- aborts the whole call.
+-- write, annotations). Any exception aborts the whole call.
+--
+-- Global lock order (every ingest, every path):
+--   1. 1A provider-fixture advisory lock (exclusive);
+--   2. the competition mapping row, FOR SHARE;
+--   3. both team mapping rows in ONE statement, ordered by provider_team_id
+--      COLLATE "C" (independent of home/away), FOR SHARE;
+--   4. the incoming provider fixture mapping row, if it exists, FOR SHARE;
+--   5. only without that mapping: the unordered canonical team-pair advisory
+--      lock (exclusive), then every existing mapping row of this provider on a
+--      candidate fixture, ordered by provider_fixture_id COLLATE "C", FOR SHARE;
+--      (attach/mint writes follow; their foreign-key checks take the standard
+--      FOR KEY SHARE on the referenced competition, team and fixture rows)
+--   6. 1A fixture/provider advisory lock (exclusive);
+--   7. players identity advisory lock (exclusive).
+-- FOR SHARE is the weakest row lock that conflicts with FOR NO KEY UPDATE and
+-- FOR UPDATE, i.e. with every UPDATE (including INSERT ... ON CONFLICT DO
+-- UPDATE) and DELETE of the row, so V3 cannot repoint or re-status a mapping
+-- this call resolved until it commits. FOR KEY SHARE would not do: team_id,
+-- competition_id and mapping_status are not key columns, and an UPDATE of
+-- non-key columns takes only FOR NO KEY UPDATE, which FOR KEY SHARE allows.
+-- FOR SHARE locks never conflict with each other, so concurrent ingests never
+-- wait on mapping rows.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.match_ledger_ingest_provider_fixture(p_observation jsonb)
@@ -331,6 +351,8 @@ declare
   v_player uuid;
   v_player_status text;
   v_name text;
+  v_competition_status text;
+  v_team record;
   r record;
 begin
   if p_observation is null or jsonb_typeof(p_observation) <> 'object' then
@@ -437,20 +459,36 @@ begin
       'finished_too_early', null, null, jsonb_build_object('kickoff_at', v.kickoff_at), null, v_flags);
   end if;
 
-  select m.competition_id into v_competition
+  -- Identity mappings are V3 rows that V3 may upsert at any time: each row
+  -- used to resolve identity is locked FOR SHARE until commit (see the
+  -- global lock order above), then its state is checked.
+  select m.competition_id, m.mapping_status into v_competition, v_competition_status
   from public.provider_competition_mappings m
   where m.provider = v.provider and m.provider_competition_id = v.provider_league_id
-    and m.mapping_status in ('confirmed', 'manual_override');
-  if v_competition is null then
+  for share;
+  if v_competition is null or v_competition_status not in ('confirmed', 'manual_override') then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
       'competition_unmapped', null, null, jsonb_build_object('provider_league_id', v.provider_league_id), null, v_flags);
   end if;
-  select m.team_id into v_home from public.provider_team_mappings m
-  where m.provider = v.provider and m.provider_team_id = v.provider_home_team_id
-    and m.mapping_status in ('confirmed', 'manual_override');
-  select m.team_id into v_away from public.provider_team_mappings m
-  where m.provider = v.provider and m.provider_team_id = v.provider_away_team_id
-    and m.mapping_status in ('confirmed', 'manual_override');
+  -- Both team rows in one statement, locked in provider_team_id order, so
+  -- home=A/away=B and home=B/away=A acquire them identically (LockRows runs
+  -- above the Sort). Home and away are derived from the locked rows.
+  for v_team in
+    select m.provider_team_id, m.team_id, m.mapping_status
+    from public.provider_team_mappings m
+    where m.provider = v.provider
+      and m.provider_team_id in (v.provider_home_team_id, v.provider_away_team_id)
+    order by m.provider_team_id collate "C"
+    for share
+  loop
+    if v_team.mapping_status in ('confirmed', 'manual_override') then
+      if v_team.provider_team_id = v.provider_home_team_id then
+        v_home := v_team.team_id;
+      else
+        v_away := v_team.team_id;
+      end if;
+    end if;
+  end loop;
   if v_home is null or v_away is null then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
       'team_unmapped', null, null,
@@ -479,7 +517,8 @@ begin
   -- another provider fixture id: those never disappear from the decision.
   select m.fixture_id, m.mapping_status into v_map_fixture, v_map_status
   from public.provider_fixture_mappings m
-  where m.provider = v.provider and m.provider_fixture_id = v.provider_fixture_id;
+  where m.provider = v.provider and m.provider_fixture_id = v.provider_fixture_id
+  for share;
   if v_map_fixture is not null then
     if v_map_status = 'unverified' then
       return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
@@ -502,6 +541,19 @@ begin
     perform pg_advisory_xact_lock(hashtextextended(
       'kapiloto_canonical_fixture_pair:' || least(v_home, v_away)::text || ':' || greatest(v_home, v_away)::text, 0
     ));
+    -- Existing mapping rows of this provider on candidate fixtures are the
+    -- identity-conflict evidence: stabilize them (deterministic order). A
+    -- mapping row inserted later by a non-ingest writer has nothing to lock;
+    -- see the residual-concurrency notes in KAPILOTO-V4-PROVIDER-INGEST.md.
+    perform 1
+    from public.provider_fixture_mappings m
+    join public.fixtures f on f.id = m.fixture_id
+    where m.provider = v.provider
+      and ((f.home_team_id = v_home and f.away_team_id = v_away)
+          or (f.home_team_id = v_away and f.away_team_id = v_home))
+      and f.kickoff_at between v.kickoff_at - interval '180 days' and v.kickoff_at + interval '180 days'
+    order by m.provider_fixture_id collate "C"
+    for share of m;
     with pair as (
       select
         f.id,
@@ -801,6 +853,26 @@ begin
       'team_stats', v_stats
     );
     v_result := public.match_ledger_record_observation(v_ledger);
+
+    -- Defense in depth: the identity this call wrote under must still be the
+    -- mapped identity. The FOR SHARE row locks make this hold against every
+    -- concurrent writer; the check turns any bypass (a same-transaction
+    -- writer, a future refactor dropping a lock) into a full rollback.
+    if not exists (
+        select 1 from public.provider_competition_mappings m
+        where m.provider = v.provider and m.provider_competition_id = v.provider_league_id
+          and m.competition_id = v_competition and m.mapping_status in ('confirmed', 'manual_override'))
+      or (select count(*) from public.provider_team_mappings m
+          where m.provider = v.provider and m.mapping_status in ('confirmed', 'manual_override')
+            and ((m.provider_team_id = v.provider_home_team_id and m.team_id = v_home)
+              or (m.provider_team_id = v.provider_away_team_id and m.team_id = v_away))) <> 2
+      or not exists (
+        select 1 from public.provider_fixture_mappings m
+        where m.provider = v.provider and m.provider_fixture_id = v.provider_fixture_id
+          and m.fixture_id = v_fixture_id and m.mapping_status in ('confirmed', 'manual_override')) then
+      raise exception 'provider identity mappings changed during ingest of % fixture %; nothing was written',
+        v.provider, v.provider_fixture_id;
+    end if;
 
     if v_result->>'status' = 'recorded' then
       insert into public.match_ledger_observation_provider_refs (observation_id, ref_kind, provider_ref)

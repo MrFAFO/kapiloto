@@ -794,7 +794,7 @@ Added by D-056. It is not read by V1/V2/V3 code, and no trigger, constraint or i
 - `match_ledger_observation_family_fetches`: `(observation_id, family lineups/formations/statistics/xg, fetch_status fetched/not_requested)`, also sealed.
 - `match_ledger_fixture_mints`: `(fixture_id, provider, provider_fixture_id, run_id, kickoff_before, minted_at)` for canonical fixtures created by ingest.
 - RPCs (service_role only):
-  - `match_ledger_ingest_provider_fixture` (`kapiloto-provider-match-observation-v1`): resolves provider identities, attaches, mints or quarantines, then writes through the unchanged 1A RPC; it never creates teams or competitions. A canonical fixture already identified with another provider fixture id never disappears from the attach/mint decision.
+  - `match_ledger_ingest_provider_fixture` (`kapiloto-provider-match-observation-v1`): resolves provider identities, attaches, mints or quarantines, then writes through the unchanged 1A RPC; it never creates teams or competitions. A canonical fixture already identified with another provider fixture id never disappears from the attach/mint decision. Every V3 mapping row it resolves (competition, both teams, the incoming fixture mapping, candidate fixture mappings) is held `FOR SHARE` until commit.
   - `provider_ingest_record_failure`.
   - `match_ledger_team_match_stats_as_of` (strict actual knowledge).
   - `match_ledger_team_match_stats_for_training` (policy `kapiloto-retrospective-training-availability-v1`, training only).
