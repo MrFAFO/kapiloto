@@ -237,6 +237,36 @@ Implemented:
 
 A2-A deliberately did **not** call Sportmonks or run a historical backfill.
 
+### DONE — Stage 0 identity-mapping containment
+
+Decision: D-057
+
+Migration:
+`20261030211645_kapiloto_v4_identity_mapping_guard.sql`
+
+Production status: applied 2026-10-30.
+
+Implemented:
+
+- database-level `BEFORE UPDATE` guards on existing Sportmonks team,
+  competition and fixture mappings;
+- the same protection for any `manual_override` row of any provider;
+- explicit transaction-local operator override via
+  `kapiloto.identity_operator`;
+- INSERT and DELETE behavior left unchanged;
+- historical provider ingest paused by revoking `service_role` EXECUTE on
+  `match_ledger_ingest_provider_fixture(jsonb)`.
+
+Why this exists:
+V3 structured sync was proven to overwrite Sportmonks mapping status/identity
+and to promote its own prior name matches from confidence 0.9 to 1. The issue
+was observed live in production through both the 15-minute precompute path and
+the daily structured-sync path.
+
+M1 is containment, not the final trust model. Existing Sportmonks
+`confirmed`/confidence-1 rows remain suspect until re-attested under Stage 1.
+
+
 ## 7. ACTIVE — A2-B real-provider pilot and reconciliation
 
 A2-B is the current workstream.
@@ -338,15 +368,30 @@ Post-checks found no mapping conflicts/provider-ref conflicts.
 
 This was an operator data action, not a migration. A future documentation/reconciliation change may record the operational evidence without pretending the DB update was schema history.
 
-## 8. CURRENT BLOCKER — team reconciliation
+## 8. CURRENT BLOCKER — Stage 1 identity attestations
 
-Before any real Match Ledger ingest, A2-A requires both provider teams to satisfy the historical-ingest trust rule:
+Historical Match Ledger ingest is currently paused in production by D-057.
 
-`manual_override` OR (`confirmed` AND `mapping_confidence = 1`)
+The immediate blocker is no longer merely "map the missing teams". The trust
+model itself must move away from V3-owned `mapping_status` /
+`mapping_confidence` columns before any real ingest resumes.
 
-The 20 teams from the 10-fixture pilot were checked.
+Stage 1 must introduce a V4-owned attestation boundary for team and competition
+identity. At minimum:
 
-### Already trusted: 5/20
+- V3 mapping row and V4 attestation must agree on the canonical id;
+- an unattested mapping is not trusted for historical ingest;
+- one trusted Sportmonks provider id per canonical team/competition is enforced
+  at the attestation boundary;
+- fixture trust is derived from attested teams/competition plus fixture
+  orientation/kickoff checks rather than V3 confidence promotion;
+- player bootstrap semantics remain separate and unchanged;
+- ingest EXECUTE is re-granted only after the Stage 1 migration and tests pass.
+
+The 20 teams from the 10-fixture pilot remain the first reconciliation scope
+after Stage 1 lands.
+
+### Previously treated as trusted under A2-A columns: 5/20
 
 - Sportmonks 3 — Sunderland
 - Sportmonks 71 — Leeds United
@@ -354,7 +399,7 @@ The 20 teams from the 10-fixture pilot were checked.
 - Sportmonks 571 — Maccabi Haifa
 - Sportmonks 6900 — Hapoel Petah Tikva
 
-### Unmapped: 15/20
+### Unmapped and still requiring reconciliation after Stage 1: 15/20
 
 - 14 — Manchester United
 - 52 — AFC Bournemouth
@@ -389,40 +434,67 @@ First reconcile against canonical teams + aliases + competition/country/provider
 
 This is the safe dependency order from the current state.
 
-### Gate 1 — independent review
+### Gate 1 — verify Stage 0 under natural production traffic
 
-Before new identity writes:
+D-057 is applied and the immediate post-checks passed.
 
-- review PR #19 and the real pilot;
-- review aggregate-gate semantics;
-- review whether the five competition `manual_override` rows should remain;
-- review the fail-closed team-reconciliation design.
+Still verify:
 
-Claude Opus is the planned first independent reviewer. Fable may be used as a third opinion when a material disagreement remains.
+- at least two natural 15-minute precompute cycles do not change existing
+  Sportmonks mappings;
+- the next 05:22 UTC structured-sync also leaves them unchanged;
+- all five target competitions remain `manual_override`;
+- conflict reports remain empty.
 
-### Gate 2 — amend A2-B pilot if needed
+### Gate 2 — align V3 code with the database guard
 
-If review finds a real flaw:
+Patch `SupabaseSportmonksSyncStore.saveResolvedFixture` so weak V3 identity
+writes are insert-only rather than repeated upserts.
 
-- fix the branch;
-- rerun focused tests;
-- rerun full V4 regression;
-- rerun real Sportmonks pilot when the changed semantics require fresh provider evidence.
+Expected properties:
 
-Do not merge merely because the current CI is green.
+- existing Sportmonks mapping rows are never updated by V3;
+- new missing rows may still bootstrap for V3/shadow use;
+- V3 Sportmonks confidence remains weak evidence and must not self-promote to 1;
+- structured snapshots continue working.
 
-### Gate 3 — reconcile the 15 teams
+The DB trigger remains the safety boundary even after this code patch.
+
+### Gate 3 — Stage 1 V4 identity attestations
+
+Implement the reviewed attestation architecture before any provider ingest is
+re-enabled.
 
 Required properties:
 
-- fail closed;
-- idempotent;
-- auditable;
-- no fuzzy auto-merge;
-- no cross-language name-only guess;
-- no duplicate canonical team when an existing team is provably the same club;
-- no silent overwrite of existing mappings;
-- preserve A2-A trust rules.
+- immutable/current attestation state plus append-only events;
+- service-role-only access, RLS, no SECURITY DEFINER;
+- explicit attest/revoke RPCs;
+- mapping + attestation agreement for team/competition trust;
+- injectivity at the trusted boundary;
+- reconciliation/conflict reporting;
+- fixture trust derived from attested identities and fixture facts;
+- full lock/security/atomicity tests;
+- ingest EXECUTE re-granted only at the end of the migration.
+
+### Gate 4 — amend A2-B pilot tooling
+
+Apply the independent-review findings to PR #19:
+
+- workflow should be operator-dispatched rather than provider-calling on each
+  push;
+- preserve raw response bytes keyed by hash;
+- make entitlement pagination fail closed at the cap;
+- strengthen country/competition identity checks;
+- replace pooled global gate summaries with provider-semantics evidence,
+  per-competition evidence and coverage profiles;
+- remove `explicitZero` as an acceptance gate;
+- strengthen score/lineup/position discriminating checks;
+- sample every season before that season is backfilled.
+
+Do not use the old global PASS as backfill approval.
+
+### Gate 5 — reconcile pilot teams through the Stage 1 mechanism
 
 Classify each missing provider team as one of:
 
@@ -430,56 +502,54 @@ Classify each missing provider team as one of:
 2. create a new canonical team;
 3. require more operator evidence.
 
-The implementation mechanism (operator script/RPC/seed/migration) should be chosen after review. Future fixtures will contain previously unseen teams, so reconciliation must become a repeatable operational capability, not a one-off unsafe SQL habit.
+Rules remain:
 
-### Gate 4 — tiny real Match Ledger ingest
+- fail closed;
+- no fuzzy auto-merge;
+- no cross-language name-only decision;
+- no duplicate canonical team;
+- no silent overwrite;
+- fixture/cross-provider anchors are stronger than names/transliteration.
 
-After team reconciliation, do **not** begin a broad backfill.
+Re-attest the five mappings that A2-A previously treated as trusted; do not
+grandfather them merely because they are already confidence 1.
 
-Use the smallest useful sample first.
+### Gate 6 — tiny real Match Ledger ingest
+
+Only after Stage 1 and team reconciliation, re-enable ingest and run the
+smallest useful real pilot.
 
 Minimum expectations:
 
-- one or very few finished fixtures;
-- trusted competition and teams;
-- capture hashes/family statuses recorded;
-- no quarantine that was silently bypassed;
-- fixture identity resolves correctly;
-- provider refs match;
-- ledger observation is immutable and queryable;
-- strict as-of read behaves correctly;
-- team-match-stat read preserves missingness;
-- re-ingesting identical content is idempotent/unchanged;
-- conflict reports remain empty;
-- audit row accurately reflects the attempt.
+- one existing-mapping fixture plus one safe mint-path fixture;
+- exact capture hashes/family statuses preserved;
+- no quarantine bypass;
+- canonical identities match attestations;
+- strict as-of and training reads preserve missingness;
+- re-ingest identical content returns unchanged;
+- negative control with an unattested team quarantines;
+- conflict reports remain empty.
 
 Then inspect the actual persisted rows, not only the RPC return value.
 
-### Gate 5 — scoped historical backfill
+### Gate 7 — scoped historical backfill
 
 Expand only after the tiny ingest is clean.
 
 Suggested progression:
 
-1. tiny fixture sample;
-2. one narrow competition/time window;
-3. one competition/season slice;
+1. the 10 pilot fixtures;
+2. one matchweek per competition;
+3. one season slice per competition;
 4. multiple target competitions;
 5. broader historical corpus.
 
-At every expansion check:
+At every expansion check quarantine, identity conflicts, family coverage,
+parse/semantic violations, duplicate-fixture risk, correction behavior,
+provider rate/cost constraints and restart/idempotency.
 
-- quarantine rates/reasons;
-- mapping conflicts;
-- provider-ref conflicts;
-- parse failures;
-- family coverage/missingness;
-- duplicate fixture risk;
-- correction/withdrawal behavior;
-- ingest cost/rate limits;
-- restart/resume/idempotency.
-
-Historical training output must remain labelled retrospective and must never be confused with strict actual knowledge-time replay.
+Historical training output must remain labelled retrospective and must never be
+confused with strict actual knowledge-time replay.
 
 ## 10. Downstream V4 roadmap
 
@@ -600,7 +670,7 @@ Preserve:
 As of the snapshot date:
 
 - no broad Sportmonks historical backfill;
-- no real A2-B Match Ledger pilot observation from the new branch has been persisted yet;
+- no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest is intentionally paused by D-057 until Stage 1 attestations land;
 - the 15 missing pilot-team mappings are not resolved;
 - PR #19 is not merged;
 - V4 Match Ledger is not silently feeding V3 research/probabilities;
@@ -693,7 +763,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff in the 2026-10-30 snapshot is A2-B team reconciliation before the first real Match Ledger ingest.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff in the 2026-10-30 snapshot is D-057 Stage 0 containment applied in production; next is V3 insert-only alignment plus Stage 1 V4 identity attestations, then A2-B reconciliation before the first real Match Ledger ingest.
 
 ## 15. Updating this file
 
