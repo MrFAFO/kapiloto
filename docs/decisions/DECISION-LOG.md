@@ -352,7 +352,13 @@ Decision:
 
   Statuses are sealed per observation version in `match_ledger_observation_family_fetches`. A downgrade is quarantined. An upgrade with unchanged content cannot be versioned and is quarantined (`family_status_drift`).
 - **Identity.**
-  - Canonical teams and competitions are never created by ingest; they resolve only through confirmed or manual mappings.
+  - Canonical teams and competitions are never created by ingest.
+  - Historical corpus ingest has a stricter trust boundary than V3, which writes `confirmed` at confidence 0.9 for name-resolved identities:
+    - a competition resolves only through `manual_override` (the table has no confidence);
+    - a team or an existing fixture mapping resolves through `manual_override` or `confirmed` at `mapping_confidence = 1`;
+    - anything else quarantines (`competition_untrusted`, `team_untrusted`, `fixture_mapping_untrusted`).
+
+    Ingest never promotes mappings; the A2-B preflight does, after review.
   - An existing provider fixture mapping wins if it is authoritative and consistent.
   - Otherwise every canonical fixture of the same two teams (either orientation, ±180 days) is a candidate, including fixtures already mapped (any status) or ledger-attached to another provider fixture id. Such a fixture in any guard window gives `fixture_provider_identity_conflict`. A unique unmapped ±48 h candidate is attached only when no reversed-orientation or other-competition fixture lies within 48 h, and no ±14-day, ±180-day postponed or unknown-competition fixture exists. Anything else is quarantined.
   - The search runs under one lock per unordered team pair, held through the write.
@@ -371,6 +377,9 @@ Decision:
   - The training-only read (`kapiloto-retrospective-training-availability-v1`) makes version 1 of a finished backfill observation available at `min(first_seen_at, kickoff_at + 24h)`. Later versions and withdrawals keep their actual time. Rows are labelled `retrospective`.
 
   The training loader is not exported from the V4 index and must not be imported by live or registry code. The registry already refuses ledger inputs first seen after the cutoff.
+  - Known-superseded content is excluded, not rewritten: if the version selected at a training cutoff has a later correction or withdrawal in the ledger today, the chain is omitted from that training query. The later version is never backdated. `match_ledger_retrospective_training_exclusions` reports the omissions as `later_correction` / `later_withdrawal`.
+- **Reconciliation.** Provider refs seal the canonical ids they resolved to. `match_ledger_provider_ref_conflicts` reports team and competition mapping that is missing, untrusted or drifted, and fixture competition drift, without mutating history.
+- **Pilot gates, not invariants.** Cross-stat checks, provider-side zero semantics, lineup and position ids, `2ND_HALF` semantics and `meta.location` are verified in the A2-B pilot before becoming rules.
 
 Details: `docs/architecture/KAPILOTO-V4-PROVIDER-INGEST.md`.
 

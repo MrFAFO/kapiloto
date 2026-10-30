@@ -2663,16 +2663,19 @@ export type Database = {
       }
       match_ledger_observation_provider_refs: {
         Row: {
+          canonical_id: string | null
           observation_id: string
           provider_ref: string
           ref_kind: string
         }
         Insert: {
+          canonical_id?: string | null
           observation_id: string
           provider_ref: string
           ref_kind: string
         }
         Update: {
+          canonical_id?: string | null
           observation_id?: string
           provider_ref?: string
           ref_kind?: string
@@ -5031,9 +5034,36 @@ export type Database = {
           substitutions_status: string
         }[]
       }
+      match_ledger_provider_ref_conflicts: {
+        Args: { p_provider: string }
+        Returns: {
+          current_canonical_id: string | null
+          current_mapping_confidence: number | null
+          current_mapping_status: string | null
+          fixture_id: string
+          is_current_version: boolean
+          issue_code: string
+          observation_id: string
+          observation_version: number
+          provider_fixture_id: string
+          provider_ref: string
+          recorded_canonical_id: string
+          ref_kind: string
+        }[]
+      }
       match_ledger_record_observation: {
         Args: { p_observation: Json }
         Returns: Json
+      }
+      match_ledger_retrospective_training_exclusions: {
+        Args: {
+          p_competition_ids: string[] | null
+          p_from: string | null
+          p_policy: string
+          p_provider: string
+          p_training_cutoff: string
+        }
+        Returns: Json[]
       }
       match_ledger_team_match_stats_as_of: {
         Args: {

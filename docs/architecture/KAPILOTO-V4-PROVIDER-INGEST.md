@@ -177,10 +177,13 @@ and quarantines in this order:
 1. `family_fetch_failed`.
 2. `not_finished`, and `finished_too_early`: the 1A ledger refuses a
    finished observation within 105 minutes of kickoff.
-3. Competition through a confirmed or `manual_override` mapping, else
-   `competition_unmapped`.
-4. Teams the same way, else `team_unmapped`. Both provider teams on one
-   canonical team gives `team_identity_conflict`.
+3. Competition: no mapping gives `competition_unmapped`; a mapping that is not
+   `manual_override` gives `competition_untrusted` (see "Historical ingest
+   trust boundary").
+4. Teams: a missing mapping on either side gives `team_unmapped`; a mapping
+   that is neither `manual_override` nor `confirmed` at `mapping_confidence =
+   1` gives `team_untrusted`. Both provider teams on one canonical team gives
+   `team_identity_conflict`.
 5. Any unverified player mapping gives `player_mapping_unverified`.
 6. Fixture: see the next section.
 7. Drift against the latest version of (fixture, provider). A withdrawal
@@ -232,6 +235,39 @@ See "Mapping row locks" for why these modes and this order.
 Result: `{status, reason_code, fixture_id, observation_id, attempt_no,
 fixture_resolution, observation_version, provider_refs_status, players_minted}`.
 
+### Historical ingest trust boundary
+
+V3 keeps its existing, looser resolution rules: it writes `confirmed` mappings
+for identities it resolved by name, at `mapping_confidence = 0.9`, as well as
+for provider-supplied ids at confidence 1. Historical corpus ingestion
+intentionally uses a stricter boundary, because a wrong team, competition or
+fixture identity silently corrupts every model trained on it, and teams and
+competitions cannot be merged later.
+
+| Mapping | Trusted for historical ingest | Otherwise |
+| --- | --- | --- |
+| Team (`provider_team_mappings`) | `manual_override`, or `confirmed` with `mapping_confidence = 1` | `team_untrusted` (missing row: `team_unmapped`) |
+| Competition (`provider_competition_mappings`, no confidence column) | `manual_override` only | `competition_untrusted` (missing row: `competition_unmapped`) |
+| Existing fixture mapping for the incoming id | `manual_override`, or `confirmed` with `mapping_confidence = 1` | `fixture_mapping_untrusted` (`unverified`: `fixture_mapping_unverified`) |
+
+- The rules live in `private.provider_mapping_trusted(status, confidence)` and
+  `private.provider_competition_mapping_trusted(status)`. The RPC's
+  resolution, its post-write re-check and the provider-ref reconciliation all
+  call them, so they cannot diverge.
+- Ingest never promotes a mapping. The A2-B operator preflight reviews the
+  Sportmonks competitions in scope and promotes verified rows to
+  `manual_override`; production currently has 5 Sportmonks competition
+  mappings, all plain `confirmed`, so nothing ingests until that preflight.
+  All 36 production Sportmonks team mappings and 22 fixture mappings are
+  `confirmed` at confidence 1 and pass.
+- The fixture row was added to the boundary because V3's Sportmonks store
+  writes the fixture mapping in the same name-resolution path at confidence
+  0.9, and the existing-mapping path does not compare kickoffs: a heuristic
+  mapping to another meeting of the same two clubs in the same competition
+  would otherwise pin a match's history to the wrong canonical fixture.
+- Row locks, lock order and the post-write re-check are unchanged; the
+  re-check now enforces exactly these trust rules.
+
 ### Canonical identity rules
 
 - **Competitions and teams are never created** by A2-A code. Operators
@@ -239,9 +275,10 @@ fixture_resolution, observation_version, provider_refs_status, players_minted}`.
   (D-050), so a wrong team cannot be repaired later.
 - **Fixture resolution.**
   - An existing provider fixture mapping wins:
-    - if `confirmed` or `manual_override`, its orientation and competition
-      are validated (`fixture_mapping_conflict` otherwise);
-    - if `unverified`, the result is `fixture_mapping_unverified`.
+    - if trusted (see the table above), its orientation and competition are
+      validated (`fixture_mapping_conflict` otherwise);
+    - if `unverified`, the result is `fixture_mapping_unverified`; if
+      `confirmed` below confidence 1, `fixture_mapping_untrusted`.
   - Otherwise, the candidates are ALL canonical fixtures of the same two teams,
     in either orientation, within ±180 days. A candidate is never hidden
     because it already carries a mapping from this provider.
@@ -463,8 +500,11 @@ serial-equivalent; none produces a wrong ledger observation:
 ### Provider refs and family statuses
 
 `match_ledger_observation_provider_refs` holds `league`, `season`,
-`team_home` and `team_away`. `match_ledger_observation_family_fetches` holds
-one status per family. Both are:
+`team_home` and `team_away`, each with the canonical id it resolved to when
+the version was written (`canonical_id`: the competition for `league`, the
+team for the team refs, null for `season`; a trigger checks the team ids
+against the version's team records). `match_ledger_observation_family_fetches`
+holds one status per family. Both are:
 
 - sealed to the statement that wrote the observation version
   (`ingest_statement_at = statement_timestamp()`);
@@ -564,8 +604,33 @@ The two availability classes:
   - Every later version and every withdrawal keeps its actual
     `first_seen_at`. Effective times therefore never decrease across
     versions, and a correction never reaches an earlier cutoff.
+  - **Known-superseded content is excluded, never rewritten.** If the version
+    selected for a fixture at the training cutoff is not the chain's latest
+    version today, the fixture is left out of that training query. The later
+    version (a correction or a withdrawal) exists but is not yet effective at
+    the cutoff. Because effective times are monotone in the version number,
+    that is the same as "a later version exists". The later version is never
+    backdated. Once the cutoff reaches its actual `first_seen_at`, normal
+    selection returns it.
+  - Exclusions are auditable separately from stat missingness:
+    `match_ledger_retrospective_training_exclusions(provider,
+    competition_ids, from, training_cutoff, policy)` (TS:
+    `loadRetrospectiveTrainingExclusions`, training module only) lists one
+    row per excluded chain with the same filters as the training read, the
+    selected and latest versions, and `exclusion_reason` `later_correction`
+    (latest version is an observation) or `later_withdrawal` (latest version
+    is a withdrawal). It is not football data.
+  - Why omission rather than a row with an "unusable" status: a status column
+    in the training stream would be silently consumed by any caller that does
+    not filter it, while omission fails closed by default and the report keeps
+    the count.
   - Rows are `evaluation_class = 'retrospective'`, and backdated rows are
     `availability_basis = 'retrospective_backfill'`.
+  - In short, `kapiloto-retrospective-training-availability-v1` means:
+    assumed availability only for the original backfill observation, and
+    known-superseded historical content is excluded rather than rewritten.
+  - The strict actual read, the Prediction Registry and Squad State are
+    unchanged and never use this policy.
   - Not exported from `lib/kapiloto-v4/index.ts`. A boundary test forbids
     importing it from non-training code, including squad state, lineup
     model, lineup snapshot, prediction registry and the index.
@@ -615,6 +680,40 @@ finish (see "Mapping row locks").
 The 1A `match_ledger_mapping_conflicts()` read detects fixture-mapping drift.
 A2-B must reconcile team identities before ingesting a competition.
 
+## Provider-ref reconciliation
+
+`public.match_ledger_provider_ref_conflicts(provider)` is read only (`STABLE`,
+`service_role`; TS: `loadProviderRefConflicts`). For every observation
+version with sealed refs, it compares each sealed `league` / `team_home` /
+`team_away` ref and its recorded canonical id with today's mapping under the
+historical trust rules. Columns:
+
+- `issue_code`;
+- `observation_id`, `observation_version`, `is_current_version`;
+- `fixture_id`, `provider_fixture_id`;
+- `ref_kind`, `provider_ref`;
+- `recorded_canonical_id`, `current_canonical_id`;
+- `current_mapping_status`, `current_mapping_confidence`.
+
+| Issue code | Meaning |
+| --- | --- |
+| `team_mapping_missing` | no current mapping for the sealed provider team id |
+| `team_mapping_untrusted` | current mapping fails the team trust rule |
+| `team_mapping_drift` | current mapping points to a different canonical team |
+| `competition_mapping_missing` | no current mapping for the sealed provider league id |
+| `competition_mapping_untrusted` | current mapping is not `manual_override` |
+| `competition_mapping_drift` | current mapping points to a different canonical competition |
+| `fixture_competition_drift` | the canonical fixture's current `competition_id` differs from (or no longer carries) the sealed competition |
+
+- "missing" excludes the other two codes for the same ref; "untrusted" and
+  "drift" are independent and can both appear.
+- Rows are ordered by fixture, observation version, ref kind and code.
+- Teams have no merge semantics, so team ids are compared as stored.
+- Observations written without sealed refs (plain 1A writes) are outside this
+  report. Fixture-mapping drift stays in the unchanged 1A
+  `match_ledger_mapping_conflicts()`.
+- Detection only: nothing is mutated.
+
 ## A2-B (not in this change)
 
 A2-B covers:
@@ -622,11 +721,28 @@ A2-B covers:
 - an operator CLI that captures bundles, hashing the exact response bytes and
   setting fetch statuses honestly;
 - a verified entitlement snapshot and a run header;
-- team and competition reconciliation;
+- team and competition reconciliation, including the preflight that promotes
+  verified Sportmonks competitions to `manual_override`, and
+  `match_ledger_provider_ref_conflicts` as a pilot and backfill gate;
 - a small pilot that checks the seeded definitions against real payloads.
 
 No migration is required unless the pilot finds a documentation/payload
 mismatch, which would be fixed with a new `definition_version`.
+
+### Pilot gates (not A2-A database invariants)
+
+These must be verified on real Sportmonks payloads during the A2-B pilot
+before they become rules. A2-A deliberately does not enforce them:
+
+- cross-stat checks that are sensible but unverified: possession summing to
+  98-102, `shots_on_target <= shots_total`, `npxG <= xG`;
+- whether genuine zero statistics arrive as explicit zero rows or as omitted
+  rows (A2-A infers nothing about provider-side zero semantics);
+- lineup type ids 11 (starter) and 12 (bench);
+- position ids 24-27 (GK/DF/MF/FW);
+- `2ND_HALF` being the cumulative 90-minute score (checked against `CURRENT`
+  for FT matches; relied on alone for AET/FT_PEN);
+- participant `meta.location` as the home/away source.
 
 ## Security
 

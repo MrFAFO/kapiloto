@@ -7,7 +7,11 @@
 --
 -- Identity rules:
 --   * canonical teams and competitions are NEVER created here (operator
---     reconciliation, A2-B); only confirmed/manual_override mappings resolve;
+--     reconciliation, A2-B). Historical corpus ingest has a stricter trust
+--     boundary than V3: a competition resolves only through a manual_override
+--     mapping; a team or an existing fixture mapping only through
+--     manual_override, or confirmed with mapping_confidence = 1 (V3 writes
+--     confirmed at confidence 0.9 for name-resolved identities);
 --   * a canonical fixture is reused through an authoritative mapping, attached
 --     through a unique, unmapped canonical-key match, or minted under an
 --     explicit caller mint policy only when no plausible canonical fixture
@@ -102,7 +106,13 @@ create table public.match_ledger_observation_provider_refs (
   observation_id uuid not null references public.match_ledger_observations(id) on delete restrict,
   ref_kind text not null check (ref_kind in ('league', 'season', 'team_home', 'team_away')),
   provider_ref text not null check (char_length(btrim(provider_ref)) between 1 and 80),
-  primary key (observation_id, ref_kind)
+  -- The canonical identity the ref resolved to when the version was written:
+  -- the competition for league, the team for team_home/team_away, none for
+  -- season. Sealed, so reconciliation compares against what was recorded,
+  -- not against mutable V3 rows.
+  canonical_id uuid,
+  primary key (observation_id, ref_kind),
+  check ((ref_kind = 'season') = (canonical_id is null))
 );
 
 create index match_ledger_observation_provider_refs_ref_idx
@@ -145,6 +155,32 @@ for each row execute function private.seal_match_ledger_observation_annotation()
 create trigger match_ledger_observation_family_fetches_seal
 before insert on public.match_ledger_observation_family_fetches
 for each row execute function private.seal_match_ledger_observation_annotation();
+
+-- A sealed team ref must name the team its version's team record names.
+create or replace function private.check_match_ledger_provider_ref_identity()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_team uuid;
+begin
+  if new.ref_kind in ('team_home', 'team_away') then
+    select tr.team_id into v_team
+    from public.match_ledger_team_records tr
+    where tr.observation_id = new.observation_id
+      and tr.side = case when new.ref_kind = 'team_home' then 'home' else 'away' end;
+    if v_team is distinct from new.canonical_id then
+      raise exception 'provider ref % of observation % does not match its team record', new.ref_kind, new.observation_id;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger match_ledger_observation_provider_refs_identity
+before insert on public.match_ledger_observation_provider_refs
+for each row execute function private.check_match_ledger_provider_ref_identity();
 
 -- ---------------------------------------------------------------------------
 -- Minted fixtures: which canonical fixtures the ingest RPC created, under
@@ -275,6 +311,32 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Historical ingest trust boundary (stricter than V3's own resolution rules).
+-- Used by the ingest RPC, its post-write re-check and the provider-ref
+-- reconciliation, so all three apply exactly the same rule.
+-- ---------------------------------------------------------------------------
+
+-- Team and fixture mappings: manual_override, or confirmed at confidence 1.
+create or replace function private.provider_mapping_trusted(p_status text, p_confidence numeric)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select coalesce(p_status = 'manual_override' or (p_status = 'confirmed' and p_confidence = 1), false)
+$$;
+
+-- Competition mappings carry no confidence: only manual_override is trusted.
+create or replace function private.provider_competition_mapping_trusted(p_status text)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  select coalesce(p_status = 'manual_override', false)
+$$;
+
+-- ---------------------------------------------------------------------------
 -- public.match_ledger_ingest_provider_fixture (kapiloto-provider-match-observation-v1)
 --
 -- Phase 1 decides read-only and quarantines without writing anything but the
@@ -353,6 +415,9 @@ declare
   v_name text;
   v_competition_status text;
   v_team record;
+  v_home_found boolean := false;
+  v_away_found boolean := false;
+  v_map_confidence numeric;
   r record;
 begin
   if p_observation is null or jsonb_typeof(p_observation) <> 'object' then
@@ -466,33 +531,47 @@ begin
   from public.provider_competition_mappings m
   where m.provider = v.provider and m.provider_competition_id = v.provider_league_id
   for share;
-  if v_competition is null or v_competition_status not in ('confirmed', 'manual_override') then
+  if v_competition is null then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
       'competition_unmapped', null, null, jsonb_build_object('provider_league_id', v.provider_league_id), null, v_flags);
+  end if;
+  if not private.provider_competition_mapping_trusted(v_competition_status) then
+    return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
+      'competition_untrusted', null, null,
+      jsonb_build_object('provider_league_id', v.provider_league_id, 'mapping_status', v_competition_status), null, v_flags);
   end if;
   -- Both team rows in one statement, locked in provider_team_id order, so
   -- home=A/away=B and home=B/away=A acquire them identically (LockRows runs
   -- above the Sort). Home and away are derived from the locked rows.
   for v_team in
-    select m.provider_team_id, m.team_id, m.mapping_status
+    select m.provider_team_id, m.team_id, m.mapping_status, m.mapping_confidence
     from public.provider_team_mappings m
     where m.provider = v.provider
       and m.provider_team_id in (v.provider_home_team_id, v.provider_away_team_id)
     order by m.provider_team_id collate "C"
     for share
   loop
-    if v_team.mapping_status in ('confirmed', 'manual_override') then
-      if v_team.provider_team_id = v.provider_home_team_id then
+    if v_team.provider_team_id = v.provider_home_team_id then
+      v_home_found := true;
+      if private.provider_mapping_trusted(v_team.mapping_status, v_team.mapping_confidence) then
         v_home := v_team.team_id;
-      else
+      end if;
+    else
+      v_away_found := true;
+      if private.provider_mapping_trusted(v_team.mapping_status, v_team.mapping_confidence) then
         v_away := v_team.team_id;
       end if;
     end if;
   end loop;
-  if v_home is null or v_away is null then
+  if not v_home_found or not v_away_found then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
       'team_unmapped', null, null,
-      jsonb_build_object('home_mapped', v_home is not null, 'away_mapped', v_away is not null), null, v_flags);
+      jsonb_build_object('home_mapped', v_home_found, 'away_mapped', v_away_found), null, v_flags);
+  end if;
+  if v_home is null or v_away is null then
+    return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
+      'team_untrusted', null, null,
+      jsonb_build_object('home_trusted', v_home is not null, 'away_trusted', v_away is not null), null, v_flags);
   end if;
   if v_home = v_away then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
@@ -515,7 +594,7 @@ begin
   -- authoritative and consistent. Otherwise every canonical fixture of the
   -- same two teams is a candidate, including fixtures already identified with
   -- another provider fixture id: those never disappear from the decision.
-  select m.fixture_id, m.mapping_status into v_map_fixture, v_map_status
+  select m.fixture_id, m.mapping_status, m.mapping_confidence into v_map_fixture, v_map_status, v_map_confidence
   from public.provider_fixture_mappings m
   where m.provider = v.provider and m.provider_fixture_id = v.provider_fixture_id
   for share;
@@ -523,6 +602,13 @@ begin
     if v_map_status = 'unverified' then
       return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
         'fixture_mapping_unverified', v_map_fixture, null, '{}'::jsonb, null, v_flags);
+    end if;
+    -- A name-resolved V3 mapping (confirmed below confidence 1) is not
+    -- authoritative enough to pin historical data to a canonical fixture.
+    if not private.provider_mapping_trusted(v_map_status, v_map_confidence) then
+      return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
+        'fixture_mapping_untrusted', v_map_fixture, null,
+        jsonb_build_object('mapping_status', v_map_status, 'mapping_confidence', v_map_confidence), null, v_flags);
     end if;
     select f.* into v_fixture from public.fixtures f where f.id = v_map_fixture;
     if v_fixture.home_team_id <> v_home or v_fixture.away_team_id <> v_away
@@ -861,23 +947,26 @@ begin
     if not exists (
         select 1 from public.provider_competition_mappings m
         where m.provider = v.provider and m.provider_competition_id = v.provider_league_id
-          and m.competition_id = v_competition and m.mapping_status in ('confirmed', 'manual_override'))
+          and m.competition_id = v_competition and private.provider_competition_mapping_trusted(m.mapping_status))
       or (select count(*) from public.provider_team_mappings m
-          where m.provider = v.provider and m.mapping_status in ('confirmed', 'manual_override')
+          where m.provider = v.provider and private.provider_mapping_trusted(m.mapping_status, m.mapping_confidence)
             and ((m.provider_team_id = v.provider_home_team_id and m.team_id = v_home)
               or (m.provider_team_id = v.provider_away_team_id and m.team_id = v_away))) <> 2
       or not exists (
         select 1 from public.provider_fixture_mappings m
         where m.provider = v.provider and m.provider_fixture_id = v.provider_fixture_id
-          and m.fixture_id = v_fixture_id and m.mapping_status in ('confirmed', 'manual_override')) then
+          and m.fixture_id = v_fixture_id and private.provider_mapping_trusted(m.mapping_status, m.mapping_confidence)) then
       raise exception 'provider identity mappings changed during ingest of % fixture %; nothing was written',
         v.provider, v.provider_fixture_id;
     end if;
 
     if v_result->>'status' = 'recorded' then
-      insert into public.match_ledger_observation_provider_refs (observation_id, ref_kind, provider_ref)
-      select (v_result->>'observation_id')::uuid, e.key, e.value
-      from jsonb_each_text(v_payload_refs) e;
+      insert into public.match_ledger_observation_provider_refs (observation_id, ref_kind, provider_ref, canonical_id)
+      values
+        ((v_result->>'observation_id')::uuid, 'league', v.provider_league_id, v_competition),
+        ((v_result->>'observation_id')::uuid, 'season', v.provider_season_id, null),
+        ((v_result->>'observation_id')::uuid, 'team_home', v.provider_home_team_id, v_home),
+        ((v_result->>'observation_id')::uuid, 'team_away', v.provider_away_team_id, v_away);
       insert into public.match_ledger_observation_family_fetches (observation_id, family, fetch_status)
       select (v_result->>'observation_id')::uuid, e.key, e.value
       from jsonb_each_text(v_fam) e;
@@ -946,6 +1035,15 @@ $$;
 -- decrease across versions and a later correction never reaches an earlier
 -- cutoff. This is a training approximation, never a reconstruction of what
 -- Kapiloto or the provider knew live.
+--
+-- Known-superseded content is excluded, never rewritten: in the training mode
+-- a chain whose selected version is not its latest version today (a later
+-- correction or withdrawal exists but is not yet effective at the cutoff) is
+-- marked superseded_reason = later_correction | later_withdrawal and left out
+-- of training rows; match_ledger_retrospective_training_exclusions reports
+-- it. Because effective times are monotone in the version number, "a later
+-- version exists" and "a later version exists that is not yet effective at
+-- the cutoff" are the same condition. The actual mode never marks anything.
 -- ---------------------------------------------------------------------------
 
 create or replace function private.match_ledger_effective_versions(
@@ -960,7 +1058,10 @@ returns table (
   observation_version integer,
   first_seen_at timestamptz,
   effective_available_at timestamptz,
-  availability_basis text
+  availability_basis text,
+  latest_observation_version integer,
+  latest_observation_kind text,
+  superseded_reason text
 )
 language plpgsql
 stable
@@ -1007,10 +1108,22 @@ begin
     select vv.*, row_number() over (partition by vv.v_fixture_id order by vv.v_version desc) as v_rank
     from versions vv
     where vv.v_effective <= p_cutoff
+  ),
+  latest as (
+    select distinct on (vv.v_fixture_id) vv.v_fixture_id as l_fixture_id, vv.v_version as l_version, vv.v_kind as l_kind
+    from versions vv
+    order by vv.v_fixture_id, vv.v_version desc
   )
   select rk.v_fixture_id, rk.v_observation_id, rk.v_version, rk.v_first_seen, rk.v_effective,
-         case when rk.v_effective < rk.v_first_seen then 'retrospective_backfill' else 'actual' end
+         case when rk.v_effective < rk.v_first_seen then 'retrospective_backfill' else 'actual' end,
+         lt.l_version,
+         lt.l_kind,
+         case
+           when p_mode = 'retrospective_training' and lt.l_version > rk.v_version then
+             case when lt.l_kind = 'withdrawal' then 'later_withdrawal' else 'later_correction' end
+         end
   from ranked rk
+  join latest lt on lt.l_fixture_id = rk.v_fixture_id
   where rk.v_rank = 1 and rk.v_kind = 'observation';
 end;
 $$;
@@ -1069,6 +1182,7 @@ begin
   return query
   with selected as (
     select ev.* from private.match_ledger_effective_versions(p_provider, p_cutoff, p_mode, p_policy) ev
+    where ev.superseded_reason is null
   ),
   keys(stat_key, family) as (
     values
@@ -1214,6 +1328,159 @@ as $$
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Audit of the retrospective training read: the fixture chains a training
+-- query with the same filters left out because a later correction or
+-- withdrawal exists. One row per (fixture, provider) chain. Not football data.
+-- ---------------------------------------------------------------------------
+
+create or replace function private.match_ledger_retrospective_exclusions(
+  p_provider text,
+  p_competition_ids uuid[],
+  p_from timestamptz,
+  p_training_cutoff timestamptz,
+  p_policy text
+)
+returns table (
+  fixture_id uuid,
+  provider text,
+  competition_id uuid,
+  kickoff_at timestamptz,
+  selected_observation_id uuid,
+  selected_observation_version integer,
+  effective_available_at timestamptz,
+  availability_basis text,
+  latest_observation_id uuid,
+  latest_observation_version integer,
+  latest_observation_kind text,
+  latest_first_seen_at timestamptz,
+  exclusion_reason text,
+  availability_policy text
+)
+language plpgsql
+stable
+set search_path = ''
+as $$
+begin
+  return query
+  select ev.fixture_id, o.provider, f.competition_id, o.kickoff_at, ev.observation_id, ev.observation_version,
+         ev.effective_available_at, ev.availability_basis, lo.id, lo.observation_version, lo.observation_kind,
+         lo.first_seen_at, ev.superseded_reason, p_policy
+  from private.match_ledger_effective_versions(p_provider, p_training_cutoff, 'retrospective_training', p_policy) ev
+  join public.match_ledger_observations o on o.id = ev.observation_id
+  join public.fixtures f on f.id = ev.fixture_id
+  join public.match_ledger_observations lo
+    on lo.fixture_id = ev.fixture_id and lo.provider = o.provider and lo.observation_version = ev.latest_observation_version
+  where ev.superseded_reason is not null
+    and o.match_status = 'finished'
+    and o.kickoff_at < p_training_cutoff
+    and (p_from is null or o.kickoff_at >= p_from)
+    and (p_competition_ids is null or f.competition_id = any (p_competition_ids))
+  order by o.kickoff_at, ev.fixture_id;
+end;
+$$;
+
+create or replace function public.match_ledger_retrospective_training_exclusions(
+  p_provider text,
+  p_competition_ids uuid[],
+  p_from timestamptz,
+  p_training_cutoff timestamptz,
+  p_policy text
+)
+returns setof jsonb
+language sql
+stable
+set search_path = ''
+as $$
+  select to_jsonb(t) from private.match_ledger_retrospective_exclusions(
+    p_provider, p_competition_ids, p_from, p_training_cutoff, p_policy) t
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Provider-ref reconciliation (read only). Compares the provider refs sealed
+-- with each observation version (and the canonical ids they resolved to)
+-- against today's mappings under the historical-ingest trust rules. Fixture
+-- mapping drift stays in the 1A match_ledger_mapping_conflicts(). Teams have
+-- no merge semantics, so team ids are compared as stored. Issue codes:
+--   team_mapping_missing / team_mapping_untrusted / team_mapping_drift
+--   competition_mapping_missing / competition_mapping_untrusted /
+--   competition_mapping_drift
+--   fixture_competition_drift (the canonical fixture's current competition
+--     differs from, or no longer carries, the sealed competition)
+-- "missing" excludes the other two for the same ref; "untrusted" and "drift"
+-- are independent and may both appear.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.match_ledger_provider_ref_conflicts(p_provider text)
+returns table (
+  issue_code text,
+  observation_id uuid,
+  observation_version integer,
+  is_current_version boolean,
+  fixture_id uuid,
+  provider_fixture_id text,
+  ref_kind text,
+  provider_ref text,
+  recorded_canonical_id uuid,
+  current_canonical_id uuid,
+  current_mapping_status text,
+  current_mapping_confidence numeric
+)
+language sql
+stable
+set search_path = ''
+as $$
+  with versions as (
+    select o.id, o.fixture_id, o.provider, o.provider_fixture_id, o.observation_version, o.observation_kind,
+           o.observation_version = max(o.observation_version) over (partition by o.fixture_id) as is_current
+    from public.match_ledger_observations o
+    where o.provider = p_provider
+  ),
+  refs as (
+    select ve.id, ve.fixture_id, ve.provider, ve.provider_fixture_id, ve.observation_version, ve.is_current,
+           pr.ref_kind, pr.provider_ref, pr.canonical_id
+    from versions ve
+    join public.match_ledger_observation_provider_refs pr on pr.observation_id = ve.id
+    where ve.observation_kind = 'observation' and pr.ref_kind <> 'season'
+  ),
+  resolved as (
+    select r.*,
+           coalesce(tm.team_id, cm.competition_id) as current_id,
+           coalesce(tm.mapping_status, cm.mapping_status) as current_status,
+           tm.mapping_confidence as current_confidence,
+           case when r.ref_kind = 'league' then cm.provider_competition_id is not null
+                else tm.provider_team_id is not null end as has_mapping,
+           case when r.ref_kind = 'league' then private.provider_competition_mapping_trusted(cm.mapping_status)
+                else private.provider_mapping_trusted(tm.mapping_status, tm.mapping_confidence) end as trusted
+    from refs r
+    left join public.provider_team_mappings tm
+      on r.ref_kind in ('team_home', 'team_away') and tm.provider = r.provider and tm.provider_team_id = r.provider_ref
+    left join public.provider_competition_mappings cm
+      on r.ref_kind = 'league' and cm.provider = r.provider and cm.provider_competition_id = r.provider_ref
+  ),
+  issues as (
+    select case when rs.ref_kind = 'league' then 'competition_mapping_missing' else 'team_mapping_missing' end as code, rs.*
+    from resolved rs where not rs.has_mapping
+    union all
+    select case when rs.ref_kind = 'league' then 'competition_mapping_untrusted' else 'team_mapping_untrusted' end, rs.*
+    from resolved rs where rs.has_mapping and not rs.trusted
+    union all
+    select case when rs.ref_kind = 'league' then 'competition_mapping_drift' else 'team_mapping_drift' end, rs.*
+    from resolved rs where rs.has_mapping and rs.current_id is distinct from rs.canonical_id
+    union all
+    select 'fixture_competition_drift', rs.id, rs.fixture_id, rs.provider, rs.provider_fixture_id, rs.observation_version,
+           rs.is_current, rs.ref_kind, rs.provider_ref, rs.canonical_id, f.competition_id, null::text, null::numeric,
+           true, true
+    from resolved rs
+    join public.fixtures f on f.id = rs.fixture_id
+    where rs.ref_kind = 'league' and f.competition_id is distinct from rs.canonical_id
+  )
+  select i.code, i.id, i.observation_version, i.is_current, i.fixture_id, i.provider_fixture_id, i.ref_kind,
+         i.provider_ref, i.canonical_id, i.current_id, i.current_status, i.current_confidence
+  from issues i
+  order by i.fixture_id, i.observation_version, i.ref_kind, i.code
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Security: server/service_role only
 -- ---------------------------------------------------------------------------
 
@@ -1230,6 +1497,12 @@ revoke all on table public.match_ledger_observation_family_fetches from public, 
 revoke all on table public.match_ledger_fixture_mints from public, anon, authenticated;
 
 revoke all on function private.seal_match_ledger_observation_annotation() from public, anon, authenticated;
+revoke all on function private.check_match_ledger_provider_ref_identity() from public, anon, authenticated;
+revoke all on function private.provider_mapping_trusted(text, numeric) from public, anon, authenticated;
+revoke all on function private.provider_competition_mapping_trusted(text) from public, anon, authenticated;
+revoke all on function private.match_ledger_retrospective_exclusions(text, uuid[], timestamptz, timestamptz, text) from public, anon, authenticated;
+revoke all on function public.match_ledger_retrospective_training_exclusions(text, uuid[], timestamptz, timestamptz, text) from public, anon, authenticated;
+revoke all on function public.match_ledger_provider_ref_conflicts(text) from public, anon, authenticated;
 revoke all on function private.stamp_match_ledger_fixture_mint() from public, anon, authenticated;
 revoke all on function private.provider_ingest_result(uuid, text, text, text, text, uuid, uuid, jsonb, jsonb, jsonb) from public, anon, authenticated;
 revoke all on function public.match_ledger_ingest_provider_fixture(jsonb) from public, anon, authenticated;
@@ -1244,7 +1517,12 @@ grant execute on function public.match_ledger_ingest_provider_fixture(jsonb) to 
 grant execute on function public.provider_ingest_record_failure(uuid, text, text, text, jsonb) to service_role;
 grant execute on function public.match_ledger_team_match_stats_as_of(text, uuid[], timestamptz, timestamptz) to service_role;
 grant execute on function public.match_ledger_team_match_stats_for_training(text, uuid[], timestamptz, timestamptz, text) to service_role;
+grant execute on function public.match_ledger_retrospective_training_exclusions(text, uuid[], timestamptz, timestamptz, text) to service_role;
+grant execute on function public.match_ledger_provider_ref_conflicts(text) to service_role;
 -- Called by name from the invoker functions above.
+grant execute on function private.provider_mapping_trusted(text, numeric) to service_role;
+grant execute on function private.provider_competition_mapping_trusted(text) to service_role;
+grant execute on function private.match_ledger_retrospective_exclusions(text, uuid[], timestamptz, timestamptz, text) to service_role;
 grant execute on function private.provider_ingest_result(uuid, text, text, text, text, uuid, uuid, jsonb, jsonb, jsonb) to service_role;
 grant execute on function private.match_ledger_effective_versions(text, timestamptz, text, text) to service_role;
 grant execute on function private.match_ledger_team_match_stats(text, uuid[], timestamptz, timestamptz, text, text) to service_role;
@@ -1255,7 +1533,7 @@ comment on table public.provider_ingest_runs is
 comment on table public.provider_ingest_items is
   'Append-only ingest attempts: one row per attempt per provider fixture, with recorded/unchanged/quarantined/failed and a closed reason code. detail.capture_quality_flags carries the parser''s recoverable capture issues for every attempt that reached the ingest RPC.';
 comment on table public.match_ledger_observation_provider_refs is
-  'Identity-critical provider refs (league, season, home team, away team) of one observation version, sealed to its writing statement. A later payload with different refs is quarantined (provider_ref_drift), never attached.';
+  'Identity-critical provider refs (league, season, home team, away team) of one observation version and the canonical ids they resolved to, sealed to its writing statement. A later payload with different refs is quarantined (provider_ref_drift), never attached; match_ledger_provider_ref_conflicts() compares them with current mappings.';
 comment on table public.match_ledger_observation_family_fetches is
   'Fetch status (fetched / not_requested) of each provider data family for one observation version, sealed to its writing statement. Drives not_observed vs family_not_provided in kapiloto-team-match-stats-v1.';
 comment on table public.match_ledger_fixture_mints is

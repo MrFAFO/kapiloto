@@ -134,7 +134,10 @@ function uuid(prefix: number, index: number): string {
 
 /**
  * Canonical competition and teams created by the TEST (the ingest RPC never
- * creates them), mapped to the synthetic Sportmonks ids.
+ * creates them), mapped to the synthetic Sportmonks ids under the historical
+ * ingest trust rules: teams confirmed at confidence 1 (as V3 writes for
+ * provided ids), the competition promoted to manual_override (the A2-B
+ * operator preflight).
  */
 export async function seedIngestIdentities(
   db: PGlite,
@@ -157,13 +160,13 @@ export async function seedIngestIdentities(
   ]);
   if (options.mapCompetition !== false) {
     await db.query(
-      "insert into public.provider_competition_mappings (provider, provider_competition_id, competition_id, mapping_status) values ('sportmonks', $1, $2, 'confirmed')",
+      "insert into public.provider_competition_mappings (provider, provider_competition_id, competition_id, mapping_status) values ('sportmonks', $1, $2, 'manual_override')",
       [options.leagueId ?? SYNTHETIC_LEAGUE_ID, competitionId],
     );
   }
   if (options.mapTeams !== false) {
     await db.query(
-      "insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_status) values ('sportmonks', $1, $2, 'confirmed'), ('sportmonks', $3, $4, 'confirmed')",
+      "insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_status, mapping_confidence) values ('sportmonks', $1, $2, 'confirmed', 1), ('sportmonks', $3, $4, 'confirmed', 1)",
       [options.homeTeamId ?? SYNTHETIC_HOME_TEAM_ID, homeTeamId, options.awayTeamId ?? SYNTHETIC_AWAY_TEAM_ID, awayTeamId],
     );
   }
@@ -234,6 +237,21 @@ export function pgliteRpc(db: PGlite) {
         `select coalesce(jsonb_agg(t), '[]'::jsonb) as result
          from public.${fn}($1, $2::uuid[], $3::timestamptz, $4::timestamptz${training ? ", $5" : ""}) t`,
         params,
+      );
+      return result.rows[0].result;
+    }
+    if (fn === "match_ledger_provider_ref_conflicts") {
+      const result = await db.query<{ result: unknown }>(
+        `select coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb) as result from public.${fn}($1) t`,
+        [args.p_provider],
+      );
+      return result.rows[0].result;
+    }
+    if (fn === "match_ledger_retrospective_training_exclusions") {
+      const result = await db.query<{ result: unknown }>(
+        `select coalesce(jsonb_agg(t), '[]'::jsonb) as result
+         from public.${fn}($1, $2::uuid[], $3::timestamptz, $4::timestamptz, $5) t`,
+        [args.p_provider, args.p_competition_ids, args.p_from, args.p_training_cutoff, args.p_policy],
       );
       return result.rows[0].result;
     }

@@ -72,7 +72,7 @@ async function canonicalFixture(db: PGlite, seed: IngestSeed, kickoffAt: string,
 }
 
 const mapFixture = (db: PGlite, fixtureId: string, providerFixtureId: string) =>
-  db.query("insert into public.provider_fixture_mappings (fixture_id, provider, provider_fixture_id) values ($1, 'sportmonks', $2)", [fixtureId, providerFixtureId]);
+  db.query("insert into public.provider_fixture_mappings (fixture_id, provider, provider_fixture_id, mapping_confidence) values ($1, 'sportmonks', $2, 1)", [fixtureId, providerFixtureId]);
 
 const competitionLocks = (db: PGlite, ids: Ids) => heldRowLocks(db, "provider_competition_mappings", "provider = 'sportmonks' and provider_competition_id = $1", [ids.leagueId]);
 const teamLocks = (db: PGlite, ids: Ids) =>
@@ -100,7 +100,7 @@ test("competition and both team mapping rows are held FOR SHARE by the ingest tr
 
   // Rows are locked before their status is checked: a quarantine holds them too.
   const unverified = await world(db, { mapTeams: false });
-  await db.query("insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_status) values ('sportmonks', $1, $2, 'confirmed'), ('sportmonks', $3, $4, 'unverified')", [
+  await db.query("insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_status, mapping_confidence) values ('sportmonks', $1, $2, 'confirmed', 1), ('sportmonks', $3, $4, 'unverified', 1)", [
     unverified.ids.homeTeamId,
     unverified.seed.homeTeamId,
     unverified.ids.awayTeamId,
@@ -108,7 +108,7 @@ test("competition and both team mapping rows are held FOR SHARE by the ingest tr
   ]);
   await db.exec("begin");
   const quarantined = (await db.query<{ r: { reason_code: string } }>(INGEST, [payloadOf(unverified.capture())])).rows[0].r;
-  assert.equal(quarantined.reason_code, "team_unmapped");
+  assert.equal(quarantined.reason_code, "team_untrusted");
   assert.deepEqual(await teamLocks(db, unverified.ids), ["for share", "for share"]);
   await db.exec("rollback");
   await db.close();
@@ -299,6 +299,10 @@ test("a mapping changed behind the row locks inside the call aborts it: no obser
   const cases: Array<[string, string]> = [
     ["home team repointed", `update public.provider_team_mappings set team_id = '${otherTeam}' where provider = 'sportmonks' and provider_team_id = '${w.ids.homeTeamId}'`],
     ["away team demoted", `update public.provider_team_mappings set mapping_status = 'unverified' where provider = 'sportmonks' and provider_team_id = '${w.ids.awayTeamId}'`],
+    // The re-check applies exactly the resolution trust rules, not a looser one.
+    ["home team confidence lowered to 0.9", `update public.provider_team_mappings set mapping_confidence = 0.9 where provider = 'sportmonks' and provider_team_id = '${w.ids.homeTeamId}'`],
+    ["competition demoted to confirmed", `update public.provider_competition_mappings set mapping_status = 'confirmed' where provider = 'sportmonks' and provider_competition_id = '${w.ids.leagueId}'`],
+    ["fixture mapping confidence lowered to 0.5", `update public.provider_fixture_mappings set mapping_confidence = 0.5 where provider = 'sportmonks' and provider_fixture_id = '${w.ids.providerFixtureId}'`],
     ["competition repointed", `update public.provider_competition_mappings set competition_id = '${otherCompetition.competitionId}' where provider = 'sportmonks' and provider_competition_id = '${w.ids.leagueId}'`],
     ["fixture mapping repointed", `update public.provider_fixture_mappings set provider_fixture_id = 'repointed' where provider = 'sportmonks' and provider_fixture_id = '${w.ids.providerFixtureId}'`],
     ["fixture mapping deleted", `delete from public.provider_fixture_mappings where provider = 'sportmonks' and provider_fixture_id = '${w.ids.providerFixtureId}'`],

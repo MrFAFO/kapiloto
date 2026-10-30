@@ -50,10 +50,13 @@ export const PROVIDER_INGEST_QUARANTINE_CODES = [
   "not_finished",
   "finished_too_early",
   "competition_unmapped",
+  "competition_untrusted",
   "team_unmapped",
+  "team_untrusted",
   "team_identity_conflict",
   "player_mapping_unverified",
   "fixture_mapping_unverified",
+  "fixture_mapping_untrusted",
   "fixture_mapping_conflict",
   "fixture_provider_identity_conflict",
   "fixture_candidate_ambiguous",
@@ -96,7 +99,23 @@ export type FixtureResolution = (typeof FIXTURE_RESOLUTIONS)[number];
 export const PROVIDER_INGEST_FUNCTIONS = {
   ingestFixture: "match_ledger_ingest_provider_fixture",
   recordFailure: "provider_ingest_record_failure",
+  providerRefConflicts: "match_ledger_provider_ref_conflicts",
 } as const;
+
+/**
+ * Historical ingest trust boundary, stricter than V3's own resolution:
+ * a team or an existing fixture mapping is trusted only as manual_override, or
+ * confirmed with mapping_confidence = 1; a competition mapping only as
+ * manual_override (the table has no confidence). Mirrors
+ * private.provider_mapping_trusted / private.provider_competition_mapping_trusted.
+ */
+export function isTrustedProviderMapping(status: string | null, confidence: number | null): boolean {
+  return status === "manual_override" || (status === "confirmed" && confidence === 1);
+}
+
+export function isTrustedProviderCompetitionMapping(status: string | null): boolean {
+  return status === "manual_override";
+}
 
 export type ProviderObservationTeam = {
   side: TeamSide;
@@ -435,4 +454,56 @@ export function buildProviderIngestRunRow(input: ProviderIngestRunInput): Record
     scope: input.scope,
     fixture_mint_kickoff_before: input.fixtureMintKickoffBefore,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Provider-ref reconciliation (read only)
+// ---------------------------------------------------------------------------
+
+export const PROVIDER_REF_CONFLICT_CODES = [
+  "team_mapping_missing",
+  "team_mapping_untrusted",
+  "team_mapping_drift",
+  "competition_mapping_missing",
+  "competition_mapping_untrusted",
+  "competition_mapping_drift",
+  "fixture_competition_drift",
+] as const;
+export type ProviderRefConflictCode = (typeof PROVIDER_REF_CONFLICT_CODES)[number];
+
+/** One disagreement between a sealed provider ref and today's mappings. */
+export type ProviderRefConflict = {
+  issue_code: ProviderRefConflictCode;
+  observation_id: string;
+  observation_version: number;
+  is_current_version: boolean;
+  fixture_id: string;
+  provider_fixture_id: string;
+  ref_kind: "league" | "team_home" | "team_away";
+  provider_ref: string;
+  recorded_canonical_id: string;
+  current_canonical_id: string | null;
+  current_mapping_status: string | null;
+  current_mapping_confidence: number | null;
+};
+
+/**
+ * Detection only: lists historical observations whose sealed team or league
+ * ref no longer agrees with the current mapping under the historical-ingest
+ * trust rules. Fixture-mapping drift stays in match_ledger_mapping_conflicts.
+ */
+export async function loadProviderRefConflicts(rpc: ProviderIngestRpc, provider: string): Promise<ProviderRefConflict[]> {
+  if (!PROVIDER.test(provider)) throw new Error("invalid provider");
+  const value = await rpc(PROVIDER_INGEST_FUNCTIONS.providerRefConflicts, { p_provider: provider });
+  if (!Array.isArray(value)) throw new Error("provider-ref conflicts must be an array");
+  return value.map((item, index) => {
+    const row = item as Record<string, unknown>;
+    if (!(PROVIDER_REF_CONFLICT_CODES as readonly string[]).includes(row.issue_code as string)) {
+      throw new Error(`provider-ref conflict ${index} has an unknown issue code`);
+    }
+    return {
+      ...(row as unknown as ProviderRefConflict),
+      current_mapping_confidence: row.current_mapping_confidence === null || row.current_mapping_confidence === undefined ? null : Number(row.current_mapping_confidence),
+    };
+  });
 }

@@ -81,6 +81,8 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.provider_ingest_record_failure(uuid, text, text, text, jsonb)",
   "public.match_ledger_team_match_stats_as_of(text, uuid[], timestamptz, timestamptz)",
   "public.match_ledger_team_match_stats_for_training(text, uuid[], timestamptz, timestamptz, text)",
+  "public.match_ledger_retrospective_training_exclusions(text, uuid[], timestamptz, timestamptz, text)",
+  "public.match_ledger_provider_ref_conflicts(text)",
 ];
 
 const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
@@ -109,6 +111,9 @@ const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.match_ledger_effective_versions(text, timestamptz, text, text)",
   "private.match_ledger_team_match_stats(text, uuid[], timestamptz, timestamptz, text, text)",
   "private.match_ledger_team_stat_entry(uuid, uuid, text, text, boolean)",
+  "private.provider_mapping_trusted(text, numeric)",
+  "private.provider_competition_mapping_trusted(text)",
+  "private.match_ledger_retrospective_exclusions(text, uuid[], timestamptz, timestamptz, text)",
 ];
 
 test("every V4 table is RLS-protected, policy-free and invisible to app users", async () => {

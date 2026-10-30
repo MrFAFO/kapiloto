@@ -64,10 +64,16 @@ async function canonicalFixture(
   return result.rows[0].id;
 }
 
-async function mapFixture(db: PGlite, fixtureId: string, providerFixtureId: string, status = "confirmed"): Promise<void> {
+async function mapFixture(
+  db: PGlite,
+  fixtureId: string,
+  providerFixtureId: string,
+  status = "confirmed",
+  confidence: number | null = 1,
+): Promise<void> {
   await db.query(
-    "insert into public.provider_fixture_mappings (fixture_id, provider, provider_fixture_id, mapping_status) values ($1, 'sportmonks', $2, $3)",
-    [fixtureId, providerFixtureId, status],
+    "insert into public.provider_fixture_mappings (fixture_id, provider, provider_fixture_id, mapping_status, mapping_confidence) values ($1, 'sportmonks', $2, $3, $4)",
+    [fixtureId, providerFixtureId, status, confidence],
   );
 }
 
@@ -259,38 +265,101 @@ test("canonical fixture search fails closed on ambiguity, unknown competitions, 
   await db.close();
 });
 
-test("competitions and teams resolve only through confirmed or manual mappings and are never created", async () => {
+test("historical trust boundary: teams need manual_override or confirmed at confidence 1, competitions manual_override; nothing is created", async () => {
   const db = await createLedgerDatabase();
   const teamsBefore = await countRows(db, "teams");
-  const check = async (s: Awaited<ReturnType<typeof scenario>>, code: string) => {
+  const check = async (s: Awaited<ReturnType<typeof scenario>>, code: string, label = code) => {
     const before = await writeFootprint(db);
     const result = await ingest(db, observationFrom(s.capture()), SEEN);
-    assert.deepEqual([result.status, result.reason_code], ["quarantined", code]);
-    assert.deepEqual(delta(before, await writeFootprint(db)), {}, code);
+    assert.deepEqual([result.status, result.reason_code], ["quarantined", code], label);
+    assert.deepEqual(delta(before, await writeFootprint(db)), {}, label);
   };
+  type Mapping = [status: string, confidence: number | null];
+  const mapTeams = (s: Awaited<ReturnType<typeof scenario>>, home: Mapping, away: Mapping) =>
+    db.query(
+      `insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_status, mapping_confidence)
+       values ('sportmonks', $1, $2, $3, $4), ('sportmonks', $5, $6, $7, $8)`,
+      [s.ids.homeTeamId, s.seed.homeTeamId, ...home, s.ids.awayTeamId, s.seed.awayTeamId, ...away],
+    );
 
-  await check(await scenario(db, { mapCompetition: false }), "competition_unmapped");
-  const unverifiedCompetition = await scenario(db, { mapCompetition: false });
-  await db.query(
-    "insert into public.provider_competition_mappings (provider, provider_competition_id, competition_id, mapping_status) values ('sportmonks', $1, $2, 'unverified')",
-    [unverifiedCompetition.ids.leagueId, unverifiedCompetition.seed.competitionId],
+  // The exact rule, as the database evaluates it everywhere it applies.
+  const trusted = async (status: string | null, confidence: number | null) =>
+    (await db.query<{ t: boolean }>("select private.provider_mapping_trusted($1, $2) as t", [status, confidence])).rows[0].t;
+  assert.deepEqual(
+    [await trusted("manual_override", null), await trusted("manual_override", 0.5), await trusted("confirmed", 1), await trusted("confirmed", 0.9999),
+     await trusted("confirmed", null), await trusted("unverified", 1), await trusted(null, 1)],
+    [true, true, true, false, false, false, false],
   );
-  await check(unverifiedCompetition, "competition_unmapped");
+  const competitionTrusted = async (status: string | null) =>
+    (await db.query<{ t: boolean }>("select private.provider_competition_mapping_trusted($1) as t", [status])).rows[0].t;
+  assert.deepEqual([await competitionTrusted("manual_override"), await competitionTrusted("confirmed"), await competitionTrusted("unverified"), await competitionTrusted(null)], [true, false, false, false]);
+
+  // Accepted: confirmed at confidence 1 (the seed, as V3 writes provided ids) and manual_override at any confidence.
+  const confirmedOne = await scenario(db);
+  assert.equal((await ingest(db, observationFrom(confirmedOne.capture()), SEEN)).status, "recorded");
+  const manual = await scenario(db, { mapTeams: false });
+  await mapTeams(manual, ["manual_override", null], ["manual_override", 0.5]);
+  assert.equal((await ingest(db, observationFrom(manual.capture()), SEEN)).status, "recorded");
+
+  // Rejected: what V3 writes for name-resolved identities, and anything unverified.
+  const untrustedTeams: Array<[string, Mapping, Mapping]> = [
+    ["confirmed at confidence 0.9", ["confirmed", 0.9], ["confirmed", 1]],
+    ["confirmed without confidence", ["confirmed", 1], ["confirmed", null]],
+    ["unverified", ["unverified", 1], ["confirmed", 1]],
+  ];
+  for (const [label, home, away] of untrustedTeams) {
+    const s = await scenario(db, { mapTeams: false });
+    await mapTeams(s, home, away);
+    await check(s, "team_untrusted", label);
+  }
   await check(await scenario(db, { mapTeams: false }), "team_unmapped");
-  const unverifiedTeams = await scenario(db, { mapTeams: false });
-  await db.query(
-    "insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_status) values ('sportmonks', $1, $2, 'confirmed'), ('sportmonks', $3, $4, 'unverified')",
-    [unverifiedTeams.ids.homeTeamId, unverifiedTeams.seed.homeTeamId, unverifiedTeams.ids.awayTeamId, unverifiedTeams.seed.awayTeamId],
-  );
-  await check(unverifiedTeams, "team_unmapped");
   const sameTeam = await scenario(db, { mapTeams: false });
   await db.query(
-    "insert into public.provider_team_mappings (provider, provider_team_id, team_id) values ('sportmonks', $1, $3), ('sportmonks', $2, $3)",
+    "insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_confidence) values ('sportmonks', $1, $3, 1), ('sportmonks', $2, $3, 1)",
     [sameTeam.ids.homeTeamId, sameTeam.ids.awayTeamId, sameTeam.seed.homeTeamId],
   );
   await check(sameTeam, "team_identity_conflict");
+
+  // Competitions: only manual_override (the table has no confidence column).
+  await check(await scenario(db, { mapCompetition: false }), "competition_unmapped");
+  for (const status of ["confirmed", "unverified"]) {
+    const s = await scenario(db, { mapCompetition: false });
+    await db.query(
+      "insert into public.provider_competition_mappings (provider, provider_competition_id, competition_id, mapping_status) values ('sportmonks', $1, $2, $3)",
+      [s.ids.leagueId, s.seed.competitionId, status],
+    );
+    await check(s, "competition_untrusted", status);
+  }
+  // Mappings are never promoted by ingest.
+  assert.equal(await countRows(db, "provider_competition_mappings", "mapping_status = 'confirmed'"), 1);
+  assert.equal(await countRows(db, "provider_team_mappings", "mapping_status = 'confirmed' and mapping_confidence = 0.9"), 1);
   // Only the test seeds created teams (2 per scenario).
-  assert.equal(await countRows(db, "teams"), teamsBefore + 10);
+  assert.equal(await countRows(db, "teams"), teamsBefore + 20);
+  await db.close();
+});
+
+test("an existing fixture mapping pins history only when trusted: manual_override or confirmed at confidence 1", async () => {
+  const db = await createLedgerDatabase();
+  const cases: Array<[string, string, number | null, string | null]> = [
+    ["confirmed at confidence 0.9 (V3 name resolution)", "confirmed", 0.9, "fixture_mapping_untrusted"],
+    ["confirmed without confidence", "confirmed", null, "fixture_mapping_untrusted"],
+    ["unverified", "unverified", 1, "fixture_mapping_unverified"],
+    ["manual_override", "manual_override", null, null],
+    ["confirmed at confidence 1", "confirmed", 1, null],
+  ];
+  for (const [label, status, confidence, code] of cases) {
+    const s = await scenario(db);
+    const fixtureId = await canonicalFixture(db, s.seed, KICKOFF);
+    await mapFixture(db, fixtureId, s.providerFixtureId, status, confidence);
+    const before = await writeFootprint(db);
+    const result = await ingest(db, observationFrom(s.capture()), SEEN);
+    if (code === null) {
+      assert.deepEqual([result.status, result.fixture_resolution, result.fixture_id], ["recorded", "existing_mapping", fixtureId], label);
+    } else {
+      assert.deepEqual([result.status, result.reason_code, result.fixture_id], ["quarantined", code, fixtureId], label);
+      assert.deepEqual(delta(before, await writeFootprint(db)), {}, label);
+    }
+  }
   await db.close();
 });
 
@@ -371,7 +440,7 @@ test("identity-critical provider refs are sealed per version; drift quarantines;
   assert.deepEqual(delta(before, await writeFootprint(db)), {});
 
   // A second provider team id mapped to the same canonical team is still drift.
-  await db.query("insert into public.provider_team_mappings (provider, provider_team_id, team_id) values ('sportmonks', '96001', $1)", [s.seed.homeTeamId]);
+  await db.query("insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_confidence) values ('sportmonks', '96001', $1, 1)", [s.seed.homeTeamId]);
   before = await writeFootprint(db);
   const teamDrift = await ingest(db, observationFrom(s.capture({ homeTeamId: "96001" })), LATER);
   assert.deepEqual([teamDrift.status, teamDrift.reason_code], ["quarantined", "provider_ref_drift"]);

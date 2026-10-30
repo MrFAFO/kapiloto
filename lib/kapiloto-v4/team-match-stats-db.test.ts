@@ -5,7 +5,7 @@ import type { PGlite } from "@electric-sql/pglite";
 
 import { buildMatchLedgerObservationPayload, buildMatchLedgerWithdrawalPayload } from "./match-ledger";
 import { loadTeamMatchStats, type TeamMatchStatsRow } from "./team-match-stats";
-import { loadTeamMatchStatsForTraining } from "./training/team-match-stats";
+import { loadRetrospectiveTrainingExclusions, loadTeamMatchStatsForTraining } from "./training/team-match-stats";
 import { basePrediction, recordPrediction } from "./test-support/knowledge-fixtures";
 import { createFixture, createLedgerDatabase, realisticObservation, recordObservation, seedLedger } from "./test-support/ledger-fixtures";
 import {
@@ -52,6 +52,10 @@ async function training(db: PGlite, trainingCutoff: string, competitionIds: stri
 }
 
 const side = (rows: TeamMatchStatsRow[], s: "home" | "away") => rows.find((r) => r.side === s)!;
+
+async function exclusions(db: PGlite, trainingCutoff: string, competitionIds: string[] | null = null) {
+  return loadRetrospectiveTrainingExclusions(pgliteRpc(db) as never, { provider: "sportmonks", competitionIds, from: null, trainingCutoff });
+}
 
 test("strict read: one row per team, for/against stats with provenance, only after first_seen_at", async () => {
   const db = await createLedgerDatabase();
@@ -145,7 +149,7 @@ test("observations written without family status (plain 1A writes) report family
   await db.close();
 });
 
-test("retrospective training availability: version 1 of backfilled finished data at kickoff + 24h, later versions never earlier", async () => {
+test("retrospective training availability: version 1 of backfilled finished data at kickoff + 24h; with no later version it stays usable", async () => {
   const db = await createLedgerDatabase();
   const s = await scenario(db, { families: { xg: "not_requested" } });
   const v1 = await ingest(db, observationFrom(s.capture()), SEEN);
@@ -161,31 +165,95 @@ test("retrospective training availability: version 1 of backfilled finished data
   assert.equal(new Date(home.effective_available_at).toISOString(), "2026-08-16T18:00:00.000Z");
   assert.equal(new Date(home.first_seen_at).toISOString(), SEEN);
   assert.equal(home.observation_id, v1.observation_id);
+  assert.deepEqual(await exclusions(db, cutoff), []);
+  await db.close();
+});
 
-  // A correction (version 2, first seen later) keeps its actual time.
-  const v2 = await ingest(db, observationFrom(s.capture({ score90: [3, 1] })), "2026-10-30T12:00:00.000Z");
+test("a later correction excludes the chain from training until it is actually effective; strict reads are unchanged", async () => {
+  const db = await createLedgerDatabase();
+  const s = await scenario(db, { families: { xg: "not_requested" } });
+  const v1 = await ingest(db, observationFrom(s.capture()), SEEN);
+  const correctedAt = "2026-10-30T12:00:00.000Z";
+  const v2 = await ingest(db, observationFrom(s.capture({ score90: [3, 1] })), correctedAt);
   assert.equal(v2.observation_version, 2);
-  assert.equal(side(await training(db, cutoff), "home").observation_id, v1.observation_id);
-  assert.equal(side(await training(db, "2026-10-30T11:59:59.000Z"), "home").observation_id, v1.observation_id);
-  const afterCorrection = side(await training(db, "2026-10-30T12:00:00.000Z"), "home");
-  assert.deepEqual([afterCorrection.observation_id, afterCorrection.availability_basis], [v2.observation_id, "actual"]);
 
-  // A withdrawal is never backdated: it hides the fixture only from its actual time.
+  // Known-superseded v1 is never returned as training truth, and v2 is never backdated.
+  for (const cutoff of ["2026-09-10T00:00:00.000Z", "2026-10-30T11:59:59.000Z"]) {
+    assert.deepEqual(await training(db, cutoff), [], cutoff);
+    const excluded = await exclusions(db, cutoff);
+    assert.equal(excluded.length, 1, cutoff);
+    assert.deepEqual(
+      [excluded[0].exclusion_reason, excluded[0].selected_observation_id, excluded[0].selected_observation_version, excluded[0].latest_observation_id, excluded[0].latest_observation_version, excluded[0].latest_observation_kind],
+      ["later_correction", v1.observation_id, 1, v2.observation_id, 2, "observation"],
+      cutoff,
+    );
+    assert.equal(new Date(excluded[0].latest_first_seen_at).toISOString(), correctedAt);
+  }
+  // Once the correction is actually effective, normal version selection applies.
+  const corrected = await training(db, correctedAt);
+  assert.deepEqual([side(corrected, "home").observation_id, side(corrected, "home").availability_basis, side(corrected, "home").goals_for_90], [v2.observation_id, "actual", 3]);
+  assert.deepEqual(await exclusions(db, correctedAt), []);
+
+  // The strict actual read is unchanged: v1 between first sightings, v2 from its own.
+  assert.deepEqual(await strict(db, "2026-09-10T00:00:00.000Z"), []);
+  const strictBefore = await strict(db, "2026-10-30T11:00:00.000Z");
+  assert.deepEqual([side(strictBefore, "home").observation_id, side(strictBefore, "home").goals_for_90, side(strictBefore, "home").availability_basis], [v1.observation_id, 2, "actual"]);
+  assert.equal(side(await strict(db, correctedAt), "home").observation_id, v2.observation_id);
+  await db.close();
+});
+
+test("a later withdrawal excludes the chain from training; from the withdrawal time the fixture is hidden everywhere", async () => {
+  const db = await createLedgerDatabase();
+  const s = await scenario(db);
+  const v1 = await ingest(db, observationFrom(s.capture()), SEEN);
+  const withdrawnAt = "2026-10-30T13:00:00.000Z";
+  const withdraw = (at: string) =>
+    recordObservation(
+      db,
+      buildMatchLedgerWithdrawalPayload({
+        fixtureId: v1.fixture_id!,
+        provider: "sportmonks",
+        providerFixtureId: String(17_000_000 + n),
+        captureMode: "backfill",
+        ingestVersion: "test",
+        retrievedAt: at,
+        withdrawalReason: "synthetic withdrawal",
+      }),
+      at,
+    );
+  await withdraw(withdrawnAt);
+
+  const early = "2026-09-10T00:00:00.000Z";
+  assert.deepEqual(await training(db, early), []);
+  const excluded = await exclusions(db, early);
+  assert.deepEqual([excluded.length, excluded[0].exclusion_reason, excluded[0].latest_observation_version, excluded[0].latest_observation_kind], [1, "later_withdrawal", 2, "withdrawal"]);
+  // Strict: v1 between its first sighting and the withdrawal, then hidden.
+  assert.equal(side(await strict(db, "2026-10-30T12:00:00.000Z"), "home").observation_id, v1.observation_id);
+  assert.deepEqual(await strict(db, withdrawnAt), []);
+  assert.deepEqual(await training(db, withdrawnAt), []);
+  assert.deepEqual(await exclusions(db, withdrawnAt), []);
+
+  // v1 -> correction v2 -> withdrawal v3: the correction is also superseded until v3.
+  const c = await scenario(db);
+  await ingest(db, observationFrom(c.capture()), SEEN);
+  const cv2 = await ingest(db, observationFrom(c.capture({ score90: [0, 0] })), "2026-10-30T12:00:00.000Z");
   await recordObservation(
     db,
     buildMatchLedgerWithdrawalPayload({
-      fixtureId: v1.fixture_id!,
+      fixtureId: cv2.fixture_id!,
       provider: "sportmonks",
       providerFixtureId: String(17_000_000 + n),
       captureMode: "backfill",
       ingestVersion: "test",
-      retrievedAt: "2026-10-30T13:00:00.000Z",
+      retrievedAt: withdrawnAt,
       withdrawalReason: "synthetic withdrawal",
     }),
-    "2026-10-30T13:00:00.000Z",
+    "2026-10-30T14:00:00.000Z",
   );
-  assert.equal((await training(db, cutoff)).length, 2);
-  assert.deepEqual(await training(db, "2026-10-30T13:00:00.000Z"), []);
+  const between = await exclusions(db, "2026-10-30T13:30:00.000Z", [c.seed.competitionId]);
+  assert.deepEqual([between.length, between[0].selected_observation_version, between[0].latest_observation_version, between[0].exclusion_reason], [1, 2, 3, "later_withdrawal"]);
+  // The report applies the training read's filters.
+  assert.deepEqual(await exclusions(db, "2026-10-30T13:30:00.000Z", ["00000000-0000-4000-8000-000000000000"]), []);
   await db.close();
 });
 
