@@ -11,6 +11,7 @@ const V4_MIGRATIONS = [
   /_kapiloto_v4_roster_squad_state\.sql$/,
   /_kapiloto_v4_lineup_prediction_registry_v2\.sql$/,
   /_kapiloto_v4_squad_state_features_v2\.sql$/,
+  /_kapiloto_v4_provider_ingest\.sql$/,
 ];
 const V4_TABLES = new Set([
   "players",
@@ -46,6 +47,11 @@ const V4_TABLES = new Set([
   "prediction_membership_inputs",
   "prediction_tenure_inputs",
   "prediction_squad_state_context",
+  "provider_ingest_runs",
+  "provider_ingest_items",
+  "match_ledger_observation_provider_refs",
+  "match_ledger_observation_family_fetches",
+  "match_ledger_fixture_mints",
 ]);
 
 function sourceFiles(dir: string): string[] {
@@ -82,7 +88,7 @@ test("the V4 migrations are the latest, in order, and strictly additive", () => 
     assert.equal(matches.length, 1, String(pattern));
     return matches[0];
   });
-  // 1A, 1B, 1C, 1D, 1E-A1 in order, and nothing after them.
+  // 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A in order, and nothing after them.
   assert.deepEqual(files.slice(-v4.length), v4);
   for (const file of v4) {
     const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
@@ -118,7 +124,7 @@ test("the 1D migration does not redefine any V1 prediction registry function", (
   assert.ok(sql.includes("create or replace function public.prediction_record_snapshot_v2("));
 });
 
-// Foundation 1A, 1B, 1C and 1D are applied to production; their migrations
+// Foundation 1A, 1B, 1C, 1D and 1E-A1 are applied; their migrations
 // must never change (line endings normalized so CRLF checkouts hash the same).
 test("the applied V4 migrations are byte-for-byte unchanged", () => {
   const applied: Record<string, string> = {
@@ -126,9 +132,53 @@ test("the applied V4 migrations are byte-for-byte unchanged", () => {
     "20261028132857_kapiloto_v4_knowledge_prediction_registry.sql": "baf08e5b5616568bf1a929823413163f3cd3d57d2ee47c9337319e722853132e",
     "20261029074019_kapiloto_v4_roster_squad_state.sql": "48fcddd3fa9588afaf7a5a8f461b92fe7bf9d956c27a39a6a7b79a9e9ceb0199",
     "20261029085303_kapiloto_v4_lineup_prediction_registry_v2.sql": "0e9b51be73b69544864a1a2dd53b350d0942cb9ec883e638a941ffc0917e9297",
+    "20261029211641_kapiloto_v4_squad_state_features_v2.sql": "421b3df180e9a745d44c184111838a423e771b12bee0e74b3a35419aee51ca6b",
   };
   for (const [file, sha256] of Object.entries(applied)) {
     const text = readFileSync(join(ROOT, "supabase", "migrations", file), "utf8").replace(/\r\n/g, "\n");
     assert.equal(createHash("sha256").update(text).digest("hex"), sha256, file);
+  }
+});
+
+// 1E-A2-A resolves provider identities and then calls the 1A RPC; it never
+// redefines 1A writes, reads or hashing, and touches no V3 table definition.
+test("the provider-ingest migration does not redefine 1A functions or alter V3 tables", () => {
+  const dir = join(ROOT, "supabase", "migrations");
+  const file = readdirSync(dir).find((name) => /_kapiloto_v4_provider_ingest\.sql$/.test(name))!;
+  const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
+  for (const fn of [
+    "public.match_ledger_record_observation",
+    "private.match_ledger_record_withdrawal",
+    "public.match_ledger_observation_as_of",
+    "public.match_ledger_provider_team_matches_as_of",
+    "public.match_ledger_provider_player_matches_as_of",
+    "private.stamp_match_ledger_observation",
+    "private.lock_match_ledger_fixture",
+    "private.kapiloto_information_clock",
+  ]) {
+    assert.ok(!sql.includes(`create or replace function ${fn}(`), fn);
+  }
+  for (const v3 of ["fixtures", "teams", "competitions", "provider_team_mappings", "provider_competition_mappings", "provider_fixture_mappings"]) {
+    assert.ok(!sql.includes(`alter table public.${v3} `), v3);
+    assert.ok(!sql.includes(` on public.${v3}\n`) && !sql.includes(` on public.${v3} `), v3);
+  }
+  assert.ok(sql.includes("public.match_ledger_record_observation(v_ledger)"));
+  // Canonical teams and competitions are never created by ingest.
+  for (const table of ["teams", "competitions", "provider_team_mappings", "provider_competition_mappings"]) {
+    assert.ok(!sql.includes(`insert into public.${table} `) && !sql.includes(`insert into public.${table}\n`), table);
+  }
+});
+
+// The retrospective training read must never reach live prediction code.
+test("only training code imports the retrospective team-stats loader", () => {
+  const v4 = join(ROOT, "lib", "kapiloto-v4");
+  const offenders = sourceFiles(v4)
+    .filter((file) => !/\.test\.ts$/.test(file) && !/test-support/.test(file) && !relative(v4, file).startsWith("training"))
+    .filter((file) => /from\s+["'][^"']*training\//.test(readFileSync(file, "utf8")))
+    .map((file) => relative(ROOT, file));
+  assert.deepEqual(offenders, []);
+  for (const name of ["squad-state.ts", "lineup-snapshot.ts", "lineup-model.ts", "prediction-registry.ts", "index.ts"]) {
+    const text = readFileSync(join(v4, name), "utf8");
+    assert.ok(!text.includes("training/") && !text.includes("ForTraining") && !text.includes("retrospective-training"), name);
   }
 });

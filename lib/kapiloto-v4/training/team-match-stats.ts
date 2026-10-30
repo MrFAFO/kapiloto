@@ -1,0 +1,115 @@
+import {
+  TEAM_MATCH_STATS_FUNCTIONS,
+  assertTeamMatchStatsQuery,
+  parseTeamMatchStatsRows,
+  type TeamMatchStatsQuery,
+  type TeamMatchStatsResult,
+} from "../team-match-stats";
+import { RETROSPECTIVE_TRAINING_AVAILABILITY_VERSION, TEAM_MATCH_STATS_CONTRACT_VERSION } from "../versions";
+
+/**
+ * TRAINING-ONLY retrospective read (kapiloto-retrospective-training-availability-v1).
+ *
+ * Backfilled history becomes available at min(first_seen_at, kickoff_at + 24h)
+ * for version 1 only. That is an approximation of when a post-match report
+ * would typically exist, NOT a reconstruction of what Kapiloto or the provider
+ * knew live. Rows carry evaluation_class = 'retrospective'. A chain with a
+ * later correction or withdrawal that is not yet effective at the training
+ * cutoff is omitted (see loadRetrospectiveTrainingExclusions).
+ *
+ * Never import this from live prediction, squad-state, lineup or registry code
+ * (boundaries.test.ts enforces it), and never present results built from it as
+ * live-simulation or prospective performance. It is deliberately not exported
+ * from lib/kapiloto-v4/index.ts.
+ */
+
+/**
+ * Known-superseded content is excluded, never rewritten: a fixture chain whose
+ * historically effective version has a later correction or withdrawal in the
+ * ledger today is left out of training rows at that cutoff. This report lists
+ * those exclusions (same filters as the training read) so they can be counted
+ * apart from ordinary stat missingness. Not football data.
+ */
+export const RETROSPECTIVE_TRAINING_EXCLUSIONS_FUNCTION = "match_ledger_retrospective_training_exclusions";
+export const RETROSPECTIVE_EXCLUSION_REASONS = ["later_correction", "later_withdrawal"] as const;
+export type RetrospectiveExclusionReason = (typeof RETROSPECTIVE_EXCLUSION_REASONS)[number];
+
+export type RetrospectiveTrainingExclusion = {
+  fixture_id: string;
+  provider: string;
+  competition_id: string | null;
+  kickoff_at: string;
+  selected_observation_id: string;
+  selected_observation_version: number;
+  effective_available_at: string;
+  availability_basis: "actual" | "retrospective_backfill";
+  latest_observation_id: string;
+  latest_observation_version: number;
+  latest_observation_kind: "observation" | "withdrawal";
+  latest_first_seen_at: string;
+  exclusion_reason: RetrospectiveExclusionReason;
+  availability_policy: typeof RETROSPECTIVE_TRAINING_AVAILABILITY_VERSION;
+};
+
+export type RetrospectiveTrainingExclusionsRpc = (
+  fn: typeof RETROSPECTIVE_TRAINING_EXCLUSIONS_FUNCTION,
+  args: { p_provider: string; p_competition_ids: string[] | null; p_from: string | null; p_training_cutoff: string; p_policy: string },
+) => Promise<unknown>;
+
+export async function loadRetrospectiveTrainingExclusions(
+  rpc: RetrospectiveTrainingExclusionsRpc,
+  query: TeamMatchStatsQuery & { trainingCutoff: string },
+): Promise<RetrospectiveTrainingExclusion[]> {
+  assertTeamMatchStatsQuery(query, query.trainingCutoff);
+  const value = await rpc(RETROSPECTIVE_TRAINING_EXCLUSIONS_FUNCTION, {
+    p_provider: query.provider,
+    p_competition_ids: query.competitionIds?.map((id) => id.toLowerCase()) ?? null,
+    p_from: query.from,
+    p_training_cutoff: query.trainingCutoff,
+    p_policy: RETROSPECTIVE_TRAINING_AVAILABILITY_VERSION,
+  });
+  if (!Array.isArray(value)) throw new Error("retrospective training exclusions must be an array");
+  return value.map((item, index) => {
+    const row = item as Record<string, unknown>;
+    if (!(RETROSPECTIVE_EXCLUSION_REASONS as readonly string[]).includes(row.exclusion_reason as string)) {
+      throw new Error(`retrospective exclusion ${index} has an unknown reason`);
+    }
+    if (row.availability_policy !== RETROSPECTIVE_TRAINING_AVAILABILITY_VERSION) throw new Error(`retrospective exclusion ${index}: unexpected policy`);
+    if (!(Number(row.latest_observation_version) > Number(row.selected_observation_version))) {
+      throw new Error(`retrospective exclusion ${index}: the latest version must be later than the selected one`);
+    }
+    return row as unknown as RetrospectiveTrainingExclusion;
+  });
+}
+
+export type TeamMatchStatsTrainingRpc = (
+  fn: typeof TEAM_MATCH_STATS_FUNCTIONS.forTraining,
+  args: { p_provider: string; p_competition_ids: string[] | null; p_from: string | null; p_training_cutoff: string; p_policy: string },
+) => Promise<unknown>;
+
+export async function loadTeamMatchStatsForTraining(
+  rpc: TeamMatchStatsTrainingRpc,
+  query: TeamMatchStatsQuery & { trainingCutoff: string },
+): Promise<TeamMatchStatsResult> {
+  assertTeamMatchStatsQuery(query, query.trainingCutoff);
+  const value = await rpc(TEAM_MATCH_STATS_FUNCTIONS.forTraining, {
+    p_provider: query.provider,
+    p_competition_ids: query.competitionIds?.map((id) => id.toLowerCase()) ?? null,
+    p_from: query.from,
+    p_training_cutoff: query.trainingCutoff,
+    p_policy: RETROSPECTIVE_TRAINING_AVAILABILITY_VERSION,
+  });
+  return {
+    contractVersion: TEAM_MATCH_STATS_CONTRACT_VERSION,
+    evaluationClass: "retrospective",
+    availabilityPolicy: RETROSPECTIVE_TRAINING_AVAILABILITY_VERSION,
+    provider: query.provider,
+    cutoff: query.trainingCutoff,
+    rows: parseTeamMatchStatsRows(value, {
+      evaluationClass: "retrospective",
+      availabilityPolicy: RETROSPECTIVE_TRAINING_AVAILABILITY_VERSION,
+      provider: query.provider,
+      cutoff: query.trainingCutoff,
+    }),
+  };
+}

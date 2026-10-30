@@ -96,3 +96,32 @@ export const LINEUP_PARAMETERS_VERSION = "kapiloto-lineup-parameters-v1";
 
 /** Shape of the lineup_estimate payload section. */
 export const LINEUP_OUTPUT_CONTRACT_VERSION = "kapiloto-lineup-output-v1";
+
+/**
+ * JSON payload accepted by public.match_ledger_ingest_provider_fixture:
+ * provider identities (league, season, teams, players, stat types), never
+ * canonical ids. The RPC resolves identities and writes a 1A observation.
+ */
+export const PROVIDER_MATCH_OBSERVATION_CONTRACT_VERSION = "kapiloto-provider-match-observation-v1";
+
+/** Captured Sportmonks fixture bundle with an explicit fetch status per data family. */
+export const SPORTMONKS_LEDGER_CAPTURE_CONTRACT_VERSION = "kapiloto-sportmonks-ledger-capture-v1";
+
+/** Sportmonks capture -> provider match observation mapping rules; also the ledger ingest_version. */
+export const SPORTMONKS_LEDGER_MAPPING_VERSION = "kapiloto-sportmonks-ledger-mapping-v1";
+
+/** definition_version of the seeded Sportmonks stat definitions (verified type ids). */
+export const SPORTMONKS_STAT_DEFINITION_VERSION = "sm-2024-08";
+
+/**
+ * Training-only availability approximation for backfilled history: version 1
+ * of a finished backfill observation counts as available at
+ * min(first_seen_at, kickoff_at + 24h). Never a live-simulation claim.
+ */
+export const RETROSPECTIVE_TRAINING_AVAILABILITY_VERSION = "kapiloto-retrospective-training-availability-v1";
+
+/** Rows returned by match_ledger_team_match_stats_as_of / _for_training. */
+export const TEAM_MATCH_STATS_CONTRACT_VERSION = "kapiloto-team-match-stats-v1";
+
+/** Canonical JSON whose SHA-256 a provider ingest run records as its entitlement snapshot. */
+export const PROVIDER_ENTITLEMENT_SNAPSHOT_VERSION = "kapiloto-provider-entitlement-snapshot-v1";
