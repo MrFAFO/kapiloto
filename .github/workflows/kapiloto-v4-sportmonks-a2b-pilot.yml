@@ -1,0 +1,59 @@
+name: Kapiloto V4 Sportmonks A2-B Pilot
+
+on:
+  push:
+    branches:
+      - feat/v4-provider-ingest-a2b-pilot
+    paths:
+      - "lib/kapiloto-v4/sportmonks-pilot.ts"
+      - "lib/kapiloto-v4/sportmonks-pilot.test.ts"
+      - "scripts/kapiloto-v4-sportmonks-pilot.ts"
+      - ".github/workflows/kapiloto-v4-sportmonks-a2b-pilot.yml"
+      - "package.json"
+  workflow_dispatch:
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: V4 tests
+        run: npm run test:kapiloto-v4
+
+      - name: Run read-only Sportmonks A2-B pilot
+        env:
+          SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
+        run: npm run pilot:sportmonks-a2b -- --out artifacts/kapiloto-v4-a2b --days 45 --fixtures-per-league 2
+
+      - name: Print pilot report
+        if: always()
+        run: |
+          if [ -f artifacts/kapiloto-v4-a2b/pilot-report.json ]; then
+            cat artifacts/kapiloto-v4-a2b/pilot-report.json
+          fi
+
+      - name: Upload pilot artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kapiloto-v4-sportmonks-a2b-pilot
+          path: artifacts/kapiloto-v4-a2b
+          if-no-files-found: warn
+          retention-days: 14

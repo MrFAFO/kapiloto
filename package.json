@@ -12,6 +12,7 @@
     "test:features": "tsx --test lib/football-features/*.test.ts",
     "spike:provider": "tsx scripts/provider-spike.ts",
     "spike:compare": "tsx scripts/compare-provider-reports.ts",
+    "pilot:sportmonks-a2b": "tsx scripts/kapiloto-v4-sportmonks-pilot.ts",
     "test:kapiloto": "tsx --test lib/kapiloto/*.test.ts",
     "test:ui": "tsx --test components/*.test.tsx",
     "test:auth": "tsx --test lib/auth/*.test.ts",
