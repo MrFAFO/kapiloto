@@ -1,8 +1,9 @@
 # 2026-10-30: V3 overwrote promoted Sportmonks competition mappings
 
-Status: contained in the repository by migration
-`20261030211645_kapiloto_v4_identity_mapping_guard.sql` (D-057). **Not yet
-applied to production.** No production data has been changed by this branch.
+Status: **Stage 0 containment applied to production** via migration
+`20261030211645_kapiloto_v4_identity_mapping_guard.sql` (D-057) on
+2026-10-30. Historical Match Ledger provider ingest is paused until Stage 1
+attestations replace trust in V3-owned mapping columns.
 
 ## What happened
 
@@ -10,6 +11,9 @@ applied to production.** No production data has been changed by this branch.
 | --- | --- |
 | ~20:34:57 | Operator promoted Sportmonks competition mappings 8, 82, 372, 384 and 564 to `manual_override` in one transaction (5 rows), after the A2-B pilot verified provider id, entitlement and provider name. |
 | 20:45:05 | Mappings 8 (Premier League), 372 (Ligat ha'Al) and 384 (Serie A) were back to `confirmed`. 82 (Bundesliga) and 564 (La Liga) were still `manual_override`; the current round had no fixture of theirs. |
+| 21:30:05 | The same three mappings were written again by the active structured-sync path, confirming the overwrite was recurrent. |
+| 21:42:43 | Pre-change production snapshot captured for all Sportmonks team/competition/fixture mappings plus pg_cron jobs; SHA-256 `c533c332117e39aa724e19cb169d142f6472c79450c7789d4a7164e221810cd9`. |
+| 21:56:46 | After M1 application and verification, mappings 8, 372 and 384 were re-promoted in one guarded operator transaction with exact canonical-id predicates; exactly 3 rows changed. All five target competitions were then `manual_override`. |
 
 No Match Ledger observation had been written, and no historical ingest or
 backfill had run.
@@ -33,7 +37,7 @@ backfill had run.
   fetches it by that id (`provided_id`) and rewrites the fixture and both team
   mappings at confidence 1. A2-A trusted `confirmed` at confidence 1.
 
-## Containment (this branch)
+## Containment (applied production state)
 
 - Automated UPDATEs of existing Sportmonks rows, and of any `manual_override`
   row, in the three mapping tables are skipped by a `BEFORE UPDATE` trigger.
@@ -44,42 +48,23 @@ backfill had run.
 - Operators opt in per transaction with
   `set local kapiloto.identity_operator = 'on'`.
 
-## Operator steps after the migration is applied (each needs separate approval)
+## Production verification completed
 
-1. Before applying, export every Sportmonks row of the three mapping tables
-   and the pg_cron job list, and keep the export with this note.
-2. After applying, confirm the guard in a rolled-back transaction:
-
-   ```sql
-   begin;
-   update public.provider_competition_mappings
-   set mapping_status = 'unverified'
-   where provider = 'sportmonks' and provider_competition_id = '82';
-   -- expect UPDATE 0
-   rollback;
-   ```
-
-3. Re-promote the three reset mappings only after checking each still points
-   at the canonical competition the verified API-Football mappings use
-   (migration `20261027183935`). The `competition_id` in the `WHERE` makes a
-   re-pointed row update 0 rows instead of being promoted:
-
-   ```sql
-   begin;
-   set local kapiloto.identity_operator = 'on';
-   update public.provider_competition_mappings
-   set mapping_status = 'manual_override', last_verified_at = now()
-   where provider = 'sportmonks'
-     and (provider_competition_id, competition_id) in (
-       ('8',   'ccdbb89d-e575-4e15-820d-f5d1ecdc3a85'::uuid),
-       ('372', '06b70ffa-847c-44d2-a346-3683ac9115c3'::uuid),
-       ('384', 'a2b7daf8-1d1d-4b79-8801-b47ad6cde38c'::uuid));
-   -- expect UPDATE 3; otherwise roll back and investigate
-   commit;
-   ```
-
-4. Watch at least two precompute cycles and the next 05:22 UTC structured
-   sync. All five competition mappings must stay `manual_override`, and
-   existing Sportmonks rows must keep their `last_verified_at`.
+- Migration history contains `20261030211645_kapiloto_v4_identity_mapping_guard`.
+- All three identity guard triggers exist and are enabled:
+  - `provider_team_mappings_identity_guard`
+  - `provider_competition_mappings_identity_guard`
+  - `provider_fixture_mappings_identity_guard`
+- A production UPDATE against a guarded Sportmonks mapping returned 0 rows and
+  left the row unchanged.
+- `service_role`, `anon` and `authenticated` cannot execute
+  `public.match_ledger_ingest_provider_fixture(jsonb)`.
+- The three reset competition mappings were re-promoted with exact canonical-id
+  predicates and an asserted row count of 3.
+- Both `match_ledger_mapping_conflicts('sportmonks')` and
+  `match_ledger_provider_ref_conflicts('sportmonks')` were empty immediately
+  after the change.
+- Continue observing at least two natural precompute cycles and the next 05:22
+  UTC structured sync. Existing guarded Sportmonks rows must not change.
 
 Historical ingest stays paused until Stage 1 (V4 attestations) lands.
