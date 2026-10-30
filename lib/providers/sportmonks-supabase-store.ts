@@ -191,7 +191,14 @@ export class SupabaseSportmonksSyncStore implements SportmonksSyncStore {
   }
 
   async saveResolvedFixture(snapshot: SportmonksResolvedFixture): Promise<void> {
-    const mappingConfidence = snapshot.resolution === "provided_id" ? 1 : 0.9;
+    // V3 Sportmonks identity resolution is weak evidence even when a fixture id
+    // came from an earlier mapping. Seeing our own prior mapping again must not
+    // promote confidence or rewrite identity (D-057).
+    const mappingConfidence = 0.9;
+    const insertOnly = (onConflict: string) => ({
+      onConflict,
+      ignoreDuplicates: true,
+    });
 
     const writes = [
       this.client.from("provider_fixture_mappings").upsert(
@@ -204,7 +211,7 @@ export class SupabaseSportmonksSyncStore implements SportmonksSyncStore {
           mapping_confidence: mappingConfidence,
           mapped_at: snapshot.capturedAt,
         },
-        { onConflict: "fixture_id,provider" },
+        insertOnly("fixture_id,provider"),
       ),
       this.client.from("provider_team_mappings").upsert(
         {
@@ -216,7 +223,7 @@ export class SupabaseSportmonksSyncStore implements SportmonksSyncStore {
           mapping_confidence: mappingConfidence,
           last_verified_at: snapshot.capturedAt,
         },
-        { onConflict: "provider,provider_team_id" },
+        insertOnly("provider,provider_team_id"),
       ),
       this.client.from("provider_team_mappings").upsert(
         {
@@ -228,7 +235,7 @@ export class SupabaseSportmonksSyncStore implements SportmonksSyncStore {
           mapping_confidence: mappingConfidence,
           last_verified_at: snapshot.capturedAt,
         },
-        { onConflict: "provider,provider_team_id" },
+        insertOnly("provider,provider_team_id"),
       ),
     ];
 
@@ -243,7 +250,7 @@ export class SupabaseSportmonksSyncStore implements SportmonksSyncStore {
             mapping_status: "confirmed",
             last_verified_at: snapshot.capturedAt,
           },
-          { onConflict: "provider,provider_competition_id" },
+          insertOnly("provider,provider_competition_id"),
         ),
       );
     }
