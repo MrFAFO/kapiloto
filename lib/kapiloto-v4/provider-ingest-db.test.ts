@@ -8,6 +8,7 @@ import { buildProviderMatchObservationPayload, recordProviderIngestFailure, reco
 import { createLedgerDatabase, recordObservation, setClock } from "./test-support/ledger-fixtures";
 import {
   MINT_BEFORE,
+  asIdentityOperator,
   countRows,
   createIngestRun,
   ingest,
@@ -819,12 +820,13 @@ test("an authoritative mapping still wins next to another candidate; a re-pointe
   assert.deepEqual([x.status, x.fixture_resolution, x.fixture_id], ["recorded", "existing_mapping", mapped]);
   assert.equal((await ingest(db, observationFrom(s.capture({ providerFixtureId: otherId(s) })), LATER)).reason_code, "fixture_provider_identity_conflict");
 
-  // A V3-style upsert re-points F's mapping from Z to X.
+  // F's mapping is re-pointed from Z to X (since D-057 only an operator can
+  // still update a Sportmonks mapping row; a V3 upsert is skipped).
   const r = await scenario(db);
   const fixtureId = await canonicalFixture(db, r.seed, KICKOFF);
   const z = await ingest(db, observationFrom(r.capture()), SEEN);
   assert.equal(z.fixture_resolution, "attached");
-  await db.query("update public.provider_fixture_mappings set provider_fixture_id = $1 where provider = 'sportmonks' and fixture_id = $2", [otherId(r), fixtureId]);
+  await asIdentityOperator(db, "update public.provider_fixture_mappings set provider_fixture_id = $1 where provider = 'sportmonks' and fixture_id = $2", [otherId(r), fixtureId]);
   const before = await writeFootprint(db);
   const repointed = await ingest(db, observationFrom(r.capture({ providerFixtureId: otherId(r) })), LATER);
   assert.deepEqual([repointed.status, repointed.reason_code, repointed.fixture_id, repointed.observation_id], ["quarantined", "provider_fixture_id_drift", fixtureId, z.observation_id]);

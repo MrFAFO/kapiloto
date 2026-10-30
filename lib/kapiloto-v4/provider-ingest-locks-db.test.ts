@@ -13,6 +13,7 @@ import {
   type NestedPlan,
 } from "./test-support/lock-inspection";
 import {
+  asIdentityOperator,
   countRows,
   ingest,
   observationFrom,
@@ -250,12 +251,15 @@ test("a repoint committed after the ingest is detected later; the earlier observ
   assert.equal(first.fixture_resolution, "minted");
   const otherTeam = "00000099-0000-4000-8000-000000000001";
   await db.query("insert into public.teams (id, canonical_name) values ($1, 'Repointed Team')", [otherTeam]);
-  // The statement shape the V3 Sportmonks store uses: upsert on (provider, provider_team_id).
-  await db.query(
-    `insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_status) values ('sportmonks', $1, $2, 'confirmed')
-     on conflict (provider, provider_team_id) do update set team_id = excluded.team_id`,
-    [w.ids.homeTeamId, otherTeam],
-  );
+  // The statement shape the V3 Sportmonks store uses: upsert on (provider,
+  // provider_team_id). Since D-057 an automated upsert of an existing
+  // Sportmonks row is skipped, so the mapping is unchanged...
+  const teamUpsert = `insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_status) values ('sportmonks', $1, $2, 'confirmed')
+     on conflict (provider, provider_team_id) do update set team_id = excluded.team_id`;
+  await db.query(teamUpsert, [w.ids.homeTeamId, otherTeam]);
+  assert.equal(await countRows(db, "provider_team_mappings", "provider_team_id = $1 and team_id = $2", [w.ids.homeTeamId, w.seed.homeTeamId]), 1);
+  // ...and only an operator can still re-point it.
+  await asIdentityOperator(db, teamUpsert, [w.ids.homeTeamId, otherTeam]);
   const before = await writeFootprint(db);
   const corrected = await ingest(db, observationFrom(w.capture({ score90: [3, 1] })), LATER);
   assert.deepEqual([corrected.status, corrected.reason_code], ["quarantined", "fixture_mapping_conflict"]);
@@ -266,7 +270,8 @@ test("a repoint committed after the ingest is detected later; the earlier observ
   const c = await world(db);
   await ingest(db, observationFrom(c.capture()), SEEN);
   const otherCompetition = await seedIngestIdentities(db, { mapCompetition: false, mapTeams: false });
-  await db.query(
+  await asIdentityOperator(
+    db,
     `insert into public.provider_competition_mappings (provider, provider_competition_id, competition_id) values ('sportmonks', $1, $2)
      on conflict (provider, provider_competition_id) do update set competition_id = excluded.competition_id`,
     [c.ids.leagueId, otherCompetition.competitionId],
@@ -278,10 +283,16 @@ test("a repoint committed after the ingest is detected later; the earlier observ
 test("a mapping changed behind the row locks inside the call aborts it: no observation under a stale identity, full rollback", async () => {
   const db = await createLedgerDatabase();
   // Test-only simulation of a writer that ignores the row locks: it runs in
-  // the ingest's own transaction, after resolution, as the ledger header is written.
+  // the ingest's own transaction, after resolution, as the ledger header is
+  // written. Since D-057 only an identity operator (or a delete) can still
+  // change a Sportmonks mapping row, so the writer opts in as one unless
+  // kapiloto.test_bypass_automated is set.
   await db.exec(`
     create function public.test_bypass_mapping_write() returns trigger language plpgsql as $$
     begin
+      if coalesce(current_setting('kapiloto.test_bypass_automated', true), '') <> 'on' then
+        perform set_config('kapiloto.identity_operator', 'on', true);
+      end if;
       execute current_setting('kapiloto.test_bypass_sql');
       return new;
     end $$;
@@ -324,8 +335,14 @@ test("a mapping changed behind the row locks inside the call aborts it: no obser
   await assert.rejects(ingest(db, observationFrom(fresh.capture()), SEEN), /provider identity mappings changed during ingest/);
   assert.deepEqual(await writeFootprint(db), before);
 
-  await bypass("select 1");
+  // An automated writer in the same transaction cannot change the rows at
+  // all: its update is skipped and the call records under the real identity.
+  await db.query("select set_config('kapiloto.test_bypass_automated', 'on', false)");
+  await bypass(cases[0][1]);
   assert.equal((await ingest(db, observationFrom(w.capture()), SEEN)).status, "recorded");
+  assert.equal(await countRows(db, "provider_team_mappings", "provider_team_id = $1 and team_id = $2", [w.ids.homeTeamId, w.seed.homeTeamId]), 1);
+
+  await bypass("select 1");
   assert.equal((await ingest(db, observationFrom(fresh.capture()), SEEN)).fixture_resolution, "minted");
   await db.close();
 });

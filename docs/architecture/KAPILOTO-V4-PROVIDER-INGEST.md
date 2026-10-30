@@ -238,8 +238,10 @@ fixture_resolution, observation_version, provider_refs_status, players_minted}`.
 ### Historical ingest trust boundary
 
 V3 keeps its existing, looser resolution rules: it writes `confirmed` mappings
-for identities it resolved by name, at `mapping_confidence = 0.9`, as well as
-for provider-supplied ids at confidence 1. Historical corpus ingestion
+for identities it resolved by name, at `mapping_confidence = 0.9`, and at
+confidence 1 when it fetched the fixture by an id it already had. That id can
+come from V3's own earlier name-resolved mapping, so V3's confidence 1 is not
+independent evidence (see "Stage 0 containment" below). Historical corpus ingestion
 intentionally uses a stricter boundary, because a wrong team, competition or
 fixture identity silently corrupts every model trained on it, and teams and
 competitions cannot be merged later.
@@ -256,10 +258,12 @@ competitions cannot be merged later.
   call them, so they cannot diverge.
 - Ingest never promotes a mapping. The A2-B operator preflight reviews the
   Sportmonks competitions in scope and promotes verified rows to
-  `manual_override`; production currently has 5 Sportmonks competition
-  mappings, all plain `confirmed`, so nothing ingests until that preflight.
-  All 36 production Sportmonks team mappings and 22 fixture mappings are
-  `confirmed` at confidence 1 and pass.
+  `manual_override`. The five pilot competitions were promoted on
+  2026-10-30, and V3 reset three of them to `confirmed` within ten minutes
+  (`docs/operations/2026-10-30-sportmonks-mapping-overwrite.md`).
+  Production Sportmonks team and fixture mappings at `confirmed` with
+  confidence 1 may be V3 name matches raised to 1, so they are suspect until
+  re-attested, and ingest is paused (D-057).
 - The fixture row was added to the boundary because V3's Sportmonks store
   writes the fixture mapping in the same name-resolution path at confidence
   0.9, and the existing-mapping path does not compare kickoffs: a heuristic
@@ -267,6 +271,54 @@ competitions cannot be merged later.
   would otherwise pin a match's history to the wrong canonical fixture.
 - Row locks, lock order and the post-write re-check are unchanged; the
   re-check now enforces exactly these trust rules.
+
+### Stage 0 containment: V3 mapping write guard and ingest pause (D-057)
+
+V3's structured sync (the daily cron and the 15-minute precompute job)
+upserts every Sportmonks mapping it touches with `ON CONFLICT DO UPDATE`. That
+re-points identities, resets `manual_override` to `confirmed`, and raises a
+name match from 0.9 to 1 the next time V3 fetches the fixture by its own
+mapped id. Migration `20261030211645_kapiloto_v4_identity_mapping_guard.sql`
+contains it without changing V3 code.
+
+- **Guard.** `private.guard_v3_identity_mapping_update()` is a row-level
+  `BEFORE UPDATE` trigger on `provider_team_mappings`,
+  `provider_competition_mappings` and `provider_fixture_mappings`. It fires
+  for every Sportmonks row and for every `manual_override` row of any
+  provider, and returns `NULL`, so that row's update is skipped:
+  - V3's upsert (PostgREST `merge-duplicates`) still succeeds, with no error
+    and zero rows changed. None of V3's mapping upserts select, count or
+    expect a returned row, and its next write (`fixtures.last_synced_at`) is
+    not guarded, so structured sync and snapshots continue.
+  - The identity column, `mapping_status`, `mapping_confidence`,
+    `provider_name` and `last_verified_at` of those rows no longer change
+    automatically: no re-point, no `manual_override` reset, no 0.9 → 1.
+  - INSERT is unchanged, so V3 can still add a missing mapping (an
+    untrusted name match). DELETE is unchanged, including foreign-key
+    cascades from `teams`, `competitions` and `fixtures`.
+  - Other providers' rows behave as before unless they are
+    `manual_override`.
+  - The skipped update still locks the row, so "Mapping row locks" holds
+    as written.
+- **Operator override.** An operator changes a guarded row only inside a
+  transaction that sets the flag locally; it ends with the transaction:
+
+  ```sql
+  begin;
+  set local kapiloto.identity_operator = 'on';
+  update public.provider_competition_mappings set ... where ...;
+  commit;
+  ```
+
+  PostgREST callers cannot set it: no exposed function sets configuration
+  parameters.
+- **Ingest pause.** `service_role` no longer has EXECUTE on
+  `public.match_ledger_ingest_provider_fixture(jsonb)`, because `confirmed`
+  at confidence 1 is reachable by a V3 name match seen twice. Stage 1
+  replaces that trust rule with V4-owned attestations and restores the
+  grant. `provider_ingest_record_failure` and every read stay available.
+- The guard function is not executable by `anon` or `authenticated` and is
+  not SECURITY DEFINER; a trigger function needs no EXECUTE grant to fire.
 
 ### Canonical identity rules
 
@@ -380,7 +432,9 @@ provider_team_id)`, `provider_competition_mappings` and
 READ COMMITTED, every statement of the RPC takes a fresh snapshot. So without
 row locks, an identity resolved early in the call could be changed by a V3
 commit before the immutable observation commits, and later statements could
-mix old and new mapping states.
+mix old and new mapping states. Since D-057 an automated update of a
+Sportmonks or `manual_override` row is skipped outright; the row locks remain
+the guarantee against operator updates, deletes and any other writer.
 
 **Mode: `FOR SHARE`, held to commit.**
 - Every V3 mapping row the call resolves is locked this way:
@@ -447,7 +501,9 @@ rollback instead of a ledger observation under a stale identity: a writer in
 the ingest's own transaction, or a future refactor that drops a lock. A test
 simulates such a bypass with a same-transaction trigger, for a team repoint, a
 status demotion, a competition repoint, and a fixture mapping repoint or
-delete.
+delete. Since D-057 its updates run as an identity operator; without the
+flag the same update is skipped and the call records under the real
+identity.
 
 **Residual concurrency while V3 is unchanged.** These cases are fail-closed or
 serial-equivalent; none produces a wrong ledger observation:
@@ -472,8 +528,9 @@ serial-equivalent; none produces a wrong ledger observation:
      repointed fixture mappings.
 
    A V3 `ON CONFLICT (fixture_id, provider) DO UPDATE` on a mapping the
-   ingest just inserted waits for the ingest to commit and then repoints it.
-   That is the documented V3 hazard, detected the same way.
+   ingest just inserted waits for the ingest to commit; since D-057 its
+   update of that Sportmonks row is then skipped. An operator repoint is
+   detected the same way.
 3. **Candidate fixture rows are not row-locked.** Their kickoff, status and
    competition decide the guard windows, but a V3 update to them commutes
    with the ingest's writes: the outcome equals the ingest-first serial order.
@@ -661,16 +718,20 @@ The ingest RPC writes two V3 tables:
 - `provider_fixture_mappings`: an attached or minted fixture gets a confirmed
   Sportmonks mapping.
 
-It never updates an existing `fixtures` row and adds no trigger, constraint or
-index to V3 tables.
+It never updates an existing `fixtures` row. The A2-A migration adds no
+trigger, constraint or index to V3 tables; the D-057 guard (see "Stage 0
+containment") is the one deliberate exception.
 
 Known V3 hazards are documented, not fixed in A2-A:
 
 - The V3 Sportmonks store upserts `provider_team_mappings` on
-  `(provider, provider_team_id)`, which can re-point a mapping.
+  `(provider, provider_team_id)`, which could re-point a mapping. Since
+  D-057 its update of an existing Sportmonks row is skipped, so it can only
+  add a missing mapping.
 - The same store upserts `provider_fixture_mappings` on
-  `(fixture_id, provider)`; a V3 write for a fixture A2 minted collides on
-  `(provider, provider_fixture_id)`.
+  `(fixture_id, provider)`; since D-057 it cannot move an existing
+  Sportmonks fixture mapping, and a V3 write for a fixture A2 minted still
+  collides on `(provider, provider_fixture_id)`.
 - The Toto import creates teams by exact lower-cased name.
 
 While an ingest runs, the competition, team and fixture mapping rows it
@@ -749,6 +810,8 @@ before they become rules. A2-A deliberately does not enforce them:
 - All five new tables have RLS enabled, no policies, and no
   `anon`/`authenticated` grants.
 - The four public functions and the private helpers they call by name are
-  executable by `service_role` only.
+  executable by `service_role` only. While ingest is paused (D-057),
+  `match_ledger_ingest_provider_fixture` is not executable even by
+  `service_role`.
 - There is no SECURITY DEFINER.
 - Audit, annotation and mint rows are immutable.

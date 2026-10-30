@@ -495,14 +495,15 @@ test("player/coach mapping writes serialize with ledger writes; fixture-mapping 
   await addCoach(db, realCoach, "The provider coach id's real owner");
   await db.query("update public.provider_coach_mappings set coach_id = $1 where provider_coach_id = $2", [realCoach, coachProviderId]);
 
-  // V3's provider_fixture_mappings carries no V4 lock or trigger, so V3
-  // behavior is unchanged and a contradicting fixture mapping can be written.
-  const v4Triggers = await db.query(
+  // V3's provider_fixture_mappings carries no V4 lock or ledger trigger; its
+  // only V4 trigger is the D-057 guard on UPDATE, so a contradicting fixture
+  // mapping can still be inserted.
+  const v4Triggers = await db.query<{ tgname: string }>(
     `select t.tgname from pg_trigger t join pg_proc p on p.oid = t.tgfoid
      where t.tgrelid = 'public.provider_fixture_mappings'::regclass and not t.tgisinternal
        and (p.proname like '%ledger%' or p.proname like '%identity%')`,
   );
-  assert.deepEqual(v4Triggers.rows, []);
+  assert.deepEqual(v4Triggers.rows.map((row) => row.tgname), ["provider_fixture_mappings_identity_guard"]);
   const f2 = await fixtureAt(8);
   await db.query(
     "insert into public.provider_fixture_mappings (fixture_id, provider, provider_fixture_id) values ($1, 'sportmonks', $2)",

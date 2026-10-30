@@ -259,6 +259,18 @@ export function pgliteRpc(db: PGlite) {
   };
 }
 
+/**
+ * Runs one statement as an identity operator (D-057): automated writers can
+ * no longer update Sportmonks or manual_override mapping rows, so tests that
+ * deliberately re-point or demote one opt in exactly as an operator does.
+ */
+export async function asIdentityOperator(db: PGlite, sql: string, params: unknown[] = []): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.query("select set_config('kapiloto.identity_operator', 'on', true)");
+    await tx.query(sql, params);
+  });
+}
+
 export async function countRows(db: PGlite, table: string, where = "true", params: unknown[] = []): Promise<number> {
   const result = await db.query<{ n: number }>(`select count(*)::int as n from public.${table} where ${where}`, params);
   return result.rows[0].n;
