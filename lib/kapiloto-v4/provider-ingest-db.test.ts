@@ -511,7 +511,7 @@ async function advisoryLockModes(db: PGlite, key: string): Promise<string[]> {
   return result.rows.map((row) => row.mode).sort();
 }
 
-test("lock order: provider fixture, canonical pairing key, fixture/provider, players identity; READ COMMITTED only", async () => {
+test("lock order: provider fixture, canonical team pair, fixture/provider, players identity; READ COMMITTED only", async () => {
   const db = await createLedgerDatabase();
   const s = await scenario(db);
   const payload = JSON.stringify(buildProviderMatchObservationPayload(observationFrom(s.capture())));
@@ -520,10 +520,7 @@ test("lock order: provider fixture, canonical pairing key, fixture/provider, pla
   await db.exec("begin");
   const result = (await db.query<{ r: { fixture_id: string } }>("select public.match_ledger_ingest_provider_fixture($1::jsonb) as r", [payload])).rows[0].r;
   assert.deepEqual(await advisoryLockModes(db, `kapiloto_match_ledger_provider_fixture:sportmonks:${s.providerFixtureId}`), ["ExclusiveLock"]);
-  assert.deepEqual(
-    await advisoryLockModes(db, `kapiloto_canonical_fixture_key:${s.seed.competitionId}:${s.seed.homeTeamId}:${s.seed.awayTeamId}`),
-    ["ExclusiveLock"],
-  );
+  assert.deepEqual(await advisoryLockModes(db, pairKey(s.seed)), ["ExclusiveLock"]);
   assert.deepEqual(await advisoryLockModes(db, `kapiloto_match_ledger_fixture:${result.fixture_id}:sportmonks`), ["ExclusiveLock"]);
   assert.ok((await advisoryLockModes(db, "kapiloto_identity:players")).includes("ExclusiveLock"));
   await db.exec("rollback");
@@ -613,5 +610,257 @@ test("observation annotations are sealed to their writing statement and immutabl
   await assert.rejects(
     db.query("insert into public.match_ledger_fixture_mints (fixture_id, provider, provider_fixture_id, kickoff_before) values ($1, 'sportmonks', 'nope', now())", [result.fixture_id]),
   );
+  await db.close();
+});
+
+// ---------------------------------------------------------------------------
+// Canonical fixture identity: a fixture already identified with another
+// provider fixture id never disappears from the attach/mint decision.
+// ---------------------------------------------------------------------------
+
+const otherId = (s: Awaited<ReturnType<typeof scenario>>, k = 1) => String(Number(s.providerFixtureId) + 500_000 * k);
+const pairKey = (seed: IngestSeed) => `kapiloto_canonical_fixture_pair:${[seed.homeTeamId, seed.awayTeamId].sort().join(":")}`;
+
+async function sportmonksMappings(db: PGlite, fixtureId: string) {
+  return (
+    await db.query<{ provider_fixture_id: string; mapping_status: string }>(
+      "select provider_fixture_id, mapping_status from public.provider_fixture_mappings where provider = 'sportmonks' and fixture_id = $1",
+      [fixtureId],
+    )
+  ).rows;
+}
+
+test("a second provider fixture id for an attached match is quarantined even when minting is allowed", async () => {
+  const db = await createLedgerDatabase();
+  const run = await createIngestRun(db);
+  const s = await scenario(db);
+  const fixtureId = await canonicalFixture(db, s.seed, KICKOFF);
+  const x = await ingest(db, observationFrom(s.capture()), SEEN);
+  assert.deepEqual([x.status, x.fixture_resolution, x.fixture_id], ["recorded", "attached", fixtureId]);
+
+  const before = await writeFootprint(db);
+  const y = await ingest(db, observationFrom(s.capture({ providerFixtureId: otherId(s) }), { mint: true, runId: run }), LATER);
+  assert.deepEqual([y.status, y.reason_code, y.fixture_id], ["quarantined", "fixture_provider_identity_conflict", null]);
+  assert.deepEqual(delta(before, await writeFootprint(db)), {});
+  assert.deepEqual(await sportmonksMappings(db, fixtureId), [{ provider_fixture_id: s.providerFixtureId, mapping_status: "confirmed" }]);
+  assert.equal(await countRows(db, "provider_fixture_mappings", "provider_fixture_id = $1", [otherId(s)]), 0);
+  assert.equal(await countRows(db, "match_ledger_observations", "provider_fixture_id = $1", [otherId(s)]), 0);
+  const detail = (await db.query<{ detail: Record<string, unknown> }>("select detail from public.provider_ingest_items where run_id = $1", [run])).rows[0].detail;
+  assert.deepEqual(detail.conflicting_provider_fixture_ids, [s.providerFixtureId]);
+  assert.equal(detail.attach_window, 1);
+  await db.close();
+});
+
+test("a second provider fixture id for a match the first one minted is quarantined; only one canonical fixture exists", async () => {
+  const db = await createLedgerDatabase();
+  const s = await scenario(db);
+  const x = await ingest(db, observationFrom(s.capture()), SEEN);
+  assert.equal(x.fixture_resolution, "minted");
+  const before = await writeFootprint(db);
+  const y = await ingest(db, observationFrom(s.capture({ providerFixtureId: otherId(s), kickoffAt: hoursFrom(KICKOFF, 2) }), { mint: true }), LATER);
+  assert.deepEqual([y.status, y.reason_code], ["quarantined", "fixture_provider_identity_conflict"]);
+  assert.deepEqual(delta(before, await writeFootprint(db)), {});
+  assert.equal(await countRows(db, "fixtures", "home_team_id = $1 and away_team_id = $2", [s.seed.homeTeamId, s.seed.awayTeamId]), 1);
+  await db.close();
+});
+
+test("fixtures identified with another provider fixture id participate in every guard window", async () => {
+  const db = await createLedgerDatabase();
+  const cases: Array<[string, string, (s: Awaited<ReturnType<typeof scenario>>) => Promise<void>]> = [
+    ["attach window", "fixture_provider_identity_conflict", async (s) => mapFixture(db, await canonicalFixture(db, s.seed, hoursFrom(KICKOFF, 1)), otherId(s))],
+    ["reschedule window", "fixture_provider_identity_conflict", async (s) => mapFixture(db, await canonicalFixture(db, s.seed, hoursFrom(KICKOFF, 24 * 7)), otherId(s))],
+    ["postponement window", "fixture_provider_identity_conflict", async (s) => mapFixture(db, await canonicalFixture(db, s.seed, hoursFrom(KICKOFF, -24 * 60), { status: "postponed" }), otherId(s))],
+    ["unknown competition", "fixture_provider_identity_conflict", async (s) => mapFixture(db, await canonicalFixture(db, s.seed, hoursFrom(KICKOFF, 48), { competitionId: null }), otherId(s))],
+    ["unverified mapping", "fixture_provider_identity_conflict", async (s) => mapFixture(db, await canonicalFixture(db, s.seed, KICKOFF), otherId(s), "unverified")],
+    [
+      "ledger history without a mapping",
+      "fixture_provider_identity_conflict",
+      async (s) => {
+        await canonicalFixture(db, s.seed, KICKOFF);
+        await ingest(db, observationFrom(s.capture({ providerFixtureId: otherId(s) })), SEEN);
+        await db.query("delete from public.provider_fixture_mappings where provider = 'sportmonks' and provider_fixture_id = $1", [otherId(s)]);
+      },
+    ],
+    // A mapped candidate plus an unmapped one: the identity conflict is reported first.
+    [
+      "mapped and unmapped candidates",
+      "fixture_provider_identity_conflict",
+      async (s) => {
+        await mapFixture(db, await canonicalFixture(db, s.seed, KICKOFF), otherId(s));
+        await canonicalFixture(db, s.seed, hoursFrom(KICKOFF, 2));
+      },
+    ],
+  ];
+  for (const [label, code, arrange] of cases) {
+    const s = await scenario(db);
+    await arrange(s);
+    const before = await writeFootprint(db);
+    const result = await ingest(db, observationFrom(s.capture(), { mint: true }), LATER);
+    assert.deepEqual([result.status, result.reason_code, result.fixture_id], ["quarantined", code, null], label);
+    assert.deepEqual(delta(before, await writeFootprint(db)), {}, label);
+  }
+
+  // Outside every window a fixture mapped to another id is a different match.
+  const far = await scenario(db);
+  await mapFixture(db, await canonicalFixture(db, far.seed, hoursFrom(KICKOFF, 24 * 20)), otherId(far));
+  assert.equal((await ingest(db, observationFrom(far.capture()), LATER)).fixture_resolution, "minted");
+  await db.close();
+});
+
+test("reversed orientation and other competitions within 48 hours block attach and mint; legs a week apart do not", async () => {
+  const db = await createLedgerDatabase();
+  const cases: Array<[string, string, (s: Awaited<ReturnType<typeof scenario>>) => Promise<void>]> = [
+    ["reversed orientation", "fixture_orientation_conflict", async (s) => void (await canonicalFixture(db, s.seed, hoursFrom(KICKOFF, 1), { swap: true }))],
+    [
+      "other competition",
+      "fixture_competition_conflict",
+      async (s) => {
+        const other = await seedIngestIdentities(db, { mapCompetition: false, mapTeams: false });
+        await canonicalFixture(db, s.seed, hoursFrom(KICKOFF, 1), { competitionId: other.competitionId });
+      },
+    ],
+    ["reversed and mapped", "fixture_provider_identity_conflict", async (s) => mapFixture(db, await canonicalFixture(db, s.seed, KICKOFF, { swap: true }), otherId(s))],
+  ];
+  for (const [label, code, arrange] of cases) {
+    const s = await scenario(db);
+    await arrange(s);
+    const before = await writeFootprint(db);
+    const result = await ingest(db, observationFrom(s.capture()), LATER);
+    assert.deepEqual([result.status, result.reason_code], ["quarantined", code], label);
+    assert.deepEqual(delta(before, await writeFootprint(db)), {}, label);
+  }
+  const secondLeg = await scenario(db);
+  await canonicalFixture(db, secondLeg.seed, hoursFrom(KICKOFF, -24 * 7), { swap: true });
+  assert.equal((await ingest(db, observationFrom(secondLeg.capture()), LATER)).fixture_resolution, "minted");
+  const otherCompetitionLater = await scenario(db);
+  const other = await seedIngestIdentities(db, { mapCompetition: false, mapTeams: false });
+  await canonicalFixture(db, otherCompetitionLater.seed, hoursFrom(KICKOFF, 24 * 4), { competitionId: other.competitionId });
+  assert.equal((await ingest(db, observationFrom(otherCompetitionLater.capture()), LATER)).fixture_resolution, "minted");
+  await db.close();
+});
+
+test("an authoritative mapping still wins next to another candidate; a re-pointed mapping cannot continue another id's chain", async () => {
+  const db = await createLedgerDatabase();
+
+  const s = await scenario(db);
+  const mapped = await canonicalFixture(db, s.seed, KICKOFF);
+  await canonicalFixture(db, s.seed, hoursFrom(KICKOFF, 3));
+  await mapFixture(db, mapped, s.providerFixtureId);
+  const x = await ingest(db, observationFrom(s.capture()), SEEN);
+  assert.deepEqual([x.status, x.fixture_resolution, x.fixture_id], ["recorded", "existing_mapping", mapped]);
+  assert.equal((await ingest(db, observationFrom(s.capture({ providerFixtureId: otherId(s) })), LATER)).reason_code, "fixture_provider_identity_conflict");
+
+  // A V3-style upsert re-points F's mapping from Z to X.
+  const r = await scenario(db);
+  const fixtureId = await canonicalFixture(db, r.seed, KICKOFF);
+  const z = await ingest(db, observationFrom(r.capture()), SEEN);
+  assert.equal(z.fixture_resolution, "attached");
+  await db.query("update public.provider_fixture_mappings set provider_fixture_id = $1 where provider = 'sportmonks' and fixture_id = $2", [otherId(r), fixtureId]);
+  const before = await writeFootprint(db);
+  const repointed = await ingest(db, observationFrom(r.capture({ providerFixtureId: otherId(r) })), LATER);
+  assert.deepEqual([repointed.status, repointed.reason_code, repointed.fixture_id, repointed.observation_id], ["quarantined", "provider_fixture_id_drift", fixtureId, z.observation_id]);
+  const orphan = await ingest(db, observationFrom(r.capture()), LATER);
+  assert.deepEqual([orphan.status, orphan.reason_code], ["quarantined", "fixture_provider_identity_conflict"]);
+  assert.deepEqual(delta(before, await writeFootprint(db)), {});
+  await db.close();
+});
+
+test("interleaving: the unordered team-pair lock covers search, decision and write; the next caller sees the committed mapping", async () => {
+  const db = await createLedgerDatabase();
+  const s = await scenario(db);
+  const key = pairKey(s.seed);
+  const payload = (overrides: Partial<SyntheticCaptureOptions>) => JSON.stringify(buildProviderMatchObservationPayload(observationFrom(s.capture(overrides), { mint: true })));
+  await setClock(db, SEEN);
+
+  // First caller: decides and mints while holding the pair lock.
+  await db.exec("begin");
+  const x = (await db.query<{ r: { status: string; fixture_resolution: string; fixture_id: string } }>("select public.match_ledger_ingest_provider_fixture($1::jsonb) as r", [payload({})])).rows[0].r;
+  assert.deepEqual([x.status, x.fixture_resolution], ["recorded", "minted"]);
+  assert.deepEqual(await advisoryLockModes(db, key), ["ExclusiveLock"]);
+  assert.equal(await countRows(db, "provider_fixture_mappings", "provider_fixture_id = $1 and fixture_id = $2", [s.providerFixtureId, x.fixture_id]), 1);
+  await db.exec("commit");
+  assert.deepEqual(await advisoryLockModes(db, key), []);
+
+  // Second caller: same pair key; its candidate query runs after the lock and sees the committed mapping.
+  await db.exec("begin");
+  const y = (await db.query<{ r: { status: string; reason_code: string } }>("select public.match_ledger_ingest_provider_fixture($1::jsonb) as r", [payload({ providerFixtureId: otherId(s) })])).rows[0].r;
+  assert.deepEqual([y.status, y.reason_code], ["quarantined", "fixture_provider_identity_conflict"]);
+  assert.deepEqual(await advisoryLockModes(db, key), ["ExclusiveLock"]);
+  await db.exec("commit");
+
+  // Reversed orientation (and any competition) serializes on the same key.
+  await db.exec("begin");
+  await db.query("select public.match_ledger_ingest_provider_fixture($1::jsonb)", [
+    payload({ providerFixtureId: otherId(s, 2), homeTeamId: s.ids.awayTeamId, awayTeamId: s.ids.homeTeamId }),
+  ]);
+  assert.deepEqual(await advisoryLockModes(db, key), ["ExclusiveLock"]);
+  await db.exec("rollback");
+  assert.equal(await countRows(db, "fixtures", "(home_team_id = $1 and away_team_id = $2) or (home_team_id = $2 and away_team_id = $1)", [s.seed.homeTeamId, s.seed.awayTeamId]), 1);
+  await db.close();
+});
+
+// ---------------------------------------------------------------------------
+// Capture quality flags: per-attempt audit metadata, never ledger content.
+// ---------------------------------------------------------------------------
+
+test("capture quality flags are stored on every run-bound attempt and never change ledger content", async () => {
+  const db = await createLedgerDatabase();
+  const run = await createIngestRun(db);
+  const s = await scenario(db);
+  const items = async () =>
+    (
+      await db.query<{ status: string; reason_code: string | null; detail: Record<string, unknown> }>(
+        "select status, reason_code, detail from public.provider_ingest_items where run_id = $1 order by created_at, attempt_no",
+        [run],
+      )
+    ).rows;
+
+  const clean = await ingest(db, observationFrom(s.capture(), { runId: run }), SEEN);
+  // Same football content, one ignored out-of-family row: unchanged, new flags.
+  const outside = s.capture();
+  outside.families.statistics.rows.push({ type_id: 5304, participant_id: Number(s.ids.homeTeamId), data: { value: 9 }, type: { developer_name: "EXPECTED_GOALS" } });
+  const flagged = await ingest(db, observationFrom(outside, { runId: run }), LATER);
+  assert.equal(clean.status, "recorded");
+  assert.deepEqual([flagged.status, flagged.observation_id, flagged.observation_version], ["unchanged", clean.observation_id, 1]);
+  assert.equal(await countRows(db, "match_ledger_observations", "fixture_id = $1", [clean.fixture_id]), 1);
+
+  const unmapped = await scenario(db, { mapTeams: false });
+  const duplicateShirt = unmapped.capture();
+  (duplicateShirt.families.lineups.rows[1] as { jersey_number: number }).jersey_number = 1;
+  const quarantined = await ingest(db, observationFrom(duplicateShirt, { runId: run }), LATER);
+  assert.equal(quarantined.reason_code, "team_unmapped");
+  await recordProviderIngestFailure(pgliteRpc(db), { runId: run, provider: "sportmonks", providerFixtureId: "1", reasonCode: "capture_parse_error" });
+
+  const stored = await items();
+  assert.deepEqual(
+    stored.map((i) => [i.status, i.reason_code, i.detail.capture_quality_flags ?? "absent"]),
+    [
+      ["recorded", null, []],
+      ["unchanged", null, ["stat_type_outside_family"]],
+      ["quarantined", "team_unmapped", ["duplicate_shirt_number"]],
+      ["failed", "capture_parse_error", "absent"],
+    ],
+  );
+  await db.close();
+});
+
+test("the ingest RPC accepts only a bounded array of known capture quality flags and stores it sorted", async () => {
+  const db = await createLedgerDatabase();
+  const run = await createIngestRun(db);
+  const s = await scenario(db, { mapTeams: false });
+  const base = buildProviderMatchObservationPayload(observationFrom(s.capture(), { runId: run })) as Record<string, unknown>;
+  const withFlags = (flags: unknown) => ({ ...base, capture_quality_flags: flags });
+  const { capture_quality_flags: _omitted, ...missing } = base;
+
+  await assert.rejects(ingest(db, withFlags(["type_drift"]), SEEN), /capture_quality_flags/);
+  await assert.rejects(ingest(db, withFlags("formation_invalid"), SEEN), /capture_quality_flags/);
+  await assert.rejects(ingest(db, withFlags([1]), SEEN), /capture_quality_flags/);
+  await assert.rejects(ingest(db, withFlags(Array.from({ length: 33 }, () => "formation_invalid")), SEEN), /capture_quality_flags/);
+  await assert.rejects(ingest(db, missing, SEEN), /capture_quality_flags/);
+  assert.equal(await countRows(db, "provider_ingest_items", "run_id = $1", [run]), 0);
+
+  await ingest(db, withFlags(["formation_invalid", "duplicate_shirt_number", "formation_invalid"]), SEEN);
+  const detail = (await db.query<{ detail: Record<string, unknown> }>("select detail from public.provider_ingest_items where run_id = $1", [run])).rows[0].detail;
+  assert.deepEqual(detail.capture_quality_flags, ["duplicate_shirt_number", "formation_invalid"]);
   await db.close();
 });

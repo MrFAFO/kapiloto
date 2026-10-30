@@ -55,17 +55,40 @@ export const PROVIDER_INGEST_QUARANTINE_CODES = [
   "player_mapping_unverified",
   "fixture_mapping_unverified",
   "fixture_mapping_conflict",
+  "fixture_provider_identity_conflict",
   "fixture_candidate_ambiguous",
+  "fixture_orientation_conflict",
+  "fixture_competition_conflict",
   "fixture_competition_unknown",
   "fixture_possible_postponement",
   "fixture_possible_reschedule",
   "fixture_mint_not_permitted",
+  "provider_fixture_id_drift",
   "provider_refs_unrecorded",
   "provider_ref_drift",
   "family_status_downgrade",
   "family_status_drift",
 ] as const;
 export type ProviderIngestQuarantineCode = (typeof PROVIDER_INGEST_QUARANTINE_CODES)[number];
+
+/**
+ * Recoverable capture issues a parser normalized away (closed set, mirrored by
+ * the ingest RPC). Stored per attempt in provider_ingest_items.detail; never
+ * ledger content, never part of the 1A content hash, never a new version.
+ * Contract-level problems (stat type drift, missing type metadata, invalid
+ * values of verified types) are parse failures instead, never flags.
+ */
+export const CAPTURE_QUALITY_FLAGS = [
+  "duplicate_formation_position",
+  "duplicate_shirt_number",
+  "formation_invalid",
+  "lineup_role_unknown",
+  "stat_type_outside_family",
+  "stat_value_null",
+  "stats_not_separable_extra_time",
+] as const;
+export type CaptureQualityFlag = (typeof CAPTURE_QUALITY_FLAGS)[number];
+export const MAX_CAPTURE_QUALITY_FLAGS = 32;
 
 export const FIXTURE_RESOLUTIONS = ["existing_mapping", "attached", "minted"] as const;
 export type FixtureResolution = (typeof FIXTURE_RESOLUTIONS)[number];
@@ -135,6 +158,8 @@ export type ProviderMatchObservation = {
   familyResponseSha256: Partial<Record<ProviderDataFamily, string | null>>;
   fixtureMint: FixtureMintPolicy;
   runId: string | null;
+  /** Sorted, de-duplicated recoverable capture issues; audit only. */
+  captureQualityFlags: CaptureQualityFlag[];
 };
 
 export type ProviderIngestResult = {
@@ -247,6 +272,13 @@ export function validateProviderMatchObservation(observation: ProviderMatchObser
     issues.push("an allowed fixture mint needs kickoffBefore");
   }
   if (observation.runId !== null && !UUID.test(observation.runId)) issues.push("runId must be a uuid");
+  const flags = observation.captureQualityFlags;
+  if (!Array.isArray(flags) || flags.length > MAX_CAPTURE_QUALITY_FLAGS) {
+    issues.push(`captureQualityFlags must be an array of at most ${MAX_CAPTURE_QUALITY_FLAGS} flags`);
+  } else {
+    if (flags.some((flag) => !(CAPTURE_QUALITY_FLAGS as readonly string[]).includes(flag))) issues.push("unknown capture quality flag");
+    if (flags.some((flag, i) => i > 0 && flags[i - 1] >= flag)) issues.push("captureQualityFlags must be sorted and unique");
+  }
   return issues;
 }
 
@@ -304,6 +336,7 @@ export function buildProviderMatchObservationPayload(observation: ProviderMatchO
     ),
     fixture_mint: { allowed: observation.fixtureMint.allowed, kickoff_before: observation.fixtureMint.kickoffBefore },
     run_id: observation.runId === null ? null : observation.runId.toLowerCase(),
+    capture_quality_flags: [...observation.captureQualityFlags],
   };
 }
 

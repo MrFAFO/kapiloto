@@ -11,6 +11,7 @@ import {
 import {
   FAMILY_FETCH_STATUSES,
   PROVIDER_DATA_FAMILIES,
+  type CaptureQualityFlag,
   type FamilyFetchStatus,
   type FixtureMintPolicy,
   type ProviderDataFamily,
@@ -33,10 +34,15 @@ import {
  * the raw response bytes).
  *
  * Missingness is explicit. Each data family carries a fetch status; an empty
- * row list never means "provided". Stats are kept only from fetched families,
- * for allow-listed type ids whose developer name matches the verified
- * definition. Matches that went to extra time carry no team stats (Sportmonks
- * reports them for the whole match, not separable into 90 minutes).
+ * row list never means "provided". Stats are kept only from fetched families
+ * and only for allow-listed type ids. Every allow-listed row must carry the
+ * verified type.developer_name and a valid value: a different name
+ * (stat_type_drift), a missing name or type include
+ * (stat_type_metadata_missing) or an invalid value (stat_value_invalid) fails
+ * the whole capture, so provider contract drift can never surface later as
+ * ordinary missing data. Matches that went to extra time carry no team stats
+ * (Sportmonks reports them for the whole match, not separable into 90
+ * minutes), but their rows are still validated.
  */
 
 /** Verified Sportmonks v3 type ids (fixture statistics and expected-value references). */
@@ -148,6 +154,9 @@ export const SPORTMONKS_PARSE_ERROR_CODES = [
   "formation_row_invalid",
   "stat_row_invalid",
   "stat_team_unknown",
+  "stat_type_metadata_missing",
+  "stat_type_drift",
+  "stat_value_invalid",
   "stat_duplicate_conflict",
 ] as const;
 export type SportmonksParseErrorCode = (typeof SPORTMONKS_PARSE_ERROR_CODES)[number];
@@ -163,8 +172,8 @@ export class SportmonksLedgerParseError extends Error {
 
 export type ParsedSportmonksLedgerCapture = {
   observation: ProviderMatchObservation;
-  /** Sorted, de-duplicated data-quality flags (not ledger content). */
-  flags: string[];
+  /** Same as observation.captureQualityFlags: sorted, recoverable, audit only. */
+  flags: CaptureQualityFlag[];
 };
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -317,7 +326,7 @@ export function parseSportmonksLedgerCapture(
     }
   }
 
-  const flags = new Set<string>();
+  const flags = new Set<CaptureQualityFlag>();
 
   // Lineups.
   const players: ProviderObservationPlayer[] = [];
@@ -392,47 +401,57 @@ export function parseSportmonksLedgerCapture(
     }
   }
 
-  // Team statistics (statistics and xg families).
+  // Team statistics (statistics and xg families). Every allow-listed row is
+  // checked against its verified definition, also for extra-time matches.
   const teamStats: ProviderObservationStat[] = [];
+  const byKey = new Map<string, ProviderObservationStat>();
+  for (const family of ["statistics", "xg"] as const) {
+    if (families[family].fetch_status !== "fetched") continue;
+    for (const row of families[family].rows) {
+      if (!isRecord(row)) fail("stat_row_invalid", "stat row must be an object");
+      const record = row as Record<string, unknown>;
+      const typeId = typeof record.type_id === "number" || typeof record.type_id === "string" ? String(record.type_id) : null;
+      const definition = SPORTMONKS_LEDGER_STAT_TYPES.find((d) => d.typeId === typeId);
+      // Type ids outside the allow-list are outside the contract.
+      if (!definition) continue;
+      if (definition.family !== family) {
+        flags.add("stat_type_outside_family");
+        continue;
+      }
+      const teamId = providerRef(record.participant_id, "stat_row_invalid", "stat participant_id");
+      const side = sideByTeam.get(teamId) ?? fail("stat_team_unknown", `stat team ${teamId} is not a participant`);
+      const developerName = isRecord(record.type) ? record.type.developer_name : undefined;
+      if (typeof developerName !== "string" || developerName.trim() === "") {
+        fail("stat_type_metadata_missing", `type ${definition.typeId} has no type.developer_name; the capture must request the type include`);
+      }
+      if (developerName !== definition.developerName) {
+        fail("stat_type_drift", `type ${definition.typeId} is ${String(developerName).slice(0, 80)}, verified as ${definition.developerName}`);
+      }
+      const raw = isRecord(record.data) ? record.data.value : undefined;
+      if (raw === null || raw === undefined) {
+        // The provider explicitly has no value: not observed, recorded for audit.
+        flags.add("stat_value_null");
+        continue;
+      }
+      const value = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : Number.NaN;
+      const valid =
+        Number.isFinite(value) &&
+        value >= 0 &&
+        (definition.unit !== "count" || Number.isInteger(value)) &&
+        (definition.unit !== "percent" || value <= 100);
+      if (!valid) fail("stat_value_invalid", `type ${definition.typeId} value ${JSON.stringify(raw).slice(0, 40)} is not a valid ${definition.unit}`);
+      const key = `${side}:${definition.typeId}`;
+      const existing = byKey.get(key);
+      if (existing) {
+        if (existing.value !== value) fail("stat_duplicate_conflict", `conflicting values for ${key}`);
+        continue;
+      }
+      byKey.set(key, { side, family, providerStatType: definition.typeId, definitionVersion: SPORTMONKS_STAT_DEFINITION_VERSION, value });
+    }
+  }
   if (extraTime) {
     if (families.statistics.fetch_status === "fetched" || families.xg.fetch_status === "fetched") flags.add("stats_not_separable_extra_time");
   } else {
-    const byKey = new Map<string, ProviderObservationStat>();
-    for (const family of ["statistics", "xg"] as const) {
-      if (families[family].fetch_status !== "fetched") continue;
-      for (const row of families[family].rows) {
-        if (!isRecord(row)) fail("stat_row_invalid", "stat row must be an object");
-        const record = row as Record<string, unknown>;
-        const typeId = typeof record.type_id === "number" || typeof record.type_id === "string" ? String(record.type_id) : null;
-        const definition = SPORTMONKS_LEDGER_STAT_TYPES.find((d) => d.typeId === typeId && d.family === family);
-        if (!definition) continue;
-        const teamId = providerRef(record.participant_id, "stat_row_invalid", "stat participant_id");
-        const side = sideByTeam.get(teamId) ?? fail("stat_team_unknown", `stat team ${teamId} is not a participant`);
-        const developerName = isRecord(record.type) ? record.type.developer_name : undefined;
-        if (developerName !== definition.developerName) {
-          flags.add(developerName === undefined ? "stat_type_unverified" : "type_drift");
-          continue;
-        }
-        const raw = isRecord(record.data) ? record.data.value : undefined;
-        const value = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : Number.NaN;
-        const valid =
-          Number.isFinite(value) &&
-          value >= 0 &&
-          (definition.unit !== "count" || Number.isInteger(value)) &&
-          (definition.unit !== "percent" || value <= 100);
-        if (!valid) {
-          flags.add("stat_value_invalid");
-          continue;
-        }
-        const key = `${side}:${definition.typeId}`;
-        const existing = byKey.get(key);
-        if (existing) {
-          if (existing.value !== value) fail("stat_duplicate_conflict", `conflicting values for ${key}`);
-          continue;
-        }
-        byKey.set(key, { side, family, providerStatType: definition.typeId, definitionVersion: SPORTMONKS_STAT_DEFINITION_VERSION, value });
-      }
-    }
     teamStats.push(...[...byKey.values()].sort((a, b) => (a.side + a.providerStatType < b.side + b.providerStatType ? -1 : 1)));
   }
 
@@ -488,6 +507,7 @@ export function parseSportmonksLedgerCapture(
     familyResponseSha256,
     fixtureMint: options.fixtureMint,
     runId: options.runId,
+    captureQualityFlags: [...flags].sort(),
   };
-  return { observation, flags: [...flags].sort() };
+  return { observation, flags: observation.captureQualityFlags };
 }

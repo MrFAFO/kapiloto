@@ -172,33 +172,57 @@ test("Sportmonks states map to canonical statuses; awarded results are never fin
   assert.equal(fromString.kickoffAt, KICKOFF);
 });
 
-test("stats are kept only for allow-listed types with the verified developer name", () => {
-  const drift = parse(mutate((c) => (c.families.statistics.rows.find((r: any) => r.type_id === 42 && r.location === "home").type.developer_name = "SHOTS_OFF_TARGET")));
-  assert.ok(drift.flags.includes("type_drift"));
-  assert.equal(drift.observation.teamStats.filter((s) => s.side === "home" && s.providerStatType === "42").length, 0);
-  assert.equal(drift.observation.teams[0].statisticsStatus, "partial");
-  assert.equal(drift.observation.teams[1].statisticsStatus, "complete");
-
-  const unverified = parse(mutate((c) => delete c.families.xg.rows[0].type));
-  assert.ok(unverified.flags.includes("stat_type_unverified"));
-  assert.equal(unverified.observation.teamStats.length, 13);
-
+test("stats are kept only for allow-listed types in their verified family", () => {
   const unknownType = parse(mutate((c) => c.families.statistics.rows.push({ type_id: 56, participant_id: 9501, data: { value: 12 }, type: { developer_name: "FOULS" } })));
   assert.equal(unknownType.observation.teamStats.length, 14);
+  assert.deepEqual(unknownType.flags, []);
+  // An unknown type id without type metadata is outside the contract too.
+  assert.equal(parse(mutate((c) => c.families.statistics.rows.push({ type_id: 56, participant_id: 9501, data: { value: 12 } }))).observation.teamStats.length, 14);
+
   // An xG type inside the statistics family is not where it is verified to live.
   const wrongFamily = parse(mutate((c) => c.families.statistics.rows.push({ type_id: 5304, participant_id: 9501, data: { value: 9 }, type: { developer_name: "EXPECTED_GOALS" } })));
   assert.equal(wrongFamily.observation.teamStats.find((s) => s.side === "home" && s.providerStatType === "5304")!.value, 1.82);
+  assert.deepEqual(wrongFamily.flags, ["stat_type_outside_family"]);
 
-  const invalid = parse(mutate((c) => (c.families.statistics.rows.find((r: any) => r.type_id === 45 && r.location === "home").data.value = 140)));
-  assert.ok(invalid.flags.includes("stat_value_invalid"));
-  const fractionalCount = parse(mutate((c) => (c.families.statistics.rows.find((r: any) => r.type_id === 34).data.value = 2.5)));
-  assert.ok(fractionalCount.flags.includes("stat_value_invalid"));
+  // The provider explicitly has no value: not observed, flagged for the audit.
+  const nullValue = parse(mutate((c) => (c.families.xg.rows.find((r: any) => r.type_id === 5305 && r.location === "home").data.value = null)));
+  assert.deepEqual(nullValue.flags, ["stat_value_null"]);
+  assert.equal(nullValue.observation.teamStats.some((s) => s.side === "home" && s.providerStatType === "5305"), false);
 
   const duplicateSame = parse(mutate((c) => c.families.statistics.rows.push({ ...c.families.statistics.rows[0] })));
   assert.equal(duplicateSame.observation.teamStats.length, 14);
   assert.equal(parseError(mutate((c) => c.families.statistics.rows.push({ ...c.families.statistics.rows[0], data: { value: 99 } }))), "stat_duplicate_conflict");
   assert.equal(parseError(mutate((c) => (c.families.statistics.rows[0].participant_id = 777))), "stat_team_unknown");
   assert.equal(SPORTMONKS_LEDGER_STAT_TYPES.length, 7);
+});
+
+test("provider stat contract drift fails the capture instead of becoming missing data", () => {
+  const row = (c: any, family: "xg" | "statistics", type: number) => c.families[family].rows.find((r: any) => r.type_id === type && r.location === "home");
+  const accepted = parse(syntheticCapture({ kickoffAt: KICKOFF, capturedAt: CAPTURED }));
+  assert.equal(accepted.observation.teamStats.find((s) => s.side === "home" && s.providerStatType === "5304")!.value, 1.82);
+  assert.equal(accepted.observation.teamStats.find((s) => s.side === "home" && s.providerStatType === "42")!.value, 14);
+
+  for (const [family, type] of [["xg", 5304], ["statistics", 42]] as const) {
+    // A different developer name for an allow-listed id: semantic drift.
+    assert.equal(parseError(mutate((c) => (row(c, family, type).type.developer_name = "SOMETHING_ELSE"))), "stat_type_drift", `${type}`);
+    // Missing name, empty name, or no type include at all: unverifiable.
+    assert.equal(parseError(mutate((c) => delete row(c, family, type).type.developer_name)), "stat_type_metadata_missing", `${type}`);
+    assert.equal(parseError(mutate((c) => (row(c, family, type).type.developer_name = " "))), "stat_type_metadata_missing", `${type}`);
+    assert.equal(parseError(mutate((c) => delete row(c, family, type).type)), "stat_type_metadata_missing", `${type}`);
+  }
+  // Invalid values of verified types are failures too, never silent drops.
+  assert.equal(parseError(mutate((c) => (row(c, "statistics", 45).data.value = 140))), "stat_value_invalid");
+  assert.equal(parseError(mutate((c) => (row(c, "statistics", 34).data.value = 2.5))), "stat_value_invalid");
+  assert.equal(parseError(mutate((c) => (row(c, "xg", 7943).data.value = -0.1))), "stat_value_invalid");
+  assert.equal(parseError(mutate((c) => (row(c, "statistics", 86).data.value = "five"))), "stat_value_invalid");
+
+  // Extra-time matches store no stats, but their rows are still validated.
+  assert.equal(
+    parseError(mutate((c) => (row(c, "xg", 5304).type.developer_name = "XG"), { state: "AET", score90: [1, 1], scoreAet: [2, 1] })),
+    "stat_type_drift",
+  );
+  // A drifted row in a family that was not fetched cannot exist (rows must be empty).
+  assert.equal(parseError(mutate((c) => (c.families.xg.rows = [{ type_id: 5304, participant_id: 9501, data: { value: 1 }, type: { developer_name: "X" } }]), { families: { xg: "not_requested" } })), "family_rows_without_fetch");
 });
 
 test("lineup rows: roles, positions, slots, and ambiguity handling", () => {
@@ -247,9 +271,16 @@ test("the RPC payload carries exactly the provider-observation contract keys", (
     "family_response_sha256", "fixture_mint", "home_goals_90", "home_goals_aet", "home_penalties", "ingest_version",
     "kickoff_at", "match_status", "neutral_venue", "players", "provider", "provider_away_team_id", "provider_endpoint",
     "provider_fixture_id", "provider_home_team_id", "provider_league_id", "provider_season_id", "raw_payload_sha256",
-    "retrieved_at", "run_id", "team_stats", "teams",
-  ]);
+    "retrieved_at", "run_id", "team_stats", "teams", "capture_quality_flags",
+  ].sort());
   assert.equal(payload.contract_version, "kapiloto-provider-match-observation-v1");
+  assert.deepEqual(payload.capture_quality_flags, []);
+  const flagged = parse(mutate((c) => {
+    c.families.lineups.rows[1].jersey_number = 1;
+    c.families.formations.rows[0].formation = "x";
+  }));
+  assert.deepEqual(flagged.observation.captureQualityFlags, ["duplicate_shirt_number", "formation_invalid"]);
+  assert.deepEqual(buildProviderMatchObservationPayload(flagged.observation).capture_quality_flags, ["duplicate_shirt_number", "formation_invalid"]);
 });
 
 test("validation, mint bound and entitlement hash helpers", () => {
@@ -258,6 +289,9 @@ test("validation, mint bound and entitlement hash helpers", () => {
   assert.ok(validateProviderMatchObservation({ ...base, familyFetches: { ...base.familyFetches, xg: "not_requested" } }).some((i) => i.includes("was not fetched")));
   assert.ok(validateProviderMatchObservation({ ...base, fixtureMint: { allowed: true, kickoffBefore: null } }).some((i) => i.includes("kickoffBefore")));
   assert.ok(validateProviderMatchObservation({ ...base, players: [...base.players, base.players[0]] }).some((i) => i.includes("more than once")));
+  assert.ok(validateProviderMatchObservation({ ...base, captureQualityFlags: ["type_drift" as never] }).includes("unknown capture quality flag"));
+  assert.ok(validateProviderMatchObservation({ ...base, captureQualityFlags: ["formation_invalid", "duplicate_shirt_number"] }).includes("captureQualityFlags must be sorted and unique"));
+  assert.ok(validateProviderMatchObservation({ ...base, captureQualityFlags: ["formation_invalid", "formation_invalid"] }).includes("captureQualityFlags must be sorted and unique"));
 
   assert.equal(fixtureMintKickoffBefore("2026-10-30T00:00:00.000Z", 21), "2026-10-08T00:00:00.000Z");
   assert.throws(() => fixtureMintKickoffBefore("2026-10-30T00:00:00.000Z", 0));

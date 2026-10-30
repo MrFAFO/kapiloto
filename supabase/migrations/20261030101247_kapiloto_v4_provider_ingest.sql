@@ -9,8 +9,10 @@
 --   * canonical teams and competitions are NEVER created here (operator
 --     reconciliation, A2-B); only confirmed/manual_override mappings resolve;
 --   * a canonical fixture is reused through an authoritative mapping, attached
---     through a competition-scoped canonical-key match, or minted under an
---     explicit caller mint policy; anything ambiguous is quarantined;
+--     through a unique, unmapped canonical-key match, or minted under an
+--     explicit caller mint policy only when no plausible canonical fixture
+--     exists (including one already identified with another provider fixture
+--     id); anything ambiguous is quarantined;
 --   * players are bootstrapped from the provider id (confirmed mapping,
 --     mapping_basis = 'provider_native_bootstrap'); unverified mappings
 --     quarantine; duplicates are repaired by D-050 merges.
@@ -231,7 +233,8 @@ create or replace function private.provider_ingest_result(
   p_fixture_id uuid,
   p_observation_id uuid,
   p_detail jsonb,
-  p_extra jsonb
+  p_extra jsonb,
+  p_capture_quality_flags jsonb
 )
 returns jsonb
 language plpgsql
@@ -241,6 +244,7 @@ declare
   v_run public.provider_ingest_runs%rowtype;
   v_attempt integer;
 begin
+  -- Capture quality flags are per-attempt audit metadata, never ledger content.
   if p_run_id is not null then
     select r.* into v_run from public.provider_ingest_runs r where r.id = p_run_id;
     if not found then
@@ -256,7 +260,9 @@ begin
       (run_id, provider, provider_fixture_id, attempt_no, status, reason_code, observation_id, fixture_id, detail)
     values
       (p_run_id, p_provider, p_provider_fixture_id, v_attempt, p_status, p_reason_code, p_observation_id, p_fixture_id,
-       coalesce(p_detail, '{}'::jsonb));
+       coalesce(p_detail, '{}'::jsonb)
+         || case when p_capture_quality_flags is null then '{}'::jsonb
+                 else jsonb_build_object('capture_quality_flags', p_capture_quality_flags) end);
   end if;
   return jsonb_build_object(
     'status', p_status,
@@ -301,7 +307,14 @@ declare
   v_w integer;
   v_p integer;
   v_u integer;
+  v_r integer;
+  v_x integer;
+  v_same integer;
+  v_conflict integer;
+  v_conflict_ids jsonb;
+  v_candidates jsonb;
   v_candidate uuid;
+  v_flags jsonb;
   v_latest public.match_ledger_observations%rowtype;
   v_prior_refs jsonb;
   v_prior_families jsonb;
@@ -332,7 +345,7 @@ begin
     'provider_endpoint', 'raw_payload_sha256', 'retrieved_at', 'kickoff_at', 'match_status',
     'neutral_venue', 'home_goals_90', 'away_goals_90', 'home_goals_aet', 'away_goals_aet',
     'home_penalties', 'away_penalties', 'teams', 'players', 'team_stats', 'family_fetches',
-    'family_response_sha256', 'fixture_mint', 'run_id'
+    'family_response_sha256', 'fixture_mint', 'run_id', 'capture_quality_flags'
   ], 'provider match observation');
   perform private.kapiloto_v4_assert_keys(p_observation->'teams',
     array['side', 'formation_nominal', 'lineup_status', 'statistics_status'], 'provider observation team');
@@ -384,6 +397,19 @@ begin
   ) then
     raise exception 'team stats must come from a fetched statistics or xg family';
   end if;
+  -- Recoverable capture issues the parser normalized away. Audit only: they
+  -- never reach the 1A payload, the content hash or a new version.
+  v_flags := p_observation->'capture_quality_flags';
+  if jsonb_typeof(v_flags) is distinct from 'array' or jsonb_array_length(v_flags) > 32
+    or exists (
+      select 1 from jsonb_array_elements(v_flags) e(flag)
+      where jsonb_typeof(e.flag) <> 'string'
+        or (e.flag #>> '{}') not in ('duplicate_formation_position', 'duplicate_shirt_number', 'formation_invalid', 'lineup_role_unknown', 'stat_type_outside_family', 'stat_value_null', 'stats_not_separable_extra_time')
+    ) then
+    raise exception 'capture_quality_flags must be an array of at most 32 known capture quality flags';
+  end if;
+  select coalesce(jsonb_agg(distinct e.flag order by e.flag), '[]'::jsonb) into v_flags
+  from jsonb_array_elements_text(v_flags) e(flag);
   v_payload_refs := jsonb_build_object(
     'league', v.provider_league_id, 'season', v.provider_season_id,
     'team_home', v.provider_home_team_id, 'team_away', v.provider_away_team_id
@@ -398,17 +424,17 @@ begin
   -- A failed fetch is retried or re-captured as not_requested, never frozen.
   if exists (select 1 from jsonb_each_text(v_fam) f where f.value = 'failed') then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-      'family_fetch_failed', null, null, jsonb_build_object('family_fetches', v_fam), null);
+      'family_fetch_failed', null, null, jsonb_build_object('family_fetches', v_fam), null, v_flags);
   end if;
   if v.match_status <> 'finished' then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-      'not_finished', null, null, jsonb_build_object('match_status', v.match_status), null);
+      'not_finished', null, null, jsonb_build_object('match_status', v.match_status), null, v_flags);
   end if;
   -- The 1A ledger refuses a finished observation first seen within 105
   -- minutes of kickoff; a provider claiming that is data, not a crash.
   if v.kickoff_at + interval '105 minutes' > v_now then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-      'finished_too_early', null, null, jsonb_build_object('kickoff_at', v.kickoff_at), null);
+      'finished_too_early', null, null, jsonb_build_object('kickoff_at', v.kickoff_at), null, v_flags);
   end if;
 
   select m.competition_id into v_competition
@@ -417,7 +443,7 @@ begin
     and m.mapping_status in ('confirmed', 'manual_override');
   if v_competition is null then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-      'competition_unmapped', null, null, jsonb_build_object('provider_league_id', v.provider_league_id), null);
+      'competition_unmapped', null, null, jsonb_build_object('provider_league_id', v.provider_league_id), null, v_flags);
   end if;
   select m.team_id into v_home from public.provider_team_mappings m
   where m.provider = v.provider and m.provider_team_id = v.provider_home_team_id
@@ -428,11 +454,11 @@ begin
   if v_home is null or v_away is null then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
       'team_unmapped', null, null,
-      jsonb_build_object('home_mapped', v_home is not null, 'away_mapped', v_away is not null), null);
+      jsonb_build_object('home_mapped', v_home is not null, 'away_mapped', v_away is not null), null, v_flags);
   end if;
   if v_home = v_away then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-      'team_identity_conflict', null, null, '{}'::jsonb, null);
+      'team_identity_conflict', null, null, '{}'::jsonb, null, v_flags);
   end if;
 
   -- Unverified player mappings are never trusted, promoted or bypassed.
@@ -444,55 +470,124 @@ begin
     where m.mapping_status = 'unverified'
   ) then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-      'player_mapping_unverified', null, null, '{}'::jsonb, null);
+      'player_mapping_unverified', null, null, '{}'::jsonb, null, v_flags);
   end if;
 
-  -- Fixture: an existing mapping wins; otherwise a competition-scoped,
-  -- fail-closed canonical-key search.
+  -- Fixture: an existing mapping of THIS provider fixture id wins when it is
+  -- authoritative and consistent. Otherwise every canonical fixture of the
+  -- same two teams is a candidate, including fixtures already identified with
+  -- another provider fixture id: those never disappear from the decision.
   select m.fixture_id, m.mapping_status into v_map_fixture, v_map_status
   from public.provider_fixture_mappings m
   where m.provider = v.provider and m.provider_fixture_id = v.provider_fixture_id;
   if v_map_fixture is not null then
     if v_map_status = 'unverified' then
       return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-        'fixture_mapping_unverified', v_map_fixture, null, '{}'::jsonb, null);
+        'fixture_mapping_unverified', v_map_fixture, null, '{}'::jsonb, null, v_flags);
     end if;
     select f.* into v_fixture from public.fixtures f where f.id = v_map_fixture;
     if v_fixture.home_team_id <> v_home or v_fixture.away_team_id <> v_away
       or (v_fixture.competition_id is not null and v_fixture.competition_id <> v_competition) then
       return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-        'fixture_mapping_conflict', v_map_fixture, null, '{}'::jsonb, null);
+        'fixture_mapping_conflict', v_map_fixture, null, '{}'::jsonb, null, v_flags);
     end if;
     v_fixture_id := v_map_fixture;
     v_resolution := 'existing_mapping';
   else
+    -- One lock per UNORDERED canonical team pair, taken before the candidate
+    -- query and held to commit: every attach or mint for these two teams, in
+    -- any competition or orientation, happens under it. Under READ COMMITTED
+    -- the query below is a new statement, so it sees every mapping or minted
+    -- fixture committed by an earlier holder.
     perform pg_advisory_xact_lock(hashtextextended(
-      'kapiloto_canonical_fixture_key:' || v_competition::text || ':' || v_home::text || ':' || v_away::text, 0
+      'kapiloto_canonical_fixture_pair:' || least(v_home, v_away)::text || ':' || greatest(v_home, v_away)::text, 0
     ));
-    with unmapped as (
-      select f.id, f.competition_id, f.status,
-             abs(extract(epoch from (f.kickoff_at - v.kickoff_at))) as gap
+    with pair as (
+      select
+        f.id,
+        f.competition_id,
+        f.status,
+        f.home_team_id = v_home as same_orientation,
+        abs(extract(epoch from (f.kickoff_at - v.kickoff_at))) as gap,
+        m.provider_fixture_id as mapped_id,
+        -- Identified with another provider fixture id: mapped to it (any
+        -- mapping status), or its latest ledger version for this provider
+        -- is an observation of it.
+        case
+          when m.provider_fixture_id is not null and m.provider_fixture_id <> v.provider_fixture_id then m.provider_fixture_id
+          when lo.observation_kind = 'observation' and lo.provider_fixture_id <> v.provider_fixture_id then lo.provider_fixture_id
+        end as other_id
       from public.fixtures f
-      where f.home_team_id = v_home and f.away_team_id = v_away
-        and not exists (
-          select 1 from public.provider_fixture_mappings m
-          where m.fixture_id = f.id and m.provider = v.provider
-        )
+      left join public.provider_fixture_mappings m
+        on m.fixture_id = f.id and m.provider = v.provider
+      left join lateral (
+        select o.provider_fixture_id, o.observation_kind
+        from public.match_ledger_observations o
+        where o.fixture_id = f.id and o.provider = v.provider
+        order by o.observation_version desc
+        limit 1
+      ) lo on true
+      where ((f.home_team_id = v_home and f.away_team_id = v_away)
+          or (f.home_team_id = v_away and f.away_team_id = v_home))
+        and f.kickoff_at between v.kickoff_at - interval '180 days' and v.kickoff_at + interval '180 days'
+    ),
+    guarded as (
+      -- N: attach window. R: reversed orientation within 48 h (teams never
+      -- meet twice in 48 h; two-legged ties are further apart). X: another
+      -- known competition within 48 h. U: unknown competition within 14 days.
+      -- P: postponed-like within 180 days. W: same competition within 14 days.
+      select pr.*,
+        case
+          when not pr.same_orientation then case when pr.gap <= 48 * 3600 then 'R' end
+          when pr.competition_id = v_competition and pr.gap <= 48 * 3600 then 'N'
+          when pr.competition_id is null then case when pr.gap <= 14 * 86400 then 'U' end
+          when pr.competition_id <> v_competition then case when pr.gap <= 48 * 3600 then 'X' end
+          when pr.status in ('postponed', 'suspended', 'cancelled', 'under_review') then 'P'
+          when pr.gap <= 14 * 86400 then 'W'
+        end as guard
+      from pair pr
     )
     select
-      count(*) filter (where u.competition_id = v_competition and u.gap <= 48 * 3600),
-      count(*) filter (where u.competition_id = v_competition and u.gap > 48 * 3600 and u.gap <= 14 * 86400),
-      count(*) filter (where u.competition_id = v_competition and u.gap > 48 * 3600 and u.gap <= 180 * 86400
-                         and u.status in ('postponed', 'suspended', 'cancelled', 'under_review')),
-      count(*) filter (where u.competition_id is null and u.gap <= 14 * 86400),
-      (array_agg(u.id) filter (where u.competition_id = v_competition and u.gap <= 48 * 3600))[1]
-    into v_n, v_w, v_p, v_u, v_candidate
-    from unmapped u;
+      count(*) filter (where g.mapped_id = v.provider_fixture_id),
+      count(*) filter (where g.guard is not null and g.other_id is not null),
+      count(*) filter (where g.guard = 'N'),
+      count(*) filter (where g.guard = 'W'),
+      count(*) filter (where g.guard = 'P'),
+      count(*) filter (where g.guard = 'U'),
+      count(*) filter (where g.guard = 'R'),
+      count(*) filter (where g.guard = 'X'),
+      (array_agg(g.id) filter (where g.guard = 'N'))[1],
+      coalesce(jsonb_agg(distinct g.other_id) filter (where g.guard is not null and g.other_id is not null), '[]'::jsonb)
+    into v_same, v_conflict, v_n, v_w, v_p, v_u, v_r, v_x, v_candidate, v_conflict_ids
+    from guarded g;
+    v_candidates := jsonb_build_object(
+      'attach_window', v_n, 'reschedule_window', v_w, 'postponement_window', v_p,
+      'unknown_competition', v_u, 'reversed_orientation', v_r, 'other_competition', v_x,
+      'provider_identity_conflicts', v_conflict, 'conflicting_provider_fixture_ids', v_conflict_ids
+    );
 
-    if v_n = 1 and v_w = 0 and v_p = 0 and v_u = 0 then
+    if v_same > 0 then
+      -- The primary lookup found no mapping but a candidate carries one for
+      -- this very provider fixture id (a concurrent non-ingest writer).
+      return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
+        'fixture_mapping_conflict', null, null, v_candidates, null, v_flags);
+    elsif v_conflict > 0 or v_n > 1 or v_r > 0 or v_x > 0 or v_u > 0 or v_p > 0 or v_w > 0 then
+      return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
+        case
+          when v_conflict > 0 then 'fixture_provider_identity_conflict'
+          when v_n > 1 then 'fixture_candidate_ambiguous'
+          when v_r > 0 then 'fixture_orientation_conflict'
+          when v_x > 0 then 'fixture_competition_conflict'
+          when v_u > 0 then 'fixture_competition_unknown'
+          when v_p > 0 then 'fixture_possible_postponement'
+          else 'fixture_possible_reschedule'
+        end,
+        null, null, v_candidates, null, v_flags);
+    elsif v_n = 1 then
+      -- The single candidate carries no identity of this provider (v_conflict = 0, v_same = 0).
       v_fixture_id := v_candidate;
       v_resolution := 'attached';
-    elsif v_n = 0 and v_w = 0 and v_p = 0 and v_u = 0 then
+    else
       v_mint := coalesce(p_observation->'fixture_mint', '{}'::jsonb);
       -- A run that records a mint bound caps every item's bound.
       if v.run_id is not null and v_mint->>'kickoff_before' is not null and exists (
@@ -508,19 +603,9 @@ begin
         or v_mint->>'kickoff_before' is null
         or v.kickoff_at >= (v_mint->>'kickoff_before')::timestamptz then
         return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-          'fixture_mint_not_permitted', null, null, jsonb_build_object('fixture_mint', v_mint), null);
+          'fixture_mint_not_permitted', null, null, jsonb_build_object('fixture_mint', v_mint), null, v_flags);
       end if;
       v_resolution := 'minted';
-    else
-      return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-        case
-          when v_n > 1 then 'fixture_candidate_ambiguous'
-          when v_u > 0 then 'fixture_competition_unknown'
-          when v_p > 0 then 'fixture_possible_postponement'
-          else 'fixture_possible_reschedule'
-        end,
-        null, null, jsonb_build_object('attach_window', v_n, 'reschedule_window', v_w,
-          'postponement_window', v_p, 'unknown_competition', v_u), null);
     end if;
   end if;
 
@@ -533,6 +618,13 @@ begin
     order by o.observation_version desc
     limit 1;
     if found and v_latest.observation_kind = 'observation' then
+      -- A mapping re-pointed to this provider fixture id (e.g. by a V3 upsert)
+      -- must not silently continue another provider fixture's version chain.
+      if v_latest.provider_fixture_id <> v.provider_fixture_id then
+        return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
+          'provider_fixture_id_drift', v_fixture_id, v_latest.id,
+          jsonb_build_object('recorded_provider_fixture_id', v_latest.provider_fixture_id), null, v_flags);
+      end if;
       select jsonb_object_agg(pr.ref_kind, pr.provider_ref) into v_prior_refs
       from public.match_ledger_observation_provider_refs pr where pr.observation_id = v_latest.id;
       select jsonb_object_agg(ff.family, ff.fetch_status) into v_prior_families
@@ -540,13 +632,13 @@ begin
       if v_prior_refs is null or v_prior_families is null then
         return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
           'provider_refs_unrecorded', v_fixture_id, v_latest.id, '{}'::jsonb,
-          jsonb_build_object('provider_refs_status', 'unrecorded'));
+          jsonb_build_object('provider_refs_status', 'unrecorded'), v_flags);
       end if;
       if v_prior_refs <> v_payload_refs then
         return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
           'provider_ref_drift', v_fixture_id, v_latest.id,
           jsonb_build_object('recorded', v_prior_refs, 'payload', v_payload_refs),
-          jsonb_build_object('provider_refs_status', 'drift'));
+          jsonb_build_object('provider_refs_status', 'drift'), v_flags);
       end if;
       if exists (
         select 1 from jsonb_each_text(v_prior_families) pf
@@ -554,7 +646,7 @@ begin
       ) then
         return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
           'family_status_downgrade', v_fixture_id, v_latest.id,
-          jsonb_build_object('recorded', v_prior_families, 'payload', v_fam), null);
+          jsonb_build_object('recorded', v_prior_families, 'payload', v_fam), null, v_flags);
       end if;
       v_family_upgrade := v_prior_families <> v_fam;
       v_refs_status := 'matched';
@@ -728,7 +820,7 @@ begin
 
   if v_quarantine is not null then
     return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
-      v_quarantine, v_fixture_id, null, jsonb_build_object('recorded', v_prior_families, 'payload', v_fam), null);
+      v_quarantine, v_fixture_id, null, jsonb_build_object('recorded', v_prior_families, 'payload', v_fam), null, v_flags);
   end if;
 
   return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, v_result->>'status', null,
@@ -743,7 +835,7 @@ begin
       'observation_version', (v_result->>'observation_version')::integer,
       'provider_refs_status', v_refs_status,
       'players_minted', v_minted
-    ));
+    ), v_flags);
 end;
 $$;
 
@@ -767,7 +859,7 @@ begin
     'kapiloto_match_ledger_provider_fixture:' || p_provider || ':' || p_provider_fixture_id, 0
   ));
   return private.provider_ingest_result(p_run_id, p_provider, p_provider_fixture_id, 'failed', p_reason_code,
-    null, null, coalesce(p_detail, '{}'::jsonb), null);
+    null, null, coalesce(p_detail, '{}'::jsonb), null, null);
 end;
 $$;
 
@@ -1067,7 +1159,7 @@ revoke all on table public.match_ledger_fixture_mints from public, anon, authent
 
 revoke all on function private.seal_match_ledger_observation_annotation() from public, anon, authenticated;
 revoke all on function private.stamp_match_ledger_fixture_mint() from public, anon, authenticated;
-revoke all on function private.provider_ingest_result(uuid, text, text, text, text, uuid, uuid, jsonb, jsonb) from public, anon, authenticated;
+revoke all on function private.provider_ingest_result(uuid, text, text, text, text, uuid, uuid, jsonb, jsonb, jsonb) from public, anon, authenticated;
 revoke all on function public.match_ledger_ingest_provider_fixture(jsonb) from public, anon, authenticated;
 revoke all on function public.provider_ingest_record_failure(uuid, text, text, text, jsonb) from public, anon, authenticated;
 revoke all on function private.match_ledger_effective_versions(text, timestamptz, text, text) from public, anon, authenticated;
@@ -1081,7 +1173,7 @@ grant execute on function public.provider_ingest_record_failure(uuid, text, text
 grant execute on function public.match_ledger_team_match_stats_as_of(text, uuid[], timestamptz, timestamptz) to service_role;
 grant execute on function public.match_ledger_team_match_stats_for_training(text, uuid[], timestamptz, timestamptz, text) to service_role;
 -- Called by name from the invoker functions above.
-grant execute on function private.provider_ingest_result(uuid, text, text, text, text, uuid, uuid, jsonb, jsonb) to service_role;
+grant execute on function private.provider_ingest_result(uuid, text, text, text, text, uuid, uuid, jsonb, jsonb, jsonb) to service_role;
 grant execute on function private.match_ledger_effective_versions(text, timestamptz, text, text) to service_role;
 grant execute on function private.match_ledger_team_match_stats(text, uuid[], timestamptz, timestamptz, text, text) to service_role;
 grant execute on function private.match_ledger_team_stat_entry(uuid, uuid, text, text, boolean) to service_role;
@@ -1089,7 +1181,7 @@ grant execute on function private.match_ledger_team_stat_entry(uuid, uuid, text,
 comment on table public.provider_ingest_runs is
   'Immutable header of one provider ingest run (A2-B operator backfill or tests): versions, entitlement snapshot hash, scope, mint policy bound.';
 comment on table public.provider_ingest_items is
-  'Append-only ingest attempts: one row per attempt per provider fixture, with recorded/unchanged/quarantined/failed and a closed reason code.';
+  'Append-only ingest attempts: one row per attempt per provider fixture, with recorded/unchanged/quarantined/failed and a closed reason code. detail.capture_quality_flags carries the parser''s recoverable capture issues for every attempt that reached the ingest RPC.';
 comment on table public.match_ledger_observation_provider_refs is
   'Identity-critical provider refs (league, season, home team, away team) of one observation version, sealed to its writing statement. A later payload with different refs is quarantined (provider_ref_drift), never attached.';
 comment on table public.match_ledger_observation_family_fetches is

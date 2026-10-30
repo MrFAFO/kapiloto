@@ -105,7 +105,7 @@ const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.prediction_input_bundle_sha256_v2(jsonb)",
   "private.prediction_json_int_between(jsonb, integer, integer)",
   "private.prediction_lineup_estimate_issue(jsonb)",
-  "private.provider_ingest_result(uuid, text, text, text, text, uuid, uuid, jsonb, jsonb)",
+  "private.provider_ingest_result(uuid, text, text, text, text, uuid, uuid, jsonb, jsonb, jsonb)",
   "private.match_ledger_effective_versions(text, timestamptz, text, text)",
   "private.match_ledger_team_match_stats(text, uuid[], timestamptz, timestamptz, text, text)",
   "private.match_ledger_team_stat_entry(uuid, uuid, text, text, boolean)",

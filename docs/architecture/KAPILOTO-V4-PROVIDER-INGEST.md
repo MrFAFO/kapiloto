@@ -67,8 +67,9 @@ empty row list never counts as "provided".
 | Situation | Status in `kapiloto-team-match-stats-v1` |
 | --- | --- |
 | Match went to extra time (AET / penalties) | `not_separable`: Sportmonks stats cover the whole match, not 90 minutes; the parser emits none |
-| Family fetched, allow-listed key present, numeric, developer name verified | `observed` |
-| Family fetched, key absent, unusable, or developer name mismatch (`type_drift` flag) | `not_observed` |
+| Family fetched, allow-listed key present, valid value, developer name verified | `observed` |
+| Family fetched, key absent, or the provider row carries an explicit null value (capture flag `stat_value_null`) | `not_observed` |
+| Allow-listed type with a different developer name, no developer name / no `type` include, or an invalid value | never persisted: the capture fails to parse (`stat_type_drift`, `stat_type_metadata_missing`, `stat_value_invalid`), so it can never surface as `not_observed` |
 | Family `not_requested` (not asked for / not in plan), or no recorded family status (a plain 1A write) | `family_not_provided` |
 | Family `failed` | never persisted: the RPC quarantines `family_fetch_failed`; retry, or re-capture it as `not_requested` |
 
@@ -107,12 +108,24 @@ The mapping version is also the ledger `ingest_version`.
   - Starters have `appeared = true`; others `null`. Minutes and substitution
     minutes are `null`, and completeness is `partial`.
   - `lineup_status` is `complete` only with exactly 11 starters.
-- **Formations.** Must match `^[1-6](-[1-6]){1,5}$`; otherwise null with a
-  flag.
+- **Formations.** Must match `^[1-6](-[1-6]){1,5}$`; otherwise null with
+  the capture flag `formation_invalid`.
 - **Not mapped yet.** Substitutions, events and coaches are `not_provided`.
-- **Stats.** Kept only from fetched families, for these verified type ids with
-  a matching `type.developer_name`. All are full-time,
-  `definition_version = 'sm-2024-08'`.
+- **Stats.** Kept only from fetched families, for these verified type ids.
+  All are full-time, `definition_version = 'sm-2024-08'`. Every allow-listed
+  row in its family must validate, also for extra-time matches whose stats are
+  not stored:
+  - a different `type.developer_name` fails the capture with
+    `stat_type_drift`;
+  - a missing or empty developer name, or no `type` object, fails it with
+    `stat_type_metadata_missing` (the capture must request the type include);
+  - a non-numeric, negative, fractional count or above-100 percent value
+    fails it with `stat_value_invalid`;
+  - an explicit null value is kept out with the capture flag
+    `stat_value_null`;
+  - an allow-listed id in the other family is ignored with the capture flag
+    `stat_type_outside_family`;
+  - type ids outside the allow-list are outside the contract and ignored.
 
 | Type | Developer name | `stat_key` | Family | Unit |
 | --- | --- | --- | --- | --- |
@@ -135,10 +148,11 @@ The mapping version is also the ledger `ingest_version`.
   The definitions are seeded by the migration. If the A2-B pilot finds a
   payload that disagrees with the documentation, the fix is a new
   `definition_version` in a new migration, never an edit.
-- **Errors and flags.** Malformed captures raise `SportmonksLedgerParseError`
-  with a closed code. The caller records the error through
-  `provider_ingest_record_failure`. Data-quality issues are returned as sorted
-  flags.
+- **Errors and flags.** Malformed captures and provider contract drift raise
+  `SportmonksLedgerParseError` with a closed code, and no observation is
+  produced. The caller records the error through
+  `provider_ingest_record_failure`. Recoverable issues the parser normalized
+  away become capture quality flags (see "Two kinds of quality flags").
 
 ## Provider match observation and the ingest RPC
 
@@ -151,7 +165,8 @@ The mapping version is also the ledger `ingest_version`.
 - `family_fetches`;
 - `family_response_sha256`, which is audit only;
 - `fixture_mint {allowed, kickoff_before}`;
-- `run_id`, which is optional.
+- `run_id`, which is optional;
+- `capture_quality_flags`, which is audit only (required; may be empty).
 
 It is security invoker, `search_path = ''`, READ COMMITTED only, and granted
 to `service_role` only.
@@ -170,6 +185,10 @@ and quarantines in this order:
 6. Fixture: see the next section.
 7. Drift against the latest version of (fixture, provider). A withdrawal
    skips this step: the next observation is a new attachment.
+   - A latest version written for another provider fixture id gives
+     `provider_fixture_id_drift`. This happens when a mapping was re-pointed,
+     for example by a V3 upsert; the new id must not continue the other id's
+     version chain.
    - No annotations gives `provider_refs_unrecorded`.
    - Different refs give `provider_ref_drift`.
    - A family `fetched` before and `not_requested` now gives
@@ -190,8 +209,8 @@ the whole call: no mint, player or ledger row survives.
 Lock order:
 
 1. 1A provider-fixture lock.
-2. `kapiloto_canonical_fixture_key:<competition>:<home>:<away>`, only when no
-   mapping exists.
+2. `kapiloto_canonical_fixture_pair:<lower team id>:<higher team id>`, only
+   when this provider fixture id has no mapping.
 3. 1A fixture/provider lock.
 4. Players identity lock, exclusive.
 
@@ -208,22 +227,44 @@ fixture_resolution, observation_version, provider_refs_status, players_minted}`.
     - if `confirmed` or `manual_override`, its orientation and competition
       are validated (`fixture_mapping_conflict` otherwise);
     - if `unverified`, the result is `fixture_mapping_unverified`.
-  - Otherwise, the candidates are canonical fixtures with the same home and
-    away teams and no mapping from this provider:
-    - N: same competition, within ±48 h;
-    - W: same competition, within ±14 days, not in N;
-    - P: same competition, within ±180 days, status postponed, suspended,
-      cancelled or under review, not in N;
-    - U: competition null, within ±14 days.
-  - The fixture is attached iff N = 1 and W, P and U are all empty.
-  - Otherwise quarantine, with precedence:
+  - Otherwise, the candidates are ALL canonical fixtures of the same two teams,
+    in either orientation, within ±180 days. A candidate is never hidden
+    because it already carries a mapping from this provider.
+  - Each candidate falls into at most one guard window:
+    - R: reversed orientation, within ±48 h, any competition (teams never
+      meet twice in 48 hours; two-legged ties are further apart);
+    - N: same orientation and competition, within ±48 h;
+    - U: same orientation, competition null, within ±14 days;
+    - X: same orientation, another known competition, within ±48 h;
+    - P: same orientation and competition, status postponed, suspended,
+      cancelled or under review, within ±180 days;
+    - W: same orientation and competition, within ±14 days.
+  - Each candidate also has a provider identity state:
+    - none: no mapping from this provider, and no ledger history of another
+      provider fixture id;
+    - other: mapped to a different provider fixture id (any mapping status,
+      including `unverified`), or its latest ledger version for this provider
+      is an observation of a different provider fixture id;
+    - same: mapped to this very provider fixture id. The primary lookup found
+      no mapping, so only a concurrent non-ingest writer can cause this; it
+      gives `fixture_mapping_conflict`.
+  - Quarantine, with precedence:
+    - any guarded candidate with identity `other` gives
+      `fixture_provider_identity_conflict`;
     - N > 1 gives `fixture_candidate_ambiguous`;
+    - R gives `fixture_orientation_conflict`;
+    - X gives `fixture_competition_conflict`;
     - U gives `fixture_competition_unknown`;
     - P gives `fixture_possible_postponement`;
     - W gives `fixture_possible_reschedule`.
-  - Two-legged ties have the reversed orientation and do not collide.
-- **Mint.** Allowed only when every set is empty, `fixture_mint.allowed` is
-  true and `kickoff_at < kickoff_before`.
+  - Otherwise the fixture is attached iff N = 1. The single candidate then
+    carries no identity of this provider.
+  - Neither provider id is ever re-pointed, and nothing is name-matched. The
+    quarantine detail lists the window counts and the conflicting provider
+    fixture ids.
+- **Mint.** Allowed only when no guarded candidate exists (including one
+  already identified with another provider fixture id),
+  `fixture_mint.allowed` is true and `kickoff_at < kickoff_before`.
   - The database hardcodes no window.
   - A2-B derives the bound with `fixtureMintKickoffBefore(now, lookback)`,
     which is now − (V3 scoring lookback + 1 day). With V3's 21-day
@@ -248,6 +289,34 @@ fixture_resolution, observation_version, provider_refs_status, players_minted}`.
     identity lock in phase 2, where it raises. After an explicit operator
     promotion, the same capture ingests.
   - Duplicates across providers are repaired by D-050 merges.
+
+### Why the pair lock and the candidate query close the race
+
+1. **Lock first.** A call reaches the candidate search only when its own
+   provider fixture id has no mapping. It first takes the transaction-scoped,
+   exclusive lock of the unordered canonical team pair. Only then does it run
+   the candidate query.
+2. **Every creation happens under the lock.** Attach and mint happen only in
+   this branch, in the same transaction, before commit. So every ingest-made
+   mapping or minted fixture for a team pair is written while that pair's lock
+   is held, and becomes visible when the holder commits.
+3. **The next holder sees it.** Under READ COMMITTED the candidate query is a
+   new statement after the lock is granted. A second caller for the same
+   pair, with any provider fixture id, orientation or competition, therefore
+   sees the first caller's committed mapping or fixture.
+4. **The revised query classifies it.** The mapped fixture is classified as
+   identity `other` instead of being filtered out, so the second caller
+   quarantines rather than mints.
+5. **Why the old key was not enough.** The previous key,
+   `(competition, home, away)`, did not serialize two calls for the same
+   teams that resolve to different competitions or orientations.
+
+Writers that do not take this lock are not covered: the V3 Sportmonks store
+and the Toto import. The `same` state and the 1A mapping checks are the
+fail-closed backstop. The PGlite test proves the sequential half (the first
+transaction commits under the lock, the second takes the same key and cannot
+mint). True parallel blocking needs two connections and is not testable on
+PGlite's single connection.
 
 ### Provider refs and family statuses
 
@@ -283,6 +352,37 @@ re-hashed.
     `detail`.
 - `provider_ingest_record_failure` appends `failed` items for fetch or parse
   failures.
+
+### Two kinds of quality flags
+
+- **Ledger and model quality flags** are the `quality_flags` column of
+  `kapiloto-team-match-stats-v1`: `went_to_extra_time`,
+  `family_fetches_unrecorded`, `xg_not_requested` and
+  `statistics_not_requested`. They are derived at read time from persisted
+  ledger state and the sealed family statuses, so they are the same for
+  everyone reading that version.
+- **Capture quality flags** are per ingest attempt. They are recoverable
+  issues the parser normalized away, from a closed set:
+  - `duplicate_formation_position`;
+  - `duplicate_shirt_number`;
+  - `formation_invalid`;
+  - `lineup_role_unknown`;
+  - `stat_type_outside_family`;
+  - `stat_value_null`;
+  - `stats_not_separable_extra_time`.
+- How capture quality flags travel and are stored:
+  - The parser emits them sorted and unique.
+  - The RPC requires `capture_quality_flags` as an array of at most 32 known
+    flags, and normalizes it to sorted and distinct.
+  - Every run-bound attempt that reaches the ingest RPC stores them in
+    `provider_ingest_items.detail.capture_quality_flags`. That covers
+    `recorded`, `unchanged` and every structured quarantine.
+  - They never reach the 1A payload, the content hash, the sealed sidecars
+    or the stats read, and never create a version.
+  - Two captures with the same ledger content can therefore carry different
+    flags on different attempts.
+- Provider contract drift is never a capture flag: it is a parse failure
+  (see the parser rules).
 
 ## Team match stats (`kapiloto-team-match-stats-v1`)
 

@@ -353,11 +353,18 @@ Decision:
   Statuses are sealed per observation version in `match_ledger_observation_family_fetches`. A downgrade is quarantined. An upgrade with unchanged content cannot be versioned and is quarantined (`family_status_drift`).
 - **Identity.**
   - Canonical teams and competitions are never created by ingest; they resolve only through confirmed or manual mappings.
-  - An existing provider fixture mapping wins if it is authoritative and consistent. Otherwise a competition-scoped canonical-key search attaches only a unique ±48 h candidate with no ±14-day, ±180-day postponed or unknown-competition alternatives, and quarantines anything else.
+  - An existing provider fixture mapping wins if it is authoritative and consistent.
+  - Otherwise every canonical fixture of the same two teams (either orientation, ±180 days) is a candidate, including fixtures already mapped (any status) or ledger-attached to another provider fixture id. Such a fixture in any guard window gives `fixture_provider_identity_conflict`. A unique unmapped ±48 h candidate is attached only when no reversed-orientation or other-competition fixture lies within 48 h, and no ±14-day, ±180-day postponed or unknown-competition fixture exists. Anything else is quarantined.
+  - The search runs under one lock per unordered team pair, held through the write.
+  - A latest ledger version for another provider fixture id (a re-pointed mapping) gives `provider_fixture_id_drift`.
   - A fixture is minted only under an explicit caller policy whose `kickoff_before` A2-B derives as now − (V3 scoring lookback + 1 day). No window is hardcoded in the database.
   - Players: confirmed and manual mappings resolve to survivors. A missing mapping bootstraps a canonical player with a confirmed mapping (`mapping_basis = 'provider_native_bootstrap'`). An unverified mapping quarantines `player_mapping_unverified`, with no writes, no promotion and no second mapping.
 - **Provider-ref drift.** League, season and team refs are sealed per version in `match_ledger_observation_provider_refs`. A payload that disagrees with the latest version's refs is quarantined (`provider_ref_drift`), and so is a latest version without refs (`provider_refs_unrecorded`). A withdrawal resets the attachment. The ledger stays on contract V1.
-- **Stat definitions.** Seven Sportmonks definitions are seeded at `sm-2024-08`. They were verified against the Sportmonks v3 fixture-statistics and expected-value type references: 5304, 5305 and 7943 (three distinct xG keys), and 42, 86, 45 and 34. Rows are kept only when `type.developer_name` matches. A documentation/payload mismatch found later gets a new `definition_version`.
+- **Stat definitions.** Seven Sportmonks definitions are seeded at `sm-2024-08`. They were verified against the Sportmonks v3 fixture-statistics and expected-value type references: 5304, 5305 and 7943 (three distinct xG keys), and 42, 86, 45 and 34.
+  - An allow-listed row whose `type.developer_name` differs fails the whole capture (`stat_type_drift`).
+  - A missing name or `type` include fails it too (`stat_type_metadata_missing`), and so does an invalid value (`stat_value_invalid`). Provider contract drift therefore never becomes ordinary `not_observed`.
+  - A documentation/payload mismatch found later gets a new `definition_version`.
+- **Capture quality flags.** Recoverable parser normalizations come from a closed set and are stored per run-bound attempt in `provider_ingest_items.detail`. They are not ledger content and never create a version. Ledger quality flags remain derived from persisted state at read time.
 - **Two availability classes.**
   - The strict read uses actual `first_seen_at`.
   - The training-only read (`kapiloto-retrospective-training-availability-v1`) makes version 1 of a finished backfill observation available at `min(first_seen_at, kickoff_at + 24h)`. Later versions and withdrawals keep their actual time. Rows are labelled `retrospective`.
