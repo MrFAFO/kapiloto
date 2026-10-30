@@ -1,5 +1,7 @@
 # Delivery Roadmap
 
+> **Current V4 handoff:** read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first for the current V4 status, dependency order, active blocker and next gates. This file remains the original broad product delivery roadmap.
+
 ## Phase 0 — Product and architecture
 - PRD
 - MVP scope
