@@ -101,11 +101,20 @@ test("pilot audit passes semantic invariants and distinguishes explicit zero", (
 });
 
 test("pilot audit fails contradictory provider semantics instead of normalizing them away", () => {
+  const badParticipants = auditSportmonksA2BCapture(buildSportmonksA2BCapture({
+    fixture: fixture({
+      participants: [
+        { id: 100, meta: { location: "home" } },
+        { id: 200, meta: { location: "home" } },
+      ],
+    }),
+    capturedAt: "2026-10-30T20:00:00.000Z",
+    rawPayloadSha256: hash,
+    providerEndpoint: "/v3/football/fixtures/9001",
+  }));
+  assert.equal(badParticipants.gates.participantLocations.status, "fail");
+
   const broken = fixture({
-    participants: [
-      { id: 100, meta: { location: "home" } },
-      { id: 200, meta: { location: "home" } },
-    ],
     scores: [
       { description: "2ND_HALF", score: { goals: 2, participant: "home" } },
       { description: "2ND_HALF", score: { goals: 1, participant: "away" } },
@@ -132,7 +141,7 @@ test("pilot audit fails contradictory provider semantics instead of normalizing 
     rawPayloadSha256: hash,
     providerEndpoint: "/v3/football/fixtures/9001",
   }));
-  assert.equal(audit.gates.participantLocations.status, "fail");
+  assert.equal(audit.gates.participantLocations.status, "pass");
   assert.equal(audit.gates.scoreSemantics.status, "fail");
   assert.equal(audit.gates.lineupTypes.status, "fail");
   assert.equal(audit.gates.possessionSum.status, "fail");
