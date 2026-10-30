@@ -15,7 +15,7 @@ on:
 jobs:
   pilot:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     permissions:
       contents: read
 
@@ -34,8 +34,8 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: V4 tests
-        run: npm run test:kapiloto-v4
+      - name: Focused A2-B parser and pilot tests
+        run: npx tsx --test lib/kapiloto-v4/sportmonks-ledger.test.ts lib/kapiloto-v4/sportmonks-pilot.test.ts
 
       - name: Run read-only Sportmonks A2-B pilot
         env:
@@ -57,3 +57,24 @@ jobs:
           path: artifacts/kapiloto-v4-a2b
           if-no-files-found: warn
           retention-days: 14
+
+  v4-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Full V4 regression suite
+        run: npm run test:kapiloto-v4
