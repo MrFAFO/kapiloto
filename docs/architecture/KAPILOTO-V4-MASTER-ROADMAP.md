@@ -446,19 +446,19 @@ Still verify:
 - all five target competitions remain `manual_override`;
 - conflict reports remain empty.
 
-### Gate 2 — align V3 code with the database guard
+### DONE — Gate 2: V3 code aligned with the database guard
 
-Patch `SupabaseSportmonksSyncStore.saveResolvedFixture` so weak V3 identity
-writes are insert-only rather than repeated upserts.
+Production commit: `aa5568a78b67646496ad3159617bfb90284bb69e`
 
-Expected properties:
+`SupabaseSportmonksSyncStore.saveResolvedFixture` now writes Sportmonks
+identity mappings insert-only. Existing rows are never rewritten by V3, new
+missing rows may still bootstrap for V3/shadow use, and V3 Sportmonks mapping
+confidence remains weak evidence at 0.9 even when resolution uses a previously
+known provider fixture id.
 
-- existing Sportmonks mapping rows are never updated by V3;
-- new missing rows may still bootstrap for V3/shadow use;
-- V3 Sportmonks confidence remains weak evidence and must not self-promote to 1;
-- structured snapshots continue working.
-
-The DB trigger remains the safety boundary even after this code patch.
+The D-057 DB trigger remains the safety boundary; the V3 code change removes
+the repeated overwrite attempts and self-promotion path rather than replacing
+the database guard.
 
 ### Gate 3 — Stage 1 V4 identity attestations
 
@@ -763,7 +763,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff in the 2026-10-30 snapshot is D-057 Stage 0 containment applied in production; next is V3 insert-only alignment plus Stage 1 V4 identity attestations, then A2-B reconciliation before the first real Match Ledger ingest.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff in the 2026-10-30 snapshot is D-057 Stage 0 containment plus the V3 Sportmonks insert-only alignment deployed in production. Next is Stage 1 V4 identity attestations, then A2-B reconciliation before the first real Match Ledger ingest.
 
 ## 15. Updating this file
 
