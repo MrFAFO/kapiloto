@@ -140,6 +140,76 @@ export function sportmonksLeagueNameMatches(actual: string | null, expected: str
   return normalizeName(actual) === normalizeName(expected);
 }
 
+export type SportmonksA2BLeagueIdentity = {
+  entitled: boolean;
+  providerName: string | null;
+  providerCountryId: string | null;
+  providerCountryIso2: string | null;
+  providerType: string | null;
+  providerSubType: string | null;
+  providerActive: boolean | null;
+  nameMatches: boolean;
+  countryMatches: boolean;
+  typeMatches: boolean;
+  subTypeMatches: boolean;
+  identityStatus: "pass" | "fail";
+};
+
+export function auditSportmonksA2BLeagueIdentity(input: {
+  expectedName: string;
+  expectedCountryIso2: string;
+  expectedType: string;
+  expectedSubType: string;
+  actual: {
+    name: string | null;
+    countryId: string | null;
+    countryIso2: string | null;
+    type: string | null;
+    subType: string | null;
+    active: boolean | null;
+  } | null;
+}): SportmonksA2BLeagueIdentity {
+  const actual = input.actual;
+  const nameMatches = sportmonksLeagueNameMatches(actual?.name ?? null, input.expectedName);
+  const countryMatches = actual?.countryIso2 === input.expectedCountryIso2;
+  const typeMatches = actual?.type === input.expectedType;
+  const subTypeMatches = actual?.subType === input.expectedSubType;
+  const entitled = actual !== null;
+  return {
+    entitled,
+    providerName: actual?.name ?? null,
+    providerCountryId: actual?.countryId ?? null,
+    providerCountryIso2: actual?.countryIso2 ?? null,
+    providerType: actual?.type ?? null,
+    providerSubType: actual?.subType ?? null,
+    providerActive: actual?.active ?? null,
+    nameMatches,
+    countryMatches,
+    typeMatches,
+    subTypeMatches,
+    identityStatus:
+      entitled && nameMatches && countryMatches && typeMatches && subTypeMatches
+        ? "pass"
+        : "fail",
+  };
+}
+
+export function assertSportmonksA2BPaginationComplete(input: {
+  label: string;
+  page: number;
+  cap: number;
+  hasMore: boolean;
+}): void {
+  if (!Number.isInteger(input.page) || !Number.isInteger(input.cap) || input.page < 1 || input.cap < 1) {
+    throw new Error("pagination page/cap must be positive integers");
+  }
+  if (input.page >= input.cap && input.hasMore) {
+    throw new Error(
+      `${input.label} pagination reached hard cap ${input.cap} while has_more=true; refusing a partial snapshot`,
+    );
+  }
+}
+
 export function buildSportmonksA2BCapture(input: {
   fixture: unknown;
   capturedAt: string;
