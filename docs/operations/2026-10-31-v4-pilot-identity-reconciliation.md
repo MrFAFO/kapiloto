@@ -262,9 +262,9 @@ Inputs include:
 - Sportmonks provider name;
 - any official/provider variant explicitly included in the evidence pack.
 
-### 8.2 Transaction rule for a canonical creation or attach
+### 8.2 Transaction rule for any team mapping mutation
 
-Each R4/R5 identity transaction must:
+Each R3/R4/R5 identity transaction must:
 
 1. `SET LOCAL lock_timeout = '5s'`;
 2. take:
@@ -439,7 +439,8 @@ Preconditions:
 - still `manual_override`;
 - still points to reviewed canonical id;
 - no active attestation;
-- cross-provider evidence still agrees.
+- cross-provider evidence still agrees;
+- compute a competition-specific duplicate-audit SHA-256 from the current canonical competition catalog and all provider competition mappings, and place that hash in the attestation evidence.
 
 Expected:
 - 5 active competition attestations;
@@ -451,14 +452,17 @@ Expected:
 
 One short guarded operator transaction per identity.
 
+- use the locked atomic team audit from §8 before mutation;
 - `SET LOCAL kapiloto.identity_operator = 'on'`;
 - provider-qualified exact-old predicates;
 - mapping status changes `confirmed -> manual_override`;
 - confidence is left unchanged;
 - assert one row;
+- re-check candidate/injectivity assertions before commit;
+- return the locked team duplicate-audit hash;
 - do not attest in the same transaction.
 
-Then R6 may attest each successful identity separately.
+Then R6 may attest each successful identity separately using that returned hash.
 
 ### R4 — attach Bournemouth and Sevilla
 
@@ -504,7 +508,7 @@ One RPC / one transaction per team.
 
 No batch transaction.
 
-The evidence object uses the identity transaction's locked duplicate-audit hash.
+The team evidence object uses the successful R3/R4/R5 identity transaction's locked duplicate-audit hash. Competition attestations use the competition-specific audit hash computed at R2.
 
 ### R7 — post-write validation
 
