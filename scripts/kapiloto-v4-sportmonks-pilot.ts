@@ -9,12 +9,13 @@ import {
   type ProviderEntitlementSnapshot,
 } from "../lib/kapiloto-v4/provider-ingest";
 import {
+  assertSportmonksA2BPaginationComplete,
   auditSportmonksA2BCapture,
+  auditSportmonksA2BLeagueIdentity,
   buildSportmonksA2BCapture,
   buildSportmonksA2BCompetitionProfile,
   SPORTMONKS_A2B_FIXTURE_INCLUDE,
   SPORTMONKS_A2B_TARGET_LEAGUES,
-  sportmonksLeagueNameMatches,
   summarizeSportmonksA2BProviderSemantics,
 } from "../lib/kapiloto-v4/sportmonks-pilot";
 import {
@@ -227,17 +228,6 @@ async function requestRaw<T>(
   return { body, hash, endpoint: sanitizedEndpoint };
 }
 
-function assertPaginationComplete(input: {
-  label: string;
-  page: number;
-  cap: number;
-  hasMore: boolean;
-}): void {
-  if (input.page === input.cap && input.hasMore) {
-    throw new Error(`${input.label} pagination reached hard cap ${input.cap} while has_more=true; refusing a partial snapshot`);
-  }
-}
-
 async function loadEntitlement(token: string, archive: RawArchive): Promise<LeagueEntitlement[]> {
   const competitions: LeagueEntitlement[] = [];
   for (let page = 1; page <= ENTITLEMENT_PAGE_CAP; page += 1) {
@@ -263,7 +253,7 @@ async function loadEntitlement(token: string, archive: RawArchive): Promise<Leag
       });
     }
     const hasMore = response.body.pagination?.has_more === true;
-    assertPaginationComplete({ label: "league entitlement", page, cap: ENTITLEMENT_PAGE_CAP, hasMore });
+    assertSportmonksA2BPaginationComplete({ label: "league entitlement", page, cap: ENTITLEMENT_PAGE_CAP, hasMore });
     if (!hasMore) break;
   }
   return [...new Map(competitions.map((row) => [row.providerLeagueId, row])).values()]
@@ -308,7 +298,7 @@ async function findPilotFixtures(
     );
     rows.push(...(response.body.data ?? []).filter((row) => String(row.league_id) === leagueId && finishedState(row)));
     const hasMore = response.body.pagination?.has_more === true;
-    assertPaginationComplete({ label: `fixture discovery league ${leagueId}`, page, cap: FIXTURE_DISCOVERY_PAGE_CAP, hasMore });
+    assertSportmonksA2BPaginationComplete({ label: `fixture discovery league ${leagueId}`, page, cap: FIXTURE_DISCOVERY_PAGE_CAP, hasMore });
     if (!hasMore) break;
   }
   return rows
@@ -342,7 +332,7 @@ async function findSeasonSample(
     if (matching.length > 0) return matching[0];
 
     const hasMore = response.body.pagination?.has_more === true;
-    assertPaginationComplete({
+    assertSportmonksA2BPaginationComplete({
       label: `season sample ${required.providerLeagueId}:${required.providerSeasonId}`,
       page,
       cap: SEASON_SAMPLE_PAGE_CAP,
@@ -402,30 +392,16 @@ async function main(): Promise<void> {
   );
 
   const entitlementById = new Map(entitlement.map((row) => [row.providerLeagueId, row]));
-  const targets = SPORTMONKS_A2B_TARGET_LEAGUES.map((target) => {
-    const actual = entitlementById.get(target.providerLeagueId) ?? null;
-    const nameMatches = sportmonksLeagueNameMatches(actual?.name ?? null, target.expectedName);
-    const countryMatches = actual?.countryIso2 === target.expectedCountryIso2;
-    const typeMatches = actual?.type === target.expectedType;
-    const subTypeMatches = actual?.subType === target.expectedSubType;
-    const identityStatus =
-      actual !== null && nameMatches && countryMatches && typeMatches && subTypeMatches ? "pass" : "fail";
-    return {
-      ...target,
-      entitled: actual !== null,
-      providerName: actual?.name ?? null,
-      providerCountryId: actual?.countryId ?? null,
-      providerCountryIso2: actual?.countryIso2 ?? null,
-      providerType: actual?.type ?? null,
-      providerSubType: actual?.subType ?? null,
-      providerActive: actual?.active ?? null,
-      nameMatches,
-      countryMatches,
-      typeMatches,
-      subTypeMatches,
-      identityStatus,
-    };
-  });
+  const targets = SPORTMONKS_A2B_TARGET_LEAGUES.map((target) => ({
+    ...target,
+    ...auditSportmonksA2BLeagueIdentity({
+      expectedName: target.expectedName,
+      expectedCountryIso2: target.expectedCountryIso2,
+      expectedType: target.expectedType,
+      expectedSubType: target.expectedSubType,
+      actual: entitlementById.get(target.providerLeagueId) ?? null,
+    }),
+  }));
 
   const selected = new Map<string, SelectedFixture>();
   const recentCounts: Record<string, number> = {};
