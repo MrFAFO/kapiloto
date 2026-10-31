@@ -637,6 +637,20 @@ The future autonomous Identity Bootstrap / Reconciliation service remains a
 possible later expansion, but it is **not a launch blocker and not required for
 V4 V1**.
 
+
+Current onboarding status:
+- Ligat Ha'al: **identity-complete 14/14**, registry still `validating`;
+- Premier League: incomplete;
+- Bundesliga: incomplete;
+- La Liga: incomplete;
+- Serie A: incomplete.
+
+Ligat Ha'al identity execution record:
+`docs/operations/2026-10-31-v4-ligat-haal-identity-onboarding-execution.md`.
+
+Identity completion alone does not promote the league to `supported`; provider-
+family semantics/coverage and historical quality gates still apply.
+
 ### Gate 6 — tiny real Match Ledger ingest
 
 Only after M2A is applied, team reconciliation is done and M2B is reviewed,
@@ -801,10 +815,11 @@ Preserve:
 
 As of the snapshot date:
 
-- the D-059 Supported Competition Registry and full-club onboarding for the
-  five launch competitions are not complete yet; current pilot reconciliation
-  covers only the pilot identity subset, not the full membership of all five
-  leagues;
+- the D-059 Supported Competition Registry is not fully complete yet; Ligat
+  Ha'al identity onboarding is complete 14/14 but remains `validating`, while
+  the other four launch leagues still require full-club identity onboarding
+  and all five still require the applicable provider-family/history gates
+  before `supported`;
 - no broad Sportmonks historical backfill;
 - no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A is applied in production, V1 and V2 ingest remain non-executable by `service_role`, and only the separate M2B migration may grant V2;
 - pilot identity reconciliation is **not fully complete**: 18/20 pilot teams
