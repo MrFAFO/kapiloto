@@ -529,15 +529,25 @@ V2 ingest requires:
 
 An out-of-scope fixture quarantines before any phase-2 write.
 
-This makes M2B's tiny pilot genuinely tiny even though SQL EXECUTE itself is role-wide.
+This makes M2B's tiny pilot genuinely tiny against accidental/unintended ingest calls even though SQL EXECUTE itself is role-wide. It is **not** a security boundary against a deliberately malicious `service_role`, which can author another run.
 
-### 13.2 Observation attestation sidecar
+The pilot run row is created in an explicit reviewed readiness step; its immutable `run_id` and exact `scope.provider_fixture_ids` are recorded in the M2B PR/operations note before activation.
+
+### 13.2 Generation continuity before "unchanged"
+
+Before delegating to 1A's content-hash/version logic, V2 compares the latest observation's sealed league/home/away attestation generations to the current projections.
+
+If the football content is unchanged but any sealed generation is stale, V2 quarantines as `attestation_generation_stale` rather than allowing 1A to return `unchanged`. Recovery therefore requires the explicit withdrawal/repair/re-ingest path instead of silently leaving a revoked generation without a new sidecar.
+
+Under retrospective availability policy V1, only observation version 1 receives historical backdating. A same-fixture recovery written as a later version is available only from its real recovery `first_seen_at`; it does **not** recreate pre-recovery retrospective history. Changing that behavior requires a separately reviewed availability-policy V2.
+
+### 13.3 Observation attestation sidecar
 
 On a recorded observation, V2 writes sealed league/home/away attestation rows from the active projections. The sidecar records the exact event/generation used by that observation version.
 
 Direct 1A writes do not have this sidecar.
 
-### 13.3 Post-write defense in depth
+### 13.4 Post-write defense in depth
 
 Before commit, V2 re-checks:
 
@@ -569,7 +579,7 @@ public.match_ledger_team_match_stats_as_of_v2(...)
 public.match_ledger_team_match_stats_for_training_v2(...)
 ```
 
-For Sportmonks, a model-facing V2 row is returned only when its observation:
+For **every provider**, a model-facing V2 row is returned only when its observation:
 
 1. has sealed provider refs for `league`, `team_home`, `team_away`;
 2. has sealed attestation sidecars for all three refs;
@@ -581,7 +591,7 @@ For Sportmonks, a model-facing V2 row is returned only when its observation:
 
 A later evidence refresh in the same generation does not invalidate earlier observations. A revoke followed by re-attest starts a new generation, so observations from the revoked generation stay excluded until explicitly recovered/re-ingested.
 
-Plain 1A observations or any observation with missing attestation provenance are excluded, not merely flagged.
+Plain 1A observations or any observation with missing attestation provenance are excluded, not merely flagged. A provider with no Stage 1 attestation system yields **zero V2 rows** until a provider-specific attestation migration explicitly enables it.
 
 Once M2A lands, `service_role` EXECUTE should be revoked from the old V1 model-facing team-match-stat readers and granted to V2 only. The V1 functions remain present for contract/history inspection.
 
@@ -656,6 +666,40 @@ Revocation provides immediate safety because V2 readers exclude the revoked gene
 
 Wrong minted canonical fixtures may remain as historical orphan rows if immutable ledger history references them; recovery correctness comes from withdrawal, mapping repair, new canonical attachment and V2 read exclusion, not rewriting old ledger rows.
 
+### 14.6 Trust-aware retrospective exclusions
+
+Add:
+
+`public.match_ledger_retrospective_training_exclusions_v2(...)`
+
+It preserves the V1 reasons `later_correction` / `later_withdrawal` and adds at least:
+
+- `attestation_missing`;
+- `generation_revoked`;
+- `mapping_not_manual_override`;
+- `attestation_generation_stale`.
+
+The V1 exclusions function remains present for frozen-contract inspection, but `service_role` EXECUTE is revoked when V2 becomes the model-facing historical path.
+
+### 14.7 Reads intentionally not covered by Stage 1
+
+M2A does **not** silently change these frozen/legacy Match Ledger consumers:
+
+- `public.squad_state_inputs_as_of`;
+- `public.match_ledger_observation_as_of`;
+- `public.match_ledger_provider_team_matches_as_of`;
+- `public.match_ledger_provider_player_matches_as_of`;
+- the V4 loaders/registry paths that depend on them, including lineup/squad-state snapshot freezing.
+
+These reads are not attestation-aware and can return observations that the V2 team-match-stat readers correctly exclude after revocation.
+
+Therefore **M2B is blocked** until one of these is true:
+
+1. attestation-aware V2 successors exist for every V4 consumer that may be activated; or
+2. D-058 explicitly keeps those consumers disabled for Sportmonks/Match-Ledger historical input, with a repository grep/boundary gate proving no production `app/`, `scripts/` or cron path activates them.
+
+In-place changes are forbidden where frozen prediction/commit-time equality contracts depend on the current function semantics.
+
 ---
 
 ## 15. Security
@@ -707,6 +751,8 @@ M2A contains:
 
 M2A leaves both V1 and V2 provider-ingest RPCs **not executable by `service_role`**.
 
+The M2A security suite runs with Supabase-default-privilege emulation enabled and proves the explicit V2 revoke from `public, anon, authenticated, service_role`.
+
 The old V1 ingest RPC is never re-granted after Stage 1.
 
 ### Reconciliation/readiness stage
@@ -729,13 +775,20 @@ M2B contains **grant-only activation** for `match_ledger_ingest_provider_fixture
 
 The pilot run itself must have an explicit `scope.provider_fixture_ids` allowlist, enforced inside V2.
 
-Do not merge a pending revoke migration into main before M2B application, because a normal future `db push` would apply it automatically. Instead, prepare and independently review the exact M2C revoke SQL/branch in advance and keep it unmerged until needed.
+Do not merge a pending revoke migration into main before M2B application, because a normal future `db push` would apply it automatically. Before M2B, independently review the **M2C SQL body**, not a timestamped filename.
 
 ### M2C — Immediate pause/rollback
 
 M2C simply revokes `service_role` EXECUTE on the V2 ingest RPC again. It contains no identity/data mutation.
 
+Emergency path:
+1. immediately execute the reviewed operator statement `REVOKE EXECUTE ON FUNCTION public.match_ledger_ingest_provider_fixture_v2(jsonb) FROM service_role`;
+2. create the matching migration file with a **fresh timestamp at application time**, avoiding Supabase CLI out-of-order migration rejection;
+3. commit/merge that migration immediately after the emergency revoke.
+
 If the tiny pilot fails any integrity gate, M2C is applied before further investigation. If the pilot passes, activation for the next staged scope still requires a separately reviewed run allowlist.
+
+M2B remains NO-GO while any uncovered model-facing Match Ledger consumer in §14.7 could be activated against pilot observations.
 
 ---
 
@@ -758,6 +811,8 @@ Stage 1 is NO-GO without the following.
 - re-attest after revoke uses new generation and continued event version;
 - direct projection DML rejected without guard+lock;
 - direct event INSERT rejected;
+- sidecar insert without V2 flag/shared provider lock rejected;
+- sidecar typed-FK/ref/canonical/generation mismatch rejected;
 - event update/delete/truncate rejected;
 - canonical team/competition delete blocked while actively attested and allowed only after revoke.
 
@@ -769,6 +824,10 @@ Stage 1 is NO-GO without the following.
 - evidence refresh in same generation keeps observation included;
 - revoke excludes all observations sealed to that generation;
 - re-attesting same canonical id in a new generation does not resurrect old observations;
+- unchanged football content with stale sealed generation quarantines as `attestation_generation_stale`;
+- recovered later-version history is not backdated by retrospective availability V1;
+- V2 readers return zero rows for providers without Stage 1 attestations;
+- V2 retrospective-exclusions reports trust exclusions;
 - impact report lists affected observations, mints and fixture mappings;
 - synthetic withdrawal/mapping-repair/re-ingest recovery produces only corrected V2 history.
 
@@ -799,7 +858,9 @@ Stage 1 is NO-GO without the following.
 - V2 rejects null run id;
 - V2 rejects missing/empty `scope.provider_fixture_ids`;
 - V2 rejects fixture outside allowlist;
-- M2A leaves V1 and V2 ingest EXECUTE false for service_role;
+- M2A leaves V1 and V2 ingest EXECUTE false for service_role **with Supabase default privileges enabled in the harness**;
+- catalog checks prove V2 ingest is revoked from `public, anon, authenticated, service_role`;
+- reviewed pilot run id/scope is immutable and outside fixtures quarantine;
 - M2B grants V2 only;
 - old V1 ingest is never re-granted.
 
@@ -849,7 +910,7 @@ Stage 1 is NO-GO without the following.
 1. Reconcile Opus and Fable architecture findings into this RFC.
 2. Run final independent sanity review of the revised RFC by both reviewers.
 3. Resolve any remaining blocker; no implementation while a blocker remains.
-4. Record the accepted design as D-058.
+4. Record the accepted design as D-058, including the M2B prohibition for uncovered squad-state/1A reads.
 5. Implement M2A on a new branch only.
 6. Independent code/migration review by at least one external reviewer plus direct diff/runtime review.
 7. Merge M2A.
