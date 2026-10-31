@@ -1,6 +1,6 @@
 # Kapiloto V4 Stage 1 RFC — Provider Identity Attestations
 
-Status: **RFC / review required before implementation**  
+Status: **Accepted architecture for M2A implementation; M2B remains gated**  
 Scope: V4 historical-ingest trust only  
 Related decisions: D-056, D-057  
 Current production state: D-057 Stage 0 containment is applied; Sportmonks V3 identity writes are insert-only; historical provider ingest remains paused.
@@ -907,11 +907,11 @@ Stage 1 is NO-GO without the following.
 
 ## 18. Operational sequence
 
-1. Reconcile Opus and Fable architecture findings into this RFC.
-2. Run final independent sanity review of the revised RFC by both reviewers.
-3. Resolve any remaining blocker; no implementation while a blocker remains.
-4. Record the accepted design as D-058, including the M2B prohibition for uncovered squad-state/1A reads.
-5. Implement M2A on a new branch only.
+1. **DONE:** reconcile independent Opus and Fable architecture findings into this RFC.
+2. **DONE:** final independent sanity review by both reviewers; both returned M2A GO.
+3. **DONE:** fold all final spec/test corrections into the RFC and record D-058.
+4. Implement M2A on a new branch only.
+5. Run independent code/migration review before any merge or production application.
 6. Independent code/migration review by at least one external reviewer plus direct diff/runtime review.
 7. Merge M2A.
 8. Apply the exact canonical M2A migration to production.
@@ -952,18 +952,21 @@ One production check remains intentionally external to the repo: confirm `privat
 
 ---
 
-## 20. Acceptance criteria for leaving RFC state
+## 20. Architecture acceptance status
 
-This RFC is ready for M2A implementation only when:
+All M2A architecture acceptance criteria are now satisfied:
 
-- the revised document receives final independent sanity review from Opus and Fable;
-- neither review identifies an unresolved BLOCKING trust/concurrency/security issue;
-- the `manual_override + attestation + generation` trust rule is accepted;
-- V2 reader semantics and revocation behavior are accepted;
-- existing fixture uniqueness/classification behavior is accepted;
-- V2 run allowlist and M2B/M2C activation model are accepted;
-- recovery semantics are accepted;
-- security/grant assumptions are explicit;
-- the full implementation test matrix is agreed.
+- Opus final sanity review: M2A GO;
+- Fable final red-team review: M2A GO;
+- no unresolved M2A BLOCKING trust/concurrency/security issue remains;
+- the `manual_override + attestation + generation` rule is accepted;
+- V2 read-side revocation semantics are accepted;
+- existing-fixture uniqueness/classification behavior is explicit;
+- V2 run allowlist and M2B/M2C activation semantics are explicit;
+- recovery semantics and stale-generation handling are explicit;
+- Supabase default-grant behavior is accounted for in the M2A spec/tests;
+- the implementation test matrix is agreed.
 
-Until all criteria pass, historical provider ingest remains paused.
+Therefore **M2A architecture is ready for implementation**.
+
+Historical provider ingest remains paused. M2B remains NO-GO until §14.7's uncovered readers are gated/versioned and every readiness condition in §16 passes.
