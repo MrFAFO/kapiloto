@@ -105,6 +105,7 @@ export type SportmonksA2BProviderSemantics = {
 type RecordLike = Record<string, unknown>;
 
 const ALLOWLISTED_STAT_TYPES = SPORTMONKS_LEDGER_STAT_TYPES.map((row) => row.typeId);
+const ALLOWLISTED_STAT_TYPE_SET = new Set<string>(ALLOWLISTED_STAT_TYPES);
 const EXPECTED_LINEUP_TYPES = [11, 12] as const;
 const EXPECTED_POSITIONS = [24, 25, 26, 27] as const;
 
@@ -474,7 +475,7 @@ export function auditSportmonksA2BCapture(
     const team = asProviderId(row.participant_id);
     const side = team ? sideMap.get(team) : undefined;
     const typeId = asProviderId(row.type_id);
-    if (!side || !typeId || !ALLOWLISTED_STAT_TYPES.includes(typeId)) continue;
+    if (!side || !typeId || !ALLOWLISTED_STAT_TYPE_SET.has(typeId)) continue;
     presentKeys.add(`${side}:${typeId}`);
     presentAllowlistedStatTypes.add(typeId);
     const value = asFiniteNumber(isRecord(row.data) ? row.data.value : undefined);
