@@ -35,19 +35,19 @@ Production catalog/mapping counts on 2026-10-31:
 
 | League | Current clubs | Canonical teams present | Sportmonks mapped | V4 team attested | Canonical missing | Existing canonical without Sportmonks mapping |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Premier League | 20 | 13 | 9 | 3 | 7 | 4 |
+| Premier League | 20 | 20 | 16 | 16 | 0 | 4 |
 | Bundesliga | 18 | 8 | 8 | 4 | 10 | 0 |
 | La Liga | 20 | 15 | 9 | 3 | 5 | 6 |
 | Serie A | 20 | 11 | 10 | 4 | 9 | 1 |
 | Ligat Ha'al | 14 | 14 | 14 | 14 | 0 | 0 |
-| **Total** | **92** | **61** | **50** | **28** | **31** | **11** |
+| **Total** | **92** | **68** | **57** | **41** | **24** | **11** |
 
 Interpretation:
 
-- **28** clubs are now through the reviewed V4 attestation path.
-- **22** additional clubs already have a Sportmonks mapping but still need reviewed D-058 promotion/attestation for supported-league trust.
+- **41** clubs are now through the reviewed V4 attestation path.
+- **16** additional clubs already have a Sportmonks mapping but still need reviewed D-058 promotion/attestation for supported-league trust.
 - **11** clubs already exist canonically but need a Sportmonks mapping plus attestation.
-- **31** clubs do not yet exist canonically and require reviewed canonical creation, mapping, aliases and attestation.
+- **24** clubs do not yet exist canonically and require reviewed canonical creation, mapping, aliases and attestation.
 
 The counts above describe coverage only. A `confirmed` Sportmonks mapping is not trusted historical identity under D-058.
 
@@ -59,37 +59,62 @@ Chelsea, Coventry City, Crystal Palace, Everton, Fulham, Hull City, Ipswich
 Town, Leeds United, Liverpool, Manchester City, Manchester United, Newcastle
 United, Nottingham Forest, Sunderland, Tottenham Hotspur.
 
-### Canonical missing — 7
+The current Sportmonks season roster is frozen by immutable read-only capture:
 
-- Aston Villa
-- Brighton & Hove Albion
-- Chelsea
-- Everton
-- Manchester City
-- Nottingham Forest
-- Tottenham Hotspur
+- league: `8 / Premier League`
+- season: `28083 / 2026/2027`
+- teams: `20`
+- team-set SHA-256:
+  `e864984e5ea7649c2589e76de56c4be95b6be8554e7ccdf09ffe9f68b17c32d9`
 
-### Canonical exists, Sportmonks mapping missing — 4
+The capture also resolved a provider-source discrepancy: the live Sportmonks
+season API returned `Sunderland = 3`, matching production and the A2-B pilot;
+a public provider page had shown 27 and was not used as write authority.
 
-- AFC Bournemouth — existing `בורנמות'` — Sportmonks 52 is intentionally deferred until Winner round 264301 settles
-- Arsenal — existing `ארסנל`
-- Ipswich Town — existing `איפסוויץ'`
-- Liverpool — existing `ליברפול`
+### Identity-complete — 16/20
 
-### Already Sportmonks mapped — 9
+Already attested before this phase:
+
+- Sunderland
+- Leeds United
+- Manchester United
+
+Existing mapped identities promoted and attested in phase 1:
 
 - Brentford
 - Coventry City
 - Crystal Palace
 - Fulham
 - Hull City
-- Leeds United
-- Manchester United
 - Newcastle United
-- Sunderland
 
-Already V4-attested from the pilot:
-Leeds United, Manchester United, Sunderland.
+New canonical identities created, mapped and attested in phase 1:
+
+- Aston Villa — `אסטון וילה`
+- Brighton & Hove Albion — `ברייטון`
+- Chelsea — `צ'לסי`
+- Everton — `אברטון`
+- Manchester City — `מנצ'סטר סיטי`
+- Nottingham Forest — `נוטינגהאם פורסט`
+- Tottenham Hotspur — `טוטנהאם`
+
+Execution record:
+`docs/operations/2026-10-31-v4-premier-league-identity-onboarding-phase1.md`.
+
+### Existing canonical, Sportmonks mapping deferred — 4
+
+All four appear in the active Winner 16 round `264301`, so adding a new
+Sportmonks mapping is intentionally deferred until that round is no longer
+active:
+
+- AFC Bournemouth — existing `בורנמות'` — Sportmonks 52
+- Arsenal — existing `ארסנל` — Sportmonks 19
+- Ipswich Town — existing `איפסוויץ'` — Sportmonks 116
+- Liverpool — existing `ליברפול` — Sportmonks 8
+
+Current Premier League identity status: **16/20 complete**.
+
+Registry status: **validating**, not yet `supported`.
 
 ## 4. Bundesliga — 18 clubs
 
@@ -237,7 +262,7 @@ historical ingest quality for the V4 features that will be exposed.
 
 ### Class A — existing canonical + existing Sportmonks mapping, not yet attested
 
-Count: **22**
+Count: **16**
 
 For each:
 - independently verify provider identity;
@@ -259,12 +284,14 @@ For each:
 - create `manual_override` mapping with `mapping_confidence = NULL`;
 - attest separately.
 
-Bournemouth and Sevilla are already reviewed Class-B identities but remain
-temporarily deferred because of the active Winner round 264301 V3 side effect.
+Bournemouth, Arsenal, Ipswich, Liverpool and Sevilla are reviewed Class-B
+identities but remain temporarily deferred because they participate in the
+active Winner round 264301 and a new provider-team mapping could change V3
+fixture-mapping behavior.
 
 ### Class C — canonical team missing
 
-Count: **31**
+Count: **24**
 
 For each:
 - verify current official league membership;
@@ -304,9 +331,10 @@ Do not try to write all 74 remaining identities in one large batch.
 
 Recommended order:
 
-1. finish pilot R4 for Bournemouth/Sevilla after round 264301 settles;
-2. Ligat Ha'al identity onboarding — **DONE 14/14**;
-3. complete Premier League identity onboarding;
+1. Ligat Ha'al identity onboarding — **DONE 14/14**;
+2. Premier League phase 1 — **DONE 16/20**; complete Bournemouth, Arsenal,
+   Ipswich and Liverpool after round 264301 settles;
+3. complete deferred Sevilla after round 264301 settles;
 4. complete Bundesliga identity onboarding;
 5. complete La Liga identity onboarding;
 6. complete Serie A identity onboarding;
