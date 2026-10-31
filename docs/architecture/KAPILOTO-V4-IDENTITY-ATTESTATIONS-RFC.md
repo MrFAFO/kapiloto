@@ -1,9 +1,11 @@
 # Kapiloto V4 Stage 1 RFC — Provider Identity Attestations
 
-Status: **Accepted architecture for M2A implementation; M2B remains gated**  
+Status: **M2A implemented and applied to production; M2B remains gated**  
 Scope: V4 historical-ingest trust only  
 Related decisions: D-056, D-057  
 Current production state: D-057 Stage 0 containment is applied; Sportmonks V3 identity writes are insert-only; historical provider ingest remains paused.
+
+Production application: M2A migration `20261031100000_kapiloto_v4_identity_attestations.sql` was applied on 2026-10-31 from merge commit `5327dc371751a75b79d2c2612471b55b7c6436af`. Post-checks confirmed `private` is not Data-API exposed, both V1/V2 ingest remain revoked from `service_role`, and no attestation or Match Ledger observation was created by deployment.
 
 This RFC defines the Stage 1 trust architecture that must exist before any real Match Ledger provider ingest resumes.
 

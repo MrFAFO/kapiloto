@@ -390,13 +390,23 @@ identity. At minimum:
 
 Accepted design: D-058 and `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md`.
 
-**M2A status: implemented on branch `feat/v4-identity-attestations-m2a`
-(migration `20261031100000_kapiloto_v4_identity_attestations.sql`), draft PR,
-not merged, not applied to production.** It builds the attestation state,
-attest/revoke RPCs, sealed observation provenance, V2 ingest, V2 reads and the
-readiness/impact/reconciliation reports. Ingest stays disabled: V1 and V2
-ingest are both non-executable by `service_role`. No real team or competition
-has been attested.
+**M2A status: merged and applied to production on 2026-10-31.**
+Canonical merge commit: `5327dc371751a75b79d2c2612471b55b7c6436af`.
+Production migration:
+`20261031100000_kapiloto_v4_identity_attestations.sql`.
+
+Post-apply verification:
+- `private` is not exposed in Supabase Data API; only `graphql_public` and
+  `public` are exposed;
+- V1 and V2 provider ingest are both non-executable by `service_role`;
+- all Stage 1 attestation tables/RPCs/V2 readers/reports exist with the
+  intended SECURITY INVOKER / empty-search-path contracts;
+- no team/competition attestation or attestation event exists yet;
+- Match Ledger still has 0 observations;
+- `match_ledger_provider_ref_conflicts_v2('sportmonks')` is empty;
+- readiness currently reports only expected `mapping_unattested` rows.
+
+No real team or competition has been attested.
 
 The 20 teams from the 10-fixture pilot remain the first reconciliation scope
 after M2A is merged and applied.
@@ -470,10 +480,10 @@ The D-057 DB trigger remains the safety boundary; the V3 code change removes
 the repeated overwrite attempts and self-promotion path rather than replacing
 the database guard.
 
-### Gate 3 — Stage 1 V4 identity attestations (M2A built; review pending)
+### DONE — Gate 3: Stage 1 V4 identity attestations (M2A applied production)
 
-D-058 accepted the architecture. M2A is implemented on
-`feat/v4-identity-attestations-m2a` (draft PR, not merged, not applied):
+D-058 accepted the architecture. M2A is merged at
+`5327dc371751a75b79d2c2612471b55b7c6436af` and applied to production:
 
 - current team/competition projections plus immutable event generations,
   injectivity in both directions, `ON DELETE NO ACTION` canonical FKs;
@@ -491,8 +501,9 @@ D-058 accepted the architecture. M2A is implemented on
 - V1 ingest and V2 ingest both revoked from `service_role`; the V1 stat reads,
   V1 exclusions and V1 provider-ref report are de-authorized but present.
 
-Next: independent code/migration review, merge, production `private`
-exposed-schema check, then apply M2A. Ingest stays disabled until M2B.
+Post-apply checks passed, including the production Data API exposure check.
+Ingest stays disabled until M2B. Next active work is pilot identity
+reconciliation plus the remaining M2B readiness gates.
 
 Recovery of a chain that V2 wrongly **minted**: it is never minted again
 (the applied A2-A `match_ledger_fixture_mints` is unique per
@@ -698,7 +709,7 @@ Preserve:
 As of the snapshot date:
 
 - no broad Sportmonks historical backfill;
-- no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A (on a branch, not applied) keeps V1 and V2 ingest non-executable by `service_role`, and only the separate M2B migration may grant V2;
+- no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A is applied in production, V1 and V2 ingest remain non-executable by `service_role`, and only the separate M2B migration may grant V2;
 - the 15 missing pilot-team mappings are not resolved;
 - PR #19 is not merged;
 - V4 Match Ledger is not silently feeding V3 research/probabilities;
@@ -791,7 +802,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff in the 2026-10-30 snapshot is D-057 Stage 0 containment plus the V3 Sportmonks insert-only alignment deployed in production. Next is Stage 1 V4 identity attestations, then A2-B reconciliation before the first real Match Ledger ingest.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment and V3 Sportmonks insert-only alignment are deployed; D-058 M2A identity attestations are also applied to production with ingest still disabled. Active work is the reviewed reconciliation of the 5 pilot competitions and 20 pilot teams, then A2-B amendments and the remaining M2B readiness gates before the first real Match Ledger ingest.
 
 ## 15. Updating this file
 
