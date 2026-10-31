@@ -318,7 +318,7 @@ async function findSeasonSample(
       FOOTBALL_BASE,
       `/fixtures/seasons/${required.providerSeasonId}`,
       archive,
-      { include: "state;participants;scores", order: "desc", per_page: 50, page },
+      { include: "state;participants;scores", per_page: 50, page },
     );
     const rows = response.body.data ?? [];
     const matching = rows
