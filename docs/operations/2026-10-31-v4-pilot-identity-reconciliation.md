@@ -1,178 +1,369 @@
 # Kapiloto V4 — Pilot Identity Reconciliation Plan
 
-Status: **read-only reconciliation proposal; no production writes approved yet**  
+Status: **independent-review reconciled; identity decisions approved; production writes still gated by this runbook**  
 Date: 2026-10-31  
 Depends on: D-057, D-058, M2A production migration `20261031100000_kapiloto_v4_identity_attestations.sql`
 
-This document is the operator plan for reconciling the five A2-B Sportmonks competitions and the 20 teams observed in the ten-fixture real-payload pilot.
+This document is the reviewed operator plan for reconciling the five A2-B Sportmonks competitions and the 20 teams observed in the ten-fixture real-payload pilot.
 
-It does **not** authorize any database write. The proposed decisions must pass independent review before mappings, canonical teams, aliases or attestations are changed.
+Two independent adversarial reviews were completed against the original PR #28 plan. Both accepted the proposed real-world identities. Their procedural blockers are folded into this revision. No identity write was performed while the reviews were running.
 
-## 1. Production state before reconciliation
+The rules below are fail-closed. A failed assertion stops that identity. No operation exists merely to "make the pilot pass".
 
-Verified after M2A production application:
+## 1. Verified production baseline
 
-- V1 and V2 provider ingest are both revoked from `service_role`;
-- `private` is not exposed through the Supabase Data API;
+M2A production post-checks already established:
+
+- V1 and V2 provider ingest are revoked from `service_role`;
+- `private` is not exposed through Supabase Data API;
 - Match Ledger has `0` observations;
-- no team/competition attestation, attestation event or observation sidecar exists;
-- `match_ledger_provider_ref_conflicts_v2('sportmonks')` returns no rows;
-- the readiness report currently contains only expected `mapping_unattested` rows;
-- all five pilot competition mappings remain `manual_override`;
-- there is no current Sportmonks team injectivity violation (`provider_team_mappings` has no canonical team with two Sportmonks provider ids).
+- no team/competition attestation, event or observation sidecar existed before reconciliation;
+- all five pilot competition mappings are `manual_override`;
+- no Sportmonks team injectivity violation exists;
+- `match_ledger_provider_ref_conflicts_v2('sportmonks')` is empty;
+- readiness contains only expected `mapping_unattested` informational rows.
 
-No historical ingest, fixture mapping or Match Ledger write is part of this plan.
+### R1 baseline snapshot — completed read-only
 
-## 2. Evidence snapshot
+Captured from production at:
 
-### A2-B artifact
+`2026-10-31T11:59:07.339225Z`
+
+Contract:
+
+`kapiloto-v4-pilot-r1-snapshot-v1`
+
+SHA-256:
+
+`99c7db9c9f2c6468fb9ff21d69f6a7f0f537920c7a615d6cc4d755768626f36a`
+
+Counts frozen by the snapshot:
+
+| Object | Count |
+| --- | ---: |
+| canonical teams | 51 |
+| team aliases | 57 |
+| provider team mappings | 78 |
+| Sportmonks team mappings | 36 |
+| team attestations | 0 |
+| competition attestations | 0 |
+| Match Ledger observations | 0 |
+
+The snapshot also froze:
+- all five target competition mappings;
+- all 20 target Sportmonks team mapping states;
+- identity candidates found through canonical names, aliases and provider names;
+- Sportmonks injectivity conflicts: `[]`;
+- provider-ref conflicts V2: `[]`;
+- readiness: only `mapping_unattested`.
+
+The exact R1 query uses `private.normalize_entity_alias` and hashes the canonical JSON result with SHA-256. This is the global operation baseline, not the per-identity duplicate hash used in attestation evidence.
+
+## 2. A2-B provider evidence
 
 GitHub Actions run: `41124224068`  
 Artifact: `13010316459` — `kapiloto-v4-sportmonks-a2b-pilot`  
 Artifact digest: `sha256:3b01187a6ce6b63621a40f34d384c2ba6d8231aa0c45a72504ab46a1f6900ad3`  
 Entitlement snapshot SHA-256: `645917dcce248bd9c730c3795b73113b265be0f36d3c970696c9c566cdc78725`
 
-The artifact is the provider-side identity evidence: Sportmonks league id, fixture id, kickoff and home/away participant ids/names. Official competition sources below independently confirm the competition membership and/or exact fixture pair.
+The artifact freezes Sportmonks league ids, fixture ids, participant ids/names, orientation, kickoff and raw response hashes.
 
-### Official source keys
+| League | SM fixture | Raw SHA-256 | Sportmonks kickoff UTC | Home | Away |
+| --- | ---: | --- | --- | --- | --- |
+| Premier League 8 | 19722124 | `9c10f18b25452207bfdd3af5122890bf4c8f7f7966d153d63227aa03e8edaeec` | 2026-10-25 16:30 | 3 Sunderland | 71 Leeds United |
+| Premier League 8 | 19722125 | `e5c49cc01290c1ccaa22c298ab8008600013f4312a0fc70b771217d6307c9411` | 2026-10-25 14:00 | 14 Manchester United | 52 AFC Bournemouth |
+| Bundesliga 82 | 19735139 | `22e54178f1204a98c9fde9ac6f12a9cc2469c08fedd7076b9a5f5638faa8a6c7` | 2026-10-25 16:30 | 3543 SC Freiburg | 503 FC Bayern München |
+| Bundesliga 82 | 19735140 | `c765b1a9760d1d7184e036d027d80d62d3e591b962af6c877a1b8af81dd8e140` | 2026-10-25 14:30 | 2726 TSG Hoffenheim | 3321 Bayer 04 Leverkusen |
+| La Liga 564 | 19732644 | `3357620c409f929143c73ba956a597bbb5f0abf2d218edf43c625547edf46959` | 2026-10-26 20:00 | 676 Sevilla | 459 Osasuna |
+| La Liga 564 | 19732648 | `e556abac3cd0a314f4ef88e683217bbdb7524248fbe3575777ccc30101be7fd1` | 2026-10-25 20:00 | 83 FC Barcelona | 3468 Real Madrid |
+| Serie A 384 | 19713536 | `d025b2a3369414e024f69e7a47f83af5cc2b933972f2e74ba5925f64a52f7a02` | 2026-10-29 17:30 | 4070 Frosinone | 7790 Lecce |
+| Serie A 384 | 19713537 | `531908e3b04bf538b70771aed781c683195bb01c565f4d10e46ed8dd1c9b0341` | 2026-10-29 19:45 | 109 Fiorentina | 708 Atalanta |
+| Ligat ha'Al 372 | 19721180 | `a3bffbc2ffb4550aa908e8db8d162a31f50d62db4969cff9ea693988b664c48c` | 2026-10-26 17:30 | 571 Maccabi Haifa | 516 Hapoel Be'er Sheva |
+| Ligat ha'Al 372 | 19721184 | `69b04a168d918ca398f0e092b4b397cb4ee3f3322dbdce37305c9f5d6f8e3ddc` | 2026-10-25 18:15 | 6900 Hapoel Petah Tikva | 589 Beitar Jerusalem |
 
-| Key | Official source | Purpose |
-| --- | --- | --- |
-| PL-CLUBS | Premier League — 2026/27 club list | Manchester United, Bournemouth, Sunderland, Leeds membership |
-| PL-MW | Premier League — October fixture amendments | Manchester United–Bournemouth and Sunderland–Leeds fixture anchors |
-| BL-CLUBS | Bundesliga — 2026/27 club list | Bayern, Freiburg, Hoffenheim, Leverkusen membership |
-| BL-MD7 | Bundesliga — Matchday 7 | Freiburg–Bayern and Hoffenheim–Leverkusen fixture anchors |
-| LL-CLUBS | LALIGA EA SPORTS — 2026/27 clubs | Barcelona, Real Madrid, Sevilla, Osasuna membership |
-| LL-J10 | LALIGA — Matchday 10 results | Barcelona–Real Madrid and Sevilla–Osasuna fixture anchors |
-| SA-CLUBS | Lega Serie A — club/statistics list | Fiorentina, Atalanta, Frosinone, Lecce membership |
-| SA-MD9 | Lega Serie A — Matchday 9 official schedule | Fiorentina–Atalanta and Frosinone–Lecce fixture anchors |
-| IFA-MD8 | Israel Football Association — Winner League Matchday 8 | Hapoel Petah Tikva–Beitar Jerusalem and Maccabi Haifa–Hapoel Beer Sheva anchors |
+## 3. Independent official and cross-provider evidence
 
-Source URLs used by the review:
+### Competition sources
 
-- PL-CLUBS: `https://www.premierleague.com/en/news/4365156`
-- PL-MW: `https://www.premierleague.com/en/news/4688862/fixture-amendments-for-premier-league-matches-in-october-and-november/`
-- BL-CLUBS: `https://www.bundesliga.com/en/bundesliga/clubs`
-- BL-MD7: `https://www.bundesliga.com/en/bundesliga/matchday/2026-2027/7/`
-- LL-CLUBS: `https://www.laliga.com/en-US/laliga-easports/clubs`
-- LL-J10: `https://www.laliga.com/en-GB/laliga-easports/results/2026-27/gameweek-10`
-- SA-CLUBS: `https://www.legaseriea.it/serie-a/statistiche/clubs`
-- SA-MD9: `https://en.legaseriea.it/serie-a/news/the-referees-for-the-9th-round-x4306`
-- IFA-MD8: `https://www.football.org.il/leagues/games/?league_id=40`
+| Key | Source |
+| --- | --- |
+| PL-CLUBS | `https://www.premierleague.com/en/news/4365156` |
+| PL-MW | `https://www.premierleague.com/en/news/4688862/fixture-amendments-for-premier-league-matches-in-october-and-november/` |
+| BL-CLUBS | `https://www.bundesliga.com/en/bundesliga/clubs` |
+| BL-MD7 | `https://www.bundesliga.com/en/bundesliga/matchday/2026-2027/7/` |
+| LL-CLUBS | `https://www.laliga.com/en-US/laliga-easports/clubs` |
+| LL-J10 | `https://www.laliga.com/en-GB/laliga-easports/results/2026-27/gameweek-10` |
+| SA-CLUBS | `https://www.legaseriea.it/serie-a/statistiche/clubs` |
+| SA-MD9 | `https://en.legaseriea.it/serie-a/news/the-referees-for-the-9th-round-x4306` |
+| IFA-MD8 | `https://www.football.org.il/leagues/games/?league_id=40` |
 
-## 3. Captured pilot fixtures
+Production cross-provider competition mappings independently agree with the five canonical competition ids:
 
-| League | Sportmonks fixture | Capture raw SHA-256 | Provider kickoff UTC | Home | Away | Official cross-check |
-| --- | ---: | --- | --- | --- | --- | --- |
-| Premier League 8 | 19722124 | `9c10f18b25452207bfdd3af5122890bf4c8f7f7966d153d63227aa03e8edaeec` | 2026-10-25 16:30 | 3 Sunderland | 71 Leeds United | PL-MW exact |
-| Premier League 8 | 19722125 | `e5c49cc01290c1ccaa22c298ab8008600013f4312a0fc70b771217d6307c9411` | 2026-10-25 14:00 | 14 Manchester United | 52 AFC Bournemouth | PL-MW exact |
-| Bundesliga 82 | 19735139 | `22e54178f1204a98c9fde9ac6f12a9cc2469c08fedd7076b9a5f5638faa8a6c7` | 2026-10-25 16:30 | 3543 SC Freiburg | 503 FC Bayern München | BL-MD7 exact pair/date |
-| Bundesliga 82 | 19735140 | `c765b1a9760d1d7184e036d027d80d62d3e591b962af6c877a1b8af81dd8e140` | 2026-10-25 14:30 | 2726 TSG Hoffenheim | 3321 Bayer 04 Leverkusen | BL-MD7 exact pair/date |
-| La Liga 564 | 19732644 | `3357620c409f929143c73ba956a597bbb5f0abf2d218edf43c625547edf46959` | 2026-10-26 20:00 | 676 Sevilla | 459 Osasuna | LL-J10 exact |
-| La Liga 564 | 19732648 | `e556abac3cd0a314f4ef88e683217bbdb7524248fbe3575777ccc30101be7fd1` | 2026-10-25 20:00 | 83 FC Barcelona | 3468 Real Madrid | LL-J10 exact |
-| Serie A 384 | 19713536 | `d025b2a3369414e024f69e7a47f83af5cc2b933972f2e74ba5925f64a52f7a02` | 2026-10-29 17:30 | 4070 Frosinone | 7790 Lecce | SA-MD9 exact |
-| Serie A 384 | 19713537 | `531908e3b04bf538b70771aed781c683195bb01c565f4d10e46ed8dd1c9b0341` | 2026-10-29 19:45 | 109 Fiorentina | 708 Atalanta | SA-MD9 exact |
-| Ligat ha'Al 372 | 19721180 | `a3bffbc2ffb4550aa908e8db8d162a31f50d62db4969cff9ea693988b664c48c` | **2026-10-26 17:30** | 571 Maccabi Haifa | 516 Hapoel Be'er Sheva | IFA-MD8 pair/date; **kickoff discrepancy, see §8** |
-| Ligat ha'Al 372 | 19721184 | `69b04a168d918ca398f0e092b4b397cb4ee3f3322dbdce37305c9f5d6f8e3ddc` | 2026-10-25 18:15 | 6900 Hapoel Petah Tikva | 589 Beitar Jerusalem | IFA-MD8 exact |
+| Canonical competition | Sportmonks | Independent provider refs |
+| --- | ---: | --- |
+| Premier League | 8 | API-Football 39 |
+| Bundesliga | 82 | API-Football 78 |
+| Ligat Ha'al | 372 | API-Football 383; football-il-parse 902 |
+| Serie A | 384 | API-Football 135 |
+| La Liga | 564 | API-Football 140 |
 
-## 4. Competition reconciliation proposal
+No Sportmonks mapping row created or rewritten by V3 is counted as independent evidence.
 
-All five rows already point to the intended canonical competition and are `manual_override`.
+### Telesport/Winner canonical spelling evidence
 
-| Sportmonks id | Provider name | Canonical competition id | Current status | Proposed action |
+The canonical Hebrew spellings used by Toto matter structurally: the current Toto import selects `teams` by `lower(trim(canonical_name)) + country_code`; aliases do not prevent a duplicate.
+
+The following spellings are now evidenced by Telesport/Winner rather than convention alone:
+
+| SM id | Provider name | Canonical spelling | Telesport evidence |
+| ---: | --- | --- | --- |
+| 14 | Manchester United | מנצ'סטר יונייטד | repo `scripts/provider-spike.round-264101.json`; current Telesport results/broadcasts |
+| 83 | FC Barcelona | ברצלונה | `https://m.telesport.co.il/winner-16/global`; current Winner board |
+| 109 | Fiorentina | פיורנטינה | `https://m.telesport.co.il/article/recommendations/6ae301b4eb56be0f63dfd894` |
+| 459 | Osasuna | אוסאסונה | `https://m.telesport.co.il/article/recommendations/6a954b571a5985b0cb93c0ab`; Telesport broadcasts |
+| 503 | FC Bayern München | באיירן מינכן | `https://m.telesport.co.il/winner-16/global` |
+| 589 | Beitar Jerusalem | בית"ר ירושלים | repo `scripts/provider-spike.round-264101.json`; current Winner board |
+| 708 | Atalanta | אטאלנטה | `https://m.telesport.co.il/article/recommendations/6ae301b4eb56be0f63dfd894` |
+| 2726 | TSG Hoffenheim | הופנהיים | repo `scripts/provider-spike.round-264101.json` |
+| 3321 | Bayer 04 Leverkusen | באייר לברקוזן | current Telesport Winner board / game page |
+| 3468 | Real Madrid | ריאל מדריד | `https://www.telesport.co.il/broadcasts` |
+| 3543 | SC Freiburg | פרייבורג | current Telesport Winner board |
+| 4070 | Frosinone | פרוסינונה | `https://www.telesport.co.il/game/6432774` |
+| 7790 | Lecce | לצ'ה | `https://www.telesport.co.il/game/6432774` |
+
+This resolves the first independent review's spelling blocker. Before the first write, the operation note must freeze the retrieved-at timestamp and the relevant minimal source excerpt or content hash for each dynamic page. The immutable PR commit records the reviewed extracted spelling and source URL, but it is not a substitute for the pre-write evidence pack.
+
+## 4. Review reconciliation
+
+Both independent reviews accepted:
+- all five competition identities;
+- the five existing team mappings;
+- Bournemouth -> existing `בורנמות'`;
+- Sevilla -> existing `סביליה`;
+- the real-world identity of all 13 proposed new teams.
+
+The first review returned a partial GO because:
+1. three Winner-known teams might already exist;
+2. ten proposed Hebrew spellings lacked Winner evidence;
+3. duplicate-audit semantics were underspecified.
+
+Runtime reconciliation resolved (1): production still has 51 teams and none of the 13 proposed new canonical rows exists under the reviewed canonical spellings. The expanded candidate audit also found no alias/provider-name collision.
+
+Telesport evidence in §3 resolves (2).
+
+This revision resolves (3) with an atomic per-identity audit in §8.
+
+The second review independently observed the same production catalog and approved all 25 identity decisions, but found two procedural blockers:
+1. the duplicate audit was not atomic with the write;
+2. operator predicates were not required to include `provider = 'sportmonks'`.
+
+Both are mandatory below.
+
+## 5. Competition decisions — APPROVED
+
+All five existing Sportmonks rows remain `manual_override` and point to the intended canonical competition.
+
+| SM id | Canonical id | Decision |
+| ---: | --- | --- |
+| 8 | `ccdbb89d-e575-4e15-820d-f5d1ecdc3a85` | attest |
+| 82 | `11ef12f9-86cf-4634-9ed7-cf9f7113e214` | attest |
+| 372 | `06b70ffa-847c-44d2-a346-3683ac9115c3` | attest |
+| 384 | `a2b7daf8-1d1d-4b79-8801-b47ad6cde38c` | attest |
+| 564 | `2116127b-f4f6-40d5-bdbc-bc60cb70dc0d` | attest |
+
+Basis: `multi_source_verified`.
+
+Competition attestations do not wait for teams. Competition injectivity is independent, and M2A ingest remains disabled.
+
+## 6. Team decisions — APPROVED identities
+
+### A. Existing mapping -> promote to manual_override -> attest
+
+| SM id | Provider name | Canonical id | Canonical name | Independent evidence |
 | ---: | --- | --- | --- | --- |
-| 8 | Premier League | `ccdbb89d-e575-4e15-820d-f5d1ecdc3a85` | manual_override | attest only |
-| 82 | Bundesliga | `11ef12f9-86cf-4634-9ed7-cf9f7113e214` | manual_override | attest only |
-| 372 | Ligat ha'Al | `06b70ffa-847c-44d2-a346-3683ac9115c3` | manual_override | attest only |
-| 384 | Serie A | `a2b7daf8-1d1d-4b79-8801-b47ad6cde38c` | manual_override | attest only |
-| 564 | La Liga | `2116127b-f4f6-40d5-bdbc-bc60cb70dc0d` | manual_override | attest only |
+| 3 | Sunderland | `60b20670-8dcd-4091-85b2-1053446cab54` | סנדרלנד | API-Football 746; Toto fixture; PL evidence |
+| 71 | Leeds United | `72bfd482-213d-4b7f-8939-544eb4329682` | לידס | API-Football 63; Toto fixture; PL evidence |
+| 516 | Hapoel Be'er Sheva | `8430f0cd-e215-4ba9-858e-ae1707b9d37c` | הפועל באר שבע | Toto/IFA fixture evidence |
+| 571 | Maccabi Haifa | `40b796e4-b939-4160-a24a-044e8bc703fb` | מכבי חיפה | football-il-parse 4539; Toto/IFA fixture evidence |
+| 6900 | Hapoel Petah Tikva | `2a4abd6e-816d-46b8-8554-33e4205ebe38` | הפועל פתח תקווה | football-il-parse 4542; API-Football 4488; distinct Maccabi Petah Tikva row |
 
-Proposed basis: `multi_source_verified`.
+The existing confidence value is left unchanged. D-058 does not treat it as trust.
 
-Evidence for every competition must include:
-- A2-B entitlement snapshot hash;
-- artifact digest;
-- the official competition source key;
-- duplicate-audit hash of the current canonical competition catalog;
-- reviewer/operator label.
+### B. Existing canonical team, missing Sportmonks mapping -> attach -> attest
 
-No competition mapping mutation is proposed.
+| SM id | Provider name | Canonical id | Canonical name |
+| ---: | --- | --- | --- |
+| 52 | AFC Bournemouth | `fcd3541d-c509-4d27-ac8d-6c403ef629e1` | בורנמות' |
+| 676 | Sevilla | `f1cc2c0b-b7a3-40f7-a18f-423fdc71344b` | סביליה |
 
-## 5. Team reconciliation proposal
+Production has exactly one reviewed canonical candidate for each and currently no Sportmonks 52/676 row.
 
-### 5.1 Existing mapping, existing canonical team — promote then attest (5)
+### C. Canonical absent -> create -> map -> attest
 
-These rows existed before D-058 at `confirmed` confidence 1. They are **not grandfathered**.
+Production contains none of the following canonical teams under the reviewed normalized canonical/provider names.
 
-| SM id | Provider name | Existing canonical id | Canonical name | Current | Proposed |
-| ---: | --- | --- | --- | --- | --- |
-| 3 | Sunderland | `60b20670-8dcd-4091-85b2-1053446cab54` | סנדרלנד | confirmed/1 | promote exact row to manual_override, then attest |
-| 71 | Leeds United | `72bfd482-213d-4b7f-8939-544eb4329682` | לידס | confirmed/1 | promote exact row, then attest |
-| 516 | Hapoel Be'er Sheva | `8430f0cd-e215-4ba9-858e-ae1707b9d37c` | הפועל באר שבע | confirmed/1 | promote exact row, then attest |
-| 571 | Maccabi Haifa | `40b796e4-b939-4160-a24a-044e8bc703fb` | מכבי חיפה | confirmed/1 | promote exact row, then attest |
-| 6900 | Hapoel Petah Tikva | `2a4abd6e-816d-46b8-8554-33e4205ebe38` | הפועל פתח תקווה | confirmed/1 | promote exact row, then attest |
+| SM id | Provider name | Country | Canonical name |
+| ---: | --- | --- | --- |
+| 14 | Manchester United | GB | מנצ'סטר יונייטד |
+| 83 | FC Barcelona | ES | ברצלונה |
+| 109 | Fiorentina | IT | פיורנטינה |
+| 459 | Osasuna | ES | אוסאסונה |
+| 503 | FC Bayern München | DE | באיירן מינכן |
+| 589 | Beitar Jerusalem | IL | בית"ר ירושלים |
+| 708 | Atalanta | IT | אטאלנטה |
+| 2726 | TSG Hoffenheim | DE | הופנהיים |
+| 3321 | Bayer 04 Leverkusen | DE | באייר לברקוזן |
+| 3468 | Real Madrid | ES | ריאל מדריד |
+| 3543 | SC Freiburg | DE | פרייבורג |
+| 4070 | Frosinone | IT | פרוסינונה |
+| 7790 | Lecce | IT | לצ'ה |
 
-Each promotion must:
-- use `kapiloto.identity_operator = 'on'`;
-- include provider id **and expected canonical id/status/confidence** in the `WHERE`;
-- assert exactly one changed row;
-- run separately from the attestation RPC.
+New manual-override mappings use `mapping_confidence = NULL`.
 
-### 5.2 No Sportmonks mapping, but canonical team already exists — attach then attest (2)
+Reason: confidence is not the D-058 trust root, and writing `1` would unnecessarily recreate the old "confidence 1 looks trusted" convention that Stage 1 deliberately replaced.
 
-| SM id | Provider name | Existing canonical id | Canonical name | Country | Proposed |
-| ---: | --- | --- | --- | --- | --- |
-| 52 | AFC Bournemouth | `fcd3541d-c509-4d27-ac8d-6c403ef629e1` | בורנמות' | GB | insert manual_override mapping, add provider-name alias if absent, then attest |
-| 676 | Sevilla | `f1cc2c0b-b7a3-40f7-a18f-423fdc71344b` | סביליה | ES | insert manual_override mapping, add provider-name alias if absent, then attest |
+## 7. Alias policy
 
-Before insert, re-check:
-- provider ref is still unmapped;
-- no other Sportmonks ref maps to the canonical id;
-- the canonical row and country are unchanged;
-- duplicate audit still resolves to the same single canonical target.
+Every newly attached/created identity gets its exact Sportmonks English provider name as an `en` alias when not already present.
 
-### 5.3 Canonical team absent — proposed canonical creation (13)
+For newly created teams, seed only reviewed useful Hebrew variants. At minimum:
 
-The production canonical catalog was reviewed across GB/ES/DE/IT/IL **and rows with null country**. No existing canonical/alias candidate was found for these 13 identities.
+- Manchester United: `מנצ׳סטר יונייטד`
+- Beitar Jerusalem: `ביתר ירושלים`, `בית״ר ירושלים`
+- Lecce: `לצ׳ה`
 
-| SM id | Provider name | Country | Proposed canonical name | Provider alias to add | Evidence |
-| ---: | --- | --- | --- | --- | --- |
-| 14 | Manchester United | GB | מנצ'סטר יונייטד | Manchester United | PL-CLUBS + PL-MW + capture 19722125 |
-| 83 | FC Barcelona | ES | ברצלונה | FC Barcelona | LL-CLUBS + LL-J10 + capture 19732648 |
-| 109 | Fiorentina | IT | פיורנטינה | Fiorentina | SA-CLUBS + SA-MD9 + capture 19713537 |
-| 459 | Osasuna | ES | אוססונה | Osasuna | LL-CLUBS (`CA Osasuna`) + LL-J10 + capture 19732644 |
-| 503 | FC Bayern München | DE | באיירן מינכן | FC Bayern München | BL-CLUBS + BL-MD7 + capture 19735139 |
-| 589 | Beitar Jerusalem | IL | בית"ר ירושלים | Beitar Jerusalem | IFA-MD8 + capture 19721184 |
-| 708 | Atalanta | IT | אטאלנטה | Atalanta | SA-CLUBS + SA-MD9 + capture 19713537 |
-| 2726 | TSG Hoffenheim | DE | הופנהיים | TSG Hoffenheim | BL-CLUBS + BL-MD7 + capture 19735140 |
-| 3321 | Bayer 04 Leverkusen | DE | באייר לברקוזן | Bayer 04 Leverkusen | BL-CLUBS + BL-MD7 + capture 19735140 |
-| 3468 | Real Madrid | ES | ריאל מדריד | Real Madrid | LL-CLUBS + LL-J10 + capture 19732648 |
-| 3543 | SC Freiburg | DE | פרייבורג | SC Freiburg | BL-CLUBS + BL-MD7 + capture 19735139 |
-| 4070 | Frosinone | IT | פרוזינונה | Frosinone | SA-CLUBS + SA-MD9 + capture 19713536 |
-| 7790 | Lecce | IT | לצ'ה | Lecce | SA-CLUBS + SA-MD9 + capture 19713536 |
+For existing Bournemouth, add `בורנמות׳` if absent.
 
-Creation is proposed, not approved.
+Aliases help V3/provider matching and audits. They **do not** prevent Toto duplicates because Toto's current team lookup ignores aliases.
 
-For each team, the operator transaction would:
-1. re-run the country + null-country team/alias duplicate audit;
-2. assert the Sportmonks provider ref is still absent;
-3. insert one `teams` row;
-4. insert the Sportmonks English name as an `en` alias (`source = 'sportmonks_reconciliation'`);
-5. insert the Sportmonks mapping as `manual_override` with confidence 1 and `last_verified_at = statement_timestamp()`;
-6. assert exactly one new provider mapping and no injectivity conflict;
-7. commit.
+Do not seed speculative aliases merely to increase recall.
 
-Attestation is a **separate transaction/RPC** after the creation transaction commits.
+## 8. Atomic duplicate/collision audit — mandatory
 
-The Hebrew canonical spelling is operator-owned data. Independent review should explicitly approve the 13 proposed Hebrew spellings before any insert.
+### 8.1 Audit scope
 
-## 6. Proposed attestation evidence contract
+For one target identity the audit covers:
 
-Proposed basis for all 25 attestations (5 competitions + 20 teams):
+1. every `public.teams` row, regardless of country;
+2. every `public.team_aliases` row;
+3. every `public.provider_team_mappings` row from every provider;
+4. the specific Sportmonks provider ref;
+5. current Sportmonks injectivity for the proposed canonical team.
+
+All text matching uses the existing immutable DB function:
+
+`private.normalize_entity_alias(text)`
+
+That function normalizes geresh/gershayim variants, apostrophes, maqaf/dash variants, Hebrew marks, whitespace and case.
+
+Inputs include:
+- reviewed Hebrew canonical name;
+- reviewed Hebrew punctuation variants;
+- Sportmonks provider name;
+- any official/provider variant explicitly included in the evidence pack.
+
+### 8.2 Transaction rule for a canonical creation or attach
+
+Each R4/R5 identity transaction must:
+
+1. `SET LOCAL lock_timeout = '5s'`;
+2. take:
+
+   `LOCK TABLE public.teams, public.team_aliases, public.provider_team_mappings IN SHARE ROW EXCLUSIVE MODE`;
+
+3. run the identity-scoped audit **after the locks are held**;
+4. serialize the exact audit rows plus audit-query-version into canonical JSON;
+5. compute SHA-256;
+6. abort unless the result has exactly the expected candidate shape;
+7. perform the mapping/canonical/alias write;
+8. re-run the relevant candidate/injectivity assertions before commit;
+9. return the audit hash for the later attestation evidence.
+
+This in-transaction hash is the authoritative `duplicate_audit_sha256`.
+
+The R1 global snapshot hash is not reused as an identity duplicate hash.
+
+### 8.3 Provider qualification
+
+Every operator mapping statement and assertion must explicitly include:
+
+`provider = 'sportmonks'`
+
+Provider id values are not globally unique. Production already demonstrates collisions, e.g. provider team id `52` means different clubs in different providers.
+
+Existing-row promotion predicates must include:
+- `provider = 'sportmonks'`;
+- exact `provider_team_id`;
+- expected `team_id`;
+- expected `mapping_status = 'confirmed'`;
+- expected existing `mapping_confidence`;
+- one-row assertion.
+
+New mapping prechecks/inserts must include:
+- `provider = 'sportmonks'`;
+- exact provider ref;
+- exact proposed canonical id;
+- expected provider ref absent or the R4 race branch below.
+
+## 9. Concurrency and partial-failure rules
+
+### V3 race branch for R4
+
+If Sportmonks 52 or 676 is inserted by V3 before the operator insert:
+
+- if it points to the reviewed canonical team and is `confirmed`, do not insert;
+- route it through the exact R3 promotion path;
+- if it points anywhere else, stop and investigate;
+- never use `ON CONFLICT DO UPDATE` to force the reviewed answer.
+
+The same rule applies if V3 inserts any R5 target provider ref before its operator transaction.
+
+### Toto/import race
+
+The R4/R5 table locks make the audit atomic against concurrent Toto team creation and V3 mapping inserts during each short identity transaction.
+
+Per-identity transactions are retained for R5. One ambiguous identity must not roll back or contaminate verified siblings.
+
+A committed correct mapping with a failed later attestation is safe under D-058: it remains `mapping_unattested` and cannot enter V2 trusted reads.
+
+### Active round 264301 side effect
+
+Production round `264301` currently contains:
+
+- game 10: Bournemouth–Leeds, kickoff `2026-10-31T15:00:00Z`;
+- game 12: Getafe–Sevilla, kickoff `2026-11-01T13:00:00Z`.
+
+Adding Sportmonks 52/676 can let V3 create correct current-round fixture mappings on a later precompute cycle.
+
+This is not a V4 trust write, but it is a live production side effect.
+
+Default operational choice: **defer R4 for 52/676 until round 264301 is settled**. If an operator explicitly chooses to run it earlier, the operation note must record acceptance of this side effect and compare provider fixture mappings before/after.
+
+## 10. Attestation evidence contract
+
+Basis for all 25 identities:
 
 `multi_source_verified`
 
-Example team evidence:
+Evidence must never cite the V3-created Sportmonks mapping row itself as independent identity evidence.
+
+Each evidence object includes, as applicable:
+
+- A2-B artifact id and SHA-256;
+- provider fixture id and raw payload SHA-256;
+- exact official competition source;
+- independent API-Football / football-il mapping when available;
+- Toto/Winner fixture id or reviewed canonical row where applicable;
+- exact Telesport canonical-spelling source for new teams;
+- score anchor where available;
+- source local time, time zone and UTC conversion where kickoff is used;
+- immutable reconciliation-plan commit;
+- pre-write evidence retrieval timestamp/hash or archived minimal excerpt;
+- explicit operator Hebrew-English equivalence assertion when attaching an English provider identity to an existing Hebrew row;
+- authoritative in-transaction `duplicate_audit_sha256`;
+- reviewer/operator label.
+
+Example:
 
 ```json
 {
@@ -188,116 +379,221 @@ Example team evidence:
     {
       "kind": "official_competition",
       "source_key": "PL-MW"
+    },
+    {
+      "kind": "telesport_spelling",
+      "canonical_name": "מנצ'סטר יונייטד",
+      "source": "scripts/provider-spike.round-264101.json"
     }
   ],
   "reviewed_by": "kapiloto-v4-pilot-identity-reconciliation-2026-10-31",
-  "duplicate_audit_sha256": "<computed immediately before write>",
+  "duplicate_audit_sha256": "<hash returned by locked identity transaction>",
   "decision": "sportmonks:14 -> canonical Manchester United"
 }
 ```
 
-The duplicate audit hash is **not** precomputed in this document. It must be generated from the actual pre-write database snapshot, so a later catalog change cannot reuse a stale duplicate review.
+Every attestation RPC remains a separate transaction because D-058's first-write rule requires it.
 
-## 7. Write sequence if the plan is approved
+## 11. Maccabi Haifa–Hapoel Beer Sheva kickoff discrepancy — resolved
 
-### R1 — capture a pre-write reconciliation snapshot
+Sportmonks capture `19721180` stores:
 
-Read-only export of:
-- all 5 competition mappings;
-- all 20 target team mappings;
-- canonical team/alias candidates;
-- current Sportmonks injectivity report;
-- current readiness/conflict reports.
+`2026-10-26T17:30:00Z` = 19:30 Israel time.
 
-Hash the snapshot and record it in the operation note.
+The canonical Toto/IFA schedule held 19:00 Israel time = `17:00Z`.
+
+Contemporary reports establish that the match was originally scheduled for 19:00 and was delayed by 30 minutes on match day because of exceptional traffic around Sammy Ofer. It actually began at 19:30.
+
+Therefore:
+
+- Sportmonks is not evidence of a wrong fixture;
+- the canonical/Toto row represents scheduled time;
+- Sportmonks represents the updated actual kickoff;
+- this does not block ids 571 or 516;
+- this does not block competition 372;
+- the evidence must retain both timestamps and the reason;
+- fixture identity must continue to rely on pair/orientation/competition/date plus D-058 classification, never exact kickoff alone.
+
+Sources:
+- `https://www.ynet.co.il/sport/israelisoccer/article/syhul116nml`
+- `https://m.sport5.co.il/articles.aspx?FolderID=64&docID=565316&showHeader=false`
+
+This is a useful A2-B regression case for scheduled-vs-actual provider kickoff semantics.
+
+## 12. Reviewed execution sequence
+
+### R1 — global read-only snapshot
+
+**DONE.**
+
+Snapshot hash and counts are in §1.
+
+Before the first write, also freeze the minimal dynamic-web evidence pack used by the attestation sources, with retrieval timestamps and hashes/immutable excerpts.
 
 ### R2 — attest five competitions
 
-One RPC call / one transaction per competition.
+One RPC / one transaction per competition.
 
-Expected after R2:
+Preconditions:
+- mapping still exists;
+- still `manual_override`;
+- still points to reviewed canonical id;
+- no active attestation;
+- cross-provider evidence still agrees.
+
+Expected:
 - 5 active competition attestations;
-- no team attestation yet;
-- no mapping mutation;
-- no Match Ledger observation.
+- 5 competition attest events;
+- no team attestation;
+- no Match Ledger write.
 
-### R3 — promote the five existing team mappings
+### R3 — promote five existing team mappings
 
-One guarded operator transaction per row with exact expected-old predicates.
+One short guarded operator transaction per identity.
 
-Do **not** attest in the same transaction.
+- `SET LOCAL kapiloto.identity_operator = 'on'`;
+- provider-qualified exact-old predicates;
+- mapping status changes `confirmed -> manual_override`;
+- confidence is left unchanged;
+- assert one row;
+- do not attest in the same transaction.
 
-### R4 — create mappings for Bournemouth and Sevilla
+Then R6 may attest each successful identity separately.
 
-One operator transaction per identity.
+### R4 — attach Bournemouth and Sevilla
 
-Do not create a new canonical team.
+Default: defer until production round 264301 settles.
+
+For each:
+- locked atomic audit from §8;
+- if provider row remains absent: insert manual_override mapping with `mapping_confidence = NULL`;
+- if V3 inserted the reviewed confirmed row first: promote it instead;
+- add exact English Sportmonks alias if absent;
+- add reviewed punctuation alias where specified;
+- assert no injectivity/collision;
+- commit;
+- attest later via R6.
 
 ### R5 — create 13 canonical teams + mappings
 
-One operator transaction per identity.
+One identity per transaction.
 
-If any duplicate audit is ambiguous, stop that identity and leave it unresolved. Do not create it merely to complete the pilot.
+For each:
+- locked atomic audit from §8;
+- require no existing canonical/alias/provider candidate;
+- require Sportmonks ref absent;
+- create exactly one canonical row with the exact Telesport-evidenced Hebrew name and reviewed country;
+- insert English Sportmonks alias;
+- insert only reviewed Hebrew punctuation aliases;
+- insert mapping:
+  - provider = `sportmonks`;
+  - provider ref exact;
+  - `mapping_status = 'manual_override'`;
+  - `mapping_confidence = NULL`;
+  - provider name exact;
+  - `last_verified_at = statement_timestamp()`;
+- assert candidate uniqueness and Sportmonks injectivity again;
+- commit;
+- attest later via R6.
 
-### R6 — attest 20 teams
+Any ambiguity aborts only that identity.
 
-One attestation RPC / one transaction per team.
+### R6 — attest successful team identities
+
+One RPC / one transaction per team.
+
+No batch transaction.
+
+The evidence object uses the identity transaction's locked duplicate-audit hash.
 
 ### R7 — post-write validation
 
-Must all pass:
+Required assertions:
 
 - exactly 5 active pilot competition attestations;
-- exactly 20 active pilot team attestations;
-- all 25 corresponding mappings are `manual_override`;
+- exactly 20 active pilot team attestations only when all 20 identities have completed;
+- every pilot mapping is `manual_override`;
+- new manual mappings have confidence null; five legacy rows retain their old confidence;
+- exactly one initial `attest` event per completed identity, no unexpected refresh/revoke;
+- no `shadow_mapping_for_attested_canonical`;
 - no Sportmonks team/competition injectivity violation;
-- `provider_identity_attestation_conflicts('sportmonks')` has no blocking issue for the pilot refs;
-- `match_ledger_provider_ref_conflicts_v2('sportmonks')` remains empty;
-- Match Ledger observation count remains `0`;
-- V1 and V2 ingest remain revoked from `service_role`;
-- Stage 0 identity-mapping guards remain enabled.
+- no unexpected folded canonical/alias duplicate;
+- no `mint_without_mapping`;
+- provider-ref-conflicts V2 remains empty;
+- Match Ledger observations remain `0`;
+- V1/V2 ingest remain revoked from `service_role`;
+- Stage 0 guards remain enabled;
+- before/after counts for teams, aliases and mappings match the successful operation ledger;
+- if all 13 R5 creations succeed from the R1 baseline, canonical team count is exactly `64`.
 
-No fixture mapping should be created by R1–R7.
+After the next two natural precompute cycles and the next Toto round import:
+- rerun the duplicate/collision audit;
+- rerun readiness/conflict reports;
+- check that no canonical duplicate appeared.
 
-## 8. Explicit discrepancy: Maccabi Haifa–Hapoel Beer Sheva
+The operation note records, per identity:
+- step;
+- preconditions;
+- audit hash;
+- rows changed;
+- canonical id;
+- attestation event/generation;
+- result;
+- stop reason if failed.
 
-Sportmonks capture `19721180` records kickoff `2026-10-26 17:30:00` UTC.
+## 13. Rollback and recovery
 
-The Israel Football Association records the same Matchday 8 pair, orientation and date at **19:00 Israel time**, i.e. **17:00 UTC** on 2026-10-26.
+### Wrong mapping before attestation
 
-This 30-minute discrepancy is material and must stay visible.
+Correct or delete it under the D-057 operator override. It carries no D-058 trust without attestation.
 
-Decision proposed for review:
-- it does **not** block team identity attestation for Sportmonks ids 571/516 because identity is supported independently by existing canonical mappings, provider participant names, IFA team/fixture evidence and the competition mapping;
-- it **does** block treating capture `19721180` as an exact kickoff cross-check;
-- the discrepancy must be carried into PR #19/A2-B amendment and considered by the later fixture-identity pilot;
-- V2 ingest must still independently classify the canonical fixture under D-058 rather than inheriting trust from this reconciliation.
+### Wrong active attestation
 
-## 9. Items that remain outside this reconciliation
+1. revoke through the audited D-058 RPC;
+2. repair mapping in a separate operator transaction;
+3. re-attest in a new generation if corrected.
 
-This plan does not:
+### Newly created canonical team
 
-- enable V2 ingest;
-- create a `provider_ingest_run`;
-- create or change any provider fixture mapping;
-- persist any Match Ledger observation;
-- amend/run PR #19;
-- solve the uncovered squad-state/1A historical readers that still block M2B;
-- start a backfill.
+Delete only if:
+- unattested or already revoked;
+- no fixture/round/V4 row references it;
+- its mapping/aliases are removed.
 
-## 10. Review questions before any write
+Once a Toto fixture or other production row references the canonical team, do not try to erase history. Use revoke/re-point/re-attest recovery.
 
-Independent reviewers should answer:
+Attestation event history is retained.
 
-1. Are the 13 canonical creations justified, or does any proposed identity have a plausible existing canonical duplicate?
-2. Are the proposed Hebrew canonical names acceptable and consistent with the existing catalog?
-3. Is `multi_source_verified` appropriate for all 25 attestations?
-4. Are the official source anchors sufficient when combined with the captured Sportmonks fixture/participant ids?
-5. Does the 30-minute Maccabi Haifa–Hapoel Beer Sheva discrepancy block only fixture-time evidence, or should it block either team attestation?
-6. Should Bournemouth/Sevilla attach to the existing canonical ids shown above?
-7. Is one operator transaction per mapping/canonical creation plus one separate attestation RPC per identity the safest operational sequence?
-8. Is any additional pre-write injectivity or alias collision check required?
-9. Should any of the 13 new canonical teams use a different canonical spelling?
-10. Is there any reason to postpone competition attestations until team reconciliation is complete?
+## 14. Explicit M2B follow-up blocker: Toto identity lookup
 
-No write begins until these questions are resolved and the exact write plan is approved.
+The current Toto import matches teams by exact canonical name + country and ignores aliases. It can create a null-country duplicate for a cup/European appearance even when a league-country canonical team already exists.
+
+Before M2B historical Match Ledger activation, do one of:
+
+1. implement a reviewed alias-aware, country-tolerant Toto identity resolver with versioned semantics; or
+2. implement a standing post-import duplicate report/gate that blocks affected V4 consumers until resolved.
+
+This issue does not invalidate the 25 pilot identities. It is a downstream canonical-consistency blocker before historical ingest is activated.
+
+## 15. Final GO/NO-GO after independent reviews
+
+Identity decisions:
+
+- 5/5 competitions: **GO**
+- 5/5 existing team mapping promotions: **GO**
+- Bournemouth/Sevilla existing-canonical attachments: **GO identity decision**
+- 13/13 canonical creations: **GO identity decision**
+
+Operational execution:
+
+- R1: **DONE**
+- R2: **GO after dynamic source evidence pack is frozen**
+- R3: **GO after dynamic source evidence pack is frozen**
+- R4: **DEFER by default until round 264301 settles**, unless live V3 side effect is explicitly accepted
+- R5: **GO after dynamic source evidence pack is frozen and the exact locked transaction is reviewed immediately before execution**
+- R6: **GO only for identities whose preceding mapping/canonical step succeeded**
+- R7: mandatory
+
+M2B remains **NO-GO**.
+
+No provider ingest, provider-ingest run, fixture mapping, Match Ledger observation or backfill is authorized by this reconciliation plan.
