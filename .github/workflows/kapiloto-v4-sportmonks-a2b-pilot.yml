@@ -1,0 +1,74 @@
+name: Kapiloto V4 Sportmonks A2-B Pilot
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: Recent finished-fixture lookback for the provider-semantics sample
+        required: true
+        default: "45"
+        type: string
+      fixtures_per_league:
+        description: Recent finished fixtures sampled per reviewed competition
+        required: true
+        default: "2"
+        type: string
+      required_seasons:
+        description: Optional comma-separated LEAGUE_ID:SEASON_ID samples required before those seasons are backfilled
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
+      OUT_DIR: artifacts/kapiloto-v4-a2b
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Focused A2-B tests
+        run: npx tsx --test lib/kapiloto-v4/sportmonks-pilot.test.ts
+
+      - name: Verify provider token is configured
+        shell: bash
+        run: |
+          if [ -z "$SPORTMONKS_API_TOKEN" ]; then
+            echo "SPORTMONKS_API_TOKEN secret is required" >&2
+            exit 1
+          fi
+
+      - name: Run operator-dispatched real-payload pilot
+        run: >-
+          npm run pilot:sportmonks:a2b --
+          --out "$OUT_DIR"
+          --days "${{ inputs.days }}"
+          --fixtures-per-league "${{ inputs.fixtures_per_league }}"
+          --required-seasons "${{ inputs.required_seasons }}"
+
+      - name: Upload exact pilot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kapiloto-v4-sportmonks-a2b-pilot
+          path: artifacts/kapiloto-v4-a2b
+          if-no-files-found: error
+          retention-days: 14
