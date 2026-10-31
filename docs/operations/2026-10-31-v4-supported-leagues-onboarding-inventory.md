@@ -39,15 +39,15 @@ Production catalog/mapping counts on 2026-10-31:
 | Bundesliga | 18 | 8 | 8 | 4 | 10 | 0 |
 | La Liga | 20 | 15 | 9 | 3 | 5 | 6 |
 | Serie A | 20 | 11 | 10 | 4 | 9 | 1 |
-| Ligat Ha'al | 14 | 13 | 13 | 4 | 1 | 0 |
-| **Total** | **92** | **60** | **49** | **18** | **32** | **11** |
+| Ligat Ha'al | 14 | 14 | 14 | 14 | 0 | 0 |
+| **Total** | **92** | **61** | **50** | **28** | **31** | **11** |
 
 Interpretation:
 
-- **18** clubs are already through the reviewed V4 attestation path from the pilot.
-- **31** additional clubs already have a Sportmonks mapping but still need reviewed D-058 promotion/attestation for supported-league trust.
+- **28** clubs are now through the reviewed V4 attestation path.
+- **22** additional clubs already have a Sportmonks mapping but still need reviewed D-058 promotion/attestation for supported-league trust.
 - **11** clubs already exist canonically but need a Sportmonks mapping plus attestation.
-- **32** clubs do not yet exist canonically and require reviewed canonical creation, mapping, aliases and attestation.
+- **31** clubs do not yet exist canonically and require reviewed canonical creation, mapping, aliases and attestation.
 
 The counts above describe coverage only. A `confirmed` Sportmonks mapping is not trusted historical identity under D-058.
 
@@ -210,42 +210,34 @@ Atalanta, Fiorentina, Frosinone, Lecce.
 
 ## 7. Ligat Ha'al — 14 clubs
 
-Official 2026/27 table:
-Maccabi Tel Aviv, Hapoel Tel Aviv, Hapoel Be'er Sheva, Maccabi Haifa,
-Beitar Jerusalem, Maccabi Netanya, Bnei Sakhnin, Maccabi Petah Tikva,
-Hapoel Haifa, Hapoel Jerusalem, Hapoel Ramat Gan, Ironi Kiryat Shmona,
-Hapoel Petah Tikva, Ironi Tiberias.
+Official 2026/27 membership is now **identity-complete 14/14**.
 
-### Canonical missing — 1
+All 14 current clubs have:
+- one canonical team;
+- one reviewed Sportmonks mapping;
+- `manual_override` mapping status;
+- active D-058 V4 team attestation.
 
-- Maccabi Tel Aviv
+The final missing club, Maccabi Tel Aviv, was created on 2026-10-31 as:
+- canonical: `מכבי תל אביב`
+- canonical id: `ff73883e-6c8a-4840-98f6-f9683e967e31`
+- Sportmonks: `2997 / Maccabi Tel Aviv`
 
-### Canonical exists, Sportmonks mapping missing — 0
+The nine previously confirmed Sportmonks mappings were independently reviewed,
+promoted and attested. See:
+`docs/operations/2026-10-31-v4-ligat-haal-identity-onboarding-execution.md`.
 
-### Already Sportmonks mapped — 13
+Identity status: **complete**.
 
-- Hapoel Tel Aviv
-- Hapoel Be'er Sheva
-- Maccabi Haifa
-- Beitar Jerusalem
-- Maccabi Netanya
-- Bnei Sakhnin
-- Maccabi Petah Tikva
-- Hapoel Haifa
-- Hapoel Jerusalem
-- Hapoel Ramat Gan
-- Ironi Kiryat Shmona
-- Hapoel Petah Tikva
-- Ironi Tiberias
-
-Already V4-attested from the pilot:
-Hapoel Be'er Sheva, Maccabi Haifa, Beitar Jerusalem, Hapoel Petah Tikva.
+Registry status: **validating**, not yet `supported`.
+Remaining league-level gates are provider-family semantics/coverage and
+historical ingest quality for the V4 features that will be exposed.
 
 ## 8. Onboarding work classes
 
 ### Class A — existing canonical + existing Sportmonks mapping, not yet attested
 
-Count: **31**
+Count: **22**
 
 For each:
 - independently verify provider identity;
@@ -272,7 +264,7 @@ temporarily deferred because of the active Winner round 264301 V3 side effect.
 
 ### Class C — canonical team missing
 
-Count: **32**
+Count: **31**
 
 For each:
 - verify current official league membership;
@@ -313,14 +305,14 @@ Do not try to write all 74 remaining identities in one large batch.
 Recommended order:
 
 1. finish pilot R4 for Bournemouth/Sevilla after round 264301 settles;
-2. complete Ligat Ha'al (only one canonical creation remains, then attest the
-   nine existing mapped-but-unattested clubs);
-3. complete Premier League;
-4. complete Bundesliga;
-5. complete La Liga;
-6. complete Serie A;
+2. Ligat Ha'al identity onboarding — **DONE 14/14**;
+3. complete Premier League identity onboarding;
+4. complete Bundesliga identity onboarding;
+5. complete La Liga identity onboarding;
+6. complete Serie A identity onboarding;
 7. run full five-league collision/readiness audit;
-8. only then promote the five competitions from `validating` to `supported`.
+8. validate provider-family/history gates per league;
+9. only then promote each qualifying competition from `validating` to `supported`.
 
 This order gives a small first complete league and repeatedly exercises all
 three onboarding classes before the larger European catalogs are finished.
