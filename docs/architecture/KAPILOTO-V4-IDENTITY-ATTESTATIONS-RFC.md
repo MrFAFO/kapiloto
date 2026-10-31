@@ -39,17 +39,19 @@ Containment is not a final trust model. A V4 historical corpus must rely on evid
 
 Stage 1 must provide all of the following:
 
-1. **Independent trust ownership.** Historical-ingest trust is stored in V4-owned attestation state, not inferred from V3 `mapping_status` or `mapping_confidence`.
-2. **Mapping + attestation agreement.** An attestation is valid only while the current provider mapping points at the same canonical entity.
-3. **Injectivity at the trusted boundary.** One provider team id may attest one canonical team, and one canonical team may have at most one active attested id for that provider. Same for competitions.
-4. **Explicit re-pointing.** A canonical re-point requires explicit revocation and re-attestation. It must never happen as a side-effect of an upsert.
-5. **Fail closed.** Missing, revoked, conflicting or mismatched attestation quarantines ingest.
-6. **Auditable evidence.** Every attest/revoke/evidence-refresh action produces immutable history.
-7. **Stable concurrency semantics.** Ingest and attestation changes cannot race past each other.
-8. **Fixture trust independent of V3 confidence.** Existing fixture mappings are only accepted after canonical team/competition/orientation/kickoff re-validation.
-9. **Players remain separate.** Player bootstrap/merge semantics from 1A/A2-A are not changed by this stage.
-10. **Additive migration discipline.** Existing V1/V2/V3/V4 functions are not dropped or silently redefined when a versioned successor is safer.
-11. **Activation is separate.** Building Stage 1 does not itself re-enable historical ingest.
+1. **Independent trust ownership.** V4 attestation state is the trust root. V3 mapping confidence is never sufficient.
+2. **Stable mapping prerequisite.** For Stage 1 Sportmonks trust, the current team/competition mapping must be `manual_override` **and** agree with the V4 attestation. `manual_override` is necessary but never sufficient. Stage 0 makes this one mapping state stable against V3 automation; a V3-created `confirmed` row can therefore never regain trust by itself.
+3. **Trust enforced on write and read.** The ingest RPC gates new writes, and model-facing V2 readers exclude observations that lack sealed attestation provenance or whose attestation generation is later revoked/replaced.
+4. **Mapping + attestation agreement.** Current provider mapping and current V4 attestation must resolve the same canonical entity.
+5. **Injectivity at the trusted boundary.** One provider team id may attest one canonical team, and one canonical team may have at most one active attested id for that provider. Same for competitions.
+6. **Explicit re-pointing.** A canonical re-point requires revoke -> mapping correction -> re-attest in separate transactions. It never occurs through an upsert.
+7. **Auditable provenance.** Every attest/refresh/revoke action is immutable, and every V2-ingested observation seals the exact attestation generation/event used for league/home/away identity.
+8. **Recoverability.** Revocation immediately removes affected observations from model-facing V2 reads; an impact report and rehearsed recovery runbook identify and repair affected mappings/fixture chains.
+9. **Stable concurrency semantics.** Ingest and attestation mutation serialize through a provider-level advisory lock plus deterministic row locks.
+10. **Fixture trust independent of V3 confidence.** Existing fixture mappings are operational pointers only. They are accepted only if the same candidate algorithm would uniquely select that fixture from attested teams/competition/orientation/kickoff/status.
+11. **Players remain separate.** Player bootstrap/merge semantics from 1A/A2-A are unchanged.
+12. **Additive/versioned migration discipline.** Stage 1 adds V2 ingest/read/report functions; V1 contracts remain present and are not silently redefined.
+13. **Activation is separate and bounded.** M2A builds trust while ingest remains disabled. M2B later grants only the V2 ingest RPC, whose run scope explicitly allow-lists provider fixture ids.
 
 ---
 
@@ -78,53 +80,57 @@ The identity stack after Stage 1 is:
 provider payload
     |
     v
-V3 provider mapping row
-(provider_team_mappings / provider_competition_mappings)
+current Sportmonks mapping row
+(must be manual_override for team/competition)
     |
-    | must agree exactly
+    | exact canonical-id agreement
     v
-V4 active attestation
-(private current projection)
+V4 active attestation projection
     |
-    | immutable event history proves how it became trusted
+    | immutable generation/event history
     v
-historical-ingest identity trust
+V2 ingest identity trust
     |
+    | fixture uniqueness/fact validation
     v
-fixture fact validation
-(orientation + competition + kickoff)
+Match Ledger observation
     |
+    | seals league/home/away attestation event ids
     v
-Match Ledger ingest
+V2 historical readers
+    |
+    | require mapping + current generation + no revoke
+    v
+model/training corpus
 ```
 
-The mapping row remains useful operational data.
+The mapping row remains operational identity data. The attestation is the V4 trust statement. The sealed attestation provenance makes that trust auditable per observation.
 
-The attestation is the V4 trust statement.
-
-Neither is sufficient alone.
+Neither mapping nor attestation is sufficient alone. A direct 1A ledger write may continue to exist for internal/foundation use, but it has no Stage 1 attestation sidecar and therefore is excluded from model-facing V2 reads.
 
 ---
 
 ## 5. State model
 
-Use separate typed tables rather than one polymorphic table. This keeps foreign keys and injectivity constraints explicit.
+Use separate typed team and competition projections plus immutable event logs. This keeps foreign keys and active injectivity explicit while preserving complete history.
 
 ### 5.1 Current team attestation projection
 
-Proposed private table:
+Private table: `private.provider_team_identity_attestations`.
 
-`private.provider_team_identity_attestations`
-
-Columns:
+Core columns:
 
 ```text
-provider                    text
-provider_team_id            text
-team_id                     uuid -> public.teams(id)
+provider
+provider_team_id
+team_id                     uuid -> public.teams(id) ON DELETE NO ACTION
+attestation_generation_id   uuid
+attestation_version         integer
+latest_event_id             uuid
 attestation_basis           text
 evidence                    jsonb
-attestation_version         integer
+evidence_sha256             text
+first_attested_at           timestamptz
 attested_at                 timestamptz
 attested_by                 text
 ```
@@ -133,41 +139,20 @@ Constraints:
 
 - primary key `(provider, provider_team_id)`;
 - unique `(provider, team_id)`;
-- provider/id non-empty checks;
-- `attestation_version >= 1`;
-- `evidence` must be a JSON object;
-- closed `attestation_basis` set.
-
-The table is a **current projection**, not the historical audit log.
+- active canonical FK uses `ON DELETE NO ACTION`: a canonical row cannot disappear while attested;
+- version >= 1;
+- evidence must satisfy the contract in §6;
+- M2A RPCs initially accept `provider = 'sportmonks'` only; the tables may remain structurally provider-generic for a later migration.
 
 ### 5.2 Current competition attestation projection
 
-Proposed private table:
+`private.provider_competition_identity_attestations` has the analogous columns, with `competition_id -> public.competitions(id) ON DELETE NO ACTION`, primary key `(provider, provider_competition_id)` and unique `(provider, competition_id)`.
 
-`private.provider_competition_identity_attestations`
+The uniqueness is deliberately fail-closed. If a provider legitimately exposes several league ids for one canonical competition, Stage 1 requires an explicit later design rather than silently weakening injectivity.
 
-Columns:
+### 5.3 Immutable event history and generations
 
-```text
-provider
-provider_competition_id
-competition_id              uuid -> public.competitions(id)
-attestation_basis
-evidence
-attestation_version
-attested_at
-attested_by
-```
-
-Constraints:
-
-- primary key `(provider, provider_competition_id)`;
-- unique `(provider, competition_id)`;
-- same validation rules as teams.
-
-### 5.3 Immutable event history
-
-Use append-only event tables:
+Append-only tables:
 
 - `private.provider_team_identity_attestation_events`
 - `private.provider_competition_identity_attestation_events`
@@ -175,51 +160,64 @@ Use append-only event tables:
 Each event records:
 
 ```text
-id                          uuid
+id
 provider
 provider_entity_id
 canonical_entity_id
-event_kind                  attest | evidence_refresh | revoke
+attestation_generation_id
 attestation_version
+event_kind                  attest | evidence_refresh | revoke
 attestation_basis
 evidence
-recorded_at                 timestamptz
-actor
+evidence_sha256
+mapping_status_snapshot
+mapping_confidence_snapshot // null for competition
+provider_name_snapshot
+recorded_at                 // DB stamped
+actor_current_user
+attested_by_or_reviewer
+revoke_reason               // revoke only
 ```
 
 Rules:
 
-- event rows are immutable;
-- no update/delete/truncate;
-- `recorded_at` is database stamped;
-- event version is monotonic per `(provider, provider_entity_id)`;
-- a revoke event retains the canonical id that was revoked.
+- events have no FK to the canonical team/competition row; historical audit must survive later canonical cleanup;
+- unique `(provider, provider_entity_id, attestation_version)`;
+- version is globally monotonic for that provider ref: `max(event version)+1`, including after revoke;
+- first attest creates a new generation UUID;
+- evidence refresh stays in the same generation;
+- revoke closes that generation and removes the current projection;
+- re-attest after revoke starts a new generation UUID even if the canonical id is the same;
+- UPDATE/DELETE/TRUNCATE are impossible; INSERT is permitted only through the guarded RPC path.
 
-### Why current projection + immutable events?
+This generation rule is intentional: observations written under a revoked generation do **not** become trusted again merely because the same provider id is later re-attested.
 
-Pure append-only state is attractive, but enforcing active injectivity and making hot-path ingest checks simple becomes unnecessarily complex.
+### 5.4 Observation attestation provenance
 
-The current projection gives:
+Add an immutable ledger sidecar, analogous to sealed provider refs:
 
-- direct unique constraints;
-- fast deterministic reads;
-- simple mapping-agreement checks.
+`public.match_ledger_observation_identity_attestations`
 
-The event log gives:
+with one row for each `league`, `team_home`, `team_away` identity used by a V2 ingest:
 
-- full auditability;
-- explicit revocation history;
-- evidence evolution without rewriting history.
+```text
+observation_id
+ref_kind
+attestation_event_id
+attestation_generation_id
+provider_ref
+canonical_id
+```
 
-The current projection is allowed to change only through the Stage 1 RPCs.
+The V2 ingest writes these rows from the current projections in the same transaction as the observation annotations. They cannot be added, changed or deleted later for that observation version.
+
+A plain 1A write has no such rows and therefore cannot enter the Stage 1 model-facing corpus.
 
 ---
 
 ## 6. Attestation evidence
 
-`attestation_basis` is audit metadata, not a numeric confidence model.
-
-Proposed closed set:
+`attestation_basis` is audit metadata, not numeric trust. Initial closed values:
 
 - `operator_manual`
 - `cross_provider_verified`
@@ -227,21 +225,32 @@ Proposed closed set:
 - `fixture_identity_crosscheck`
 - `multi_source_verified`
 
-The exact set may change during review, but the following must remain true:
+Every evidence object must satisfy `kapiloto-provider-identity-attestation-evidence-v1` and contain at least:
 
-- no basis is assigned automatically from a V3 name match;
-- no numeric mapping confidence automatically creates an attestation;
-- evidence is operator/reconciliation evidence, not a replacement for the canonical mapping row;
-- stronger evidence for the **same canonical id** may refresh the current projection and append an `evidence_refresh` event;
-- stronger evidence may not silently re-point the canonical id.
+```text
+contract_version
+sources                    // non-empty array
+reviewed_by                // audit text, never authorization
+duplicate_audit_sha256     // 64 lowercase hex
+```
+
+Additional source-specific evidence is allowed, but total serialized evidence is capped at 64 KiB.
+
+Rules:
+
+- no V3 name match or numeric confidence can create evidence;
+- the RPC validates structure but does not pretend to rank evidence strength;
+- the projection always contains the **latest** accepted evidence for the active generation;
+- a refresh with identical basis + evidence hash is an idempotent no-op;
+- a changed evidence object for the same canonical id appends `evidence_refresh`, increments version and updates the projection;
+- changed evidence can never re-point the canonical id;
+- `duplicate_audit_sha256` proves that canonical-duplicate review was performed; the reconciliation workflow must surface same-normalized-name/alias candidates before attestation.
 
 ---
 
 ## 7. Write API
 
-Use explicit service-role-only RPCs.
-
-Proposed functions:
+Use explicit service-role-only SECURITY INVOKER RPCs:
 
 ```text
 public.provider_identity_attest_team(jsonb)
@@ -250,164 +259,158 @@ public.provider_identity_attest_competition(jsonb)
 public.provider_identity_revoke_competition(jsonb)
 ```
 
-All are:
+All use `search_path = ''`, are revoked from PUBLIC/anon/authenticated, and are initially limited to Sportmonks.
 
-- `SECURITY INVOKER`;
-- `search_path = ''`;
-- executable only by `service_role`;
-- unavailable to `public`, `anon`, `authenticated`.
+### 7.1 Transaction entry rule
 
-### 7.1 Attest semantics
+Attest/revoke must be the first write-capable operation of their transaction. Before taking row locks they reject if `pg_current_xact_id_if_assigned()` is already non-null.
+
+This prevents the deadlock pattern `mapping UPDATE -> attest` against an in-flight ingest. Mapping correction and attestation therefore occur in **separate transactions**; the gap fails closed.
+
+Each RPC uses a short local `lock_timeout` (initial proposal: 5s) so a forgotten operator transaction cannot indefinitely queue behind or block provider ingest.
+
+### 7.2 Attest semantics
 
 Team attestation:
 
-1. Require READ COMMITTED.
-2. Take the provider identity attestation advisory lock.
-3. Lock/read the matching `provider_team_mappings` row.
-4. Reject if mapping is missing.
-5. Reject if mapping `team_id` differs from requested `team_id`.
-6. Reject if the same `(provider, provider_team_id)` is actively attested to another canonical team.
-7. Reject if `(provider, team_id)` is actively attested to another provider team id.
-8. If the exact same attestation already exists:
-   - append `evidence_refresh`;
-   - update only evidence/basis/attested timestamp/version in the current projection.
-9. Otherwise:
-   - insert current attestation;
-   - append `attest` event.
+1. Require READ COMMITTED and provider `sportmonks`.
+2. Take the exclusive provider identity advisory lock.
+3. Lock/read the matching provider mapping.
+4. Reject missing mapping.
+5. Reject unless mapping status is exactly `manual_override`.
+6. Reject if mapped canonical id differs from requested canonical id.
+7. Reject active provider-id or canonical-target injectivity conflicts.
+8. Validate evidence contract and duplicate-audit hash.
+9. If same active canonical id and identical evidence hash+basis: return unchanged.
+10. If same active canonical id with changed evidence: append refresh event in the same generation and update the projection.
+11. If no active projection: create a new generation, append attest event and insert projection.
 
-Competition attestation is analogous.
+Competition semantics are analogous.
 
-### 7.2 Re-pointing
+Attestation does not automatically create a missing V3 mapping in M2A. The 15 unmapped pilot teams are first inserted/promoted through an explicit reviewed reconciliation step as `manual_override`, then attested. This keeps mapping creation and trust creation independently auditable.
 
-No attestation RPC accepts a new canonical id over an active different one.
+### 7.3 Re-pointing
+
+No attest RPC overwrites an active different canonical id.
 
 Required sequence:
 
 ```text
-revoke old attestation
--> explicitly correct provider mapping if needed
--> attest new canonical id
+transaction A: revoke old attestation with expected canonical id + reason
+transaction B: correct mapping under Stage 0 operator override, with expected old values in WHERE
+transaction C: attest the new canonical id
 ```
 
-The temporary gap is intentionally safe: ingest fails closed while no active attestation exists.
+### 7.4 Revoke semantics
 
-A future higher-level reconciliation RPC may make this workflow atomic, but Stage 1 does not need to hide the gap.
+Revoke requires:
 
-### 7.3 Revoke semantics
+- provider ref;
+- expected current canonical id;
+- non-empty reason.
 
-Revoke:
+It takes the same exclusive provider lock, verifies the expected active projection, appends a revoke event in the current generation, then removes the current projection. It never mutates the V3 mapping.
 
-1. Take the same provider identity lock.
-2. Require an active attestation.
-3. Append immutable `revoke` event.
-4. Remove the row from the current projection.
-
-It does **not** mutate the V3 mapping row.
+Revocation immediately makes that generation unusable by V2 historical readers, before any manual cleanup/re-ingest occurs.
 
 ---
 
 ## 8. DML protection
 
-The private current-projection tables should not be casually writable even by application code holding `service_role`.
+The RPC-only path is defense against accidental application writes, **not** a cryptographic boundary against a deliberately malicious `service_role` (which bypasses RLS).
 
-Proposed protection:
+Controls:
 
-- tables are in the unexposed `private` schema;
-- RLS enabled;
-- no privileges for `public`, `anon`, `authenticated`;
-- service role receives only the privileges required by the RPCs;
-- a private row-level guard rejects INSERT/UPDATE/DELETE unless a transaction-local flag such as
-  `kapiloto.identity_attestation_rpc = 'on'`
-  is set by the Stage 1 RPC;
-- event tables reject UPDATE/DELETE/TRUNCATE unconditionally using the existing V4 immutability helper.
+- projections/events live in `private`; production must confirm `private` is not a Data API exposed schema before M2A application;
+- RLS remains enabled for non-bypass roles but is not counted as protection from `service_role`;
+- no table privileges for public/anon/authenticated;
+- `service_role` receives minimum table privileges only: projection SELECT/INSERT/UPDATE/DELETE, event SELECT/INSERT; no TRUNCATE/REFERENCES/TRIGGER;
+- every new function explicitly revokes default PUBLIC execute;
+- projection DML and event INSERT require both:
+  1. a transaction-local internal flag set by the RPC; and
+  2. proof that the current backend holds the exclusive provider identity advisory lock;
+- the RPC sets the flag immediately before its own DML and clears it immediately after; exception paths clear it too;
+- event UPDATE/DELETE/TRUNCATE are rejected unconditionally.
 
-This is defense in depth. A database superuser/operator can still deliberately bypass application controls; that is an operational privilege, not an application trust path.
+`attested_by` / `reviewed_by` are audit text only. Events additionally record `current_user`; neither value authorizes anything.
 
 ---
 
 ## 9. Concurrency and lock order
 
-Attestation changes are rare operator actions. Prefer coarse correctness over lock complexity.
+Provider identity changes are rare, so Stage 1 intentionally uses one coarse lock per provider:
 
-Introduce one provider-level V4 identity lock:
+`kapiloto_v4_provider_identity:<provider>`
 
-```text
-kapiloto_v4_provider_identity:<provider>
-```
+- attest/revoke: exclusive;
+- V2 ingest: shared.
 
-Attestation/revoke RPCs take it **exclusive**.
+### 9.1 V2 ingest order
 
-Historical ingest takes it **shared**.
+1. existing provider-fixture advisory lock, exclusive;
+2. provider-identity advisory lock, shared, with bounded lock timeout;
+3. competition mapping row `FOR SHARE`;
+4. competition attestation projection row `FOR SHARE`;
+5. both team mapping rows `FOR SHARE`, ordered by provider id COLLATE C;
+6. both team attestation projection rows `FOR SHARE` in the same deterministic order;
+7. existing provider fixture mapping row `FOR SHARE` if present;
+8. unordered canonical team-pair advisory lock on **both** existing-mapping and no-mapping paths;
+9. candidate provider-mapping rows `FOR SHARE` in deterministic provider-fixture order;
+10. selected canonical fixture row `FOR SHARE` before validating mutable fixture facts/status;
+11. attach/mint writes;
+12. existing 1A fixture/provider advisory lock;
+13. player identity lock.
 
-Proposed ingest lock order becomes:
+### 9.2 Attest/revoke order
 
-1. existing 1A provider-fixture advisory lock;
-2. V4 provider-identity advisory lock, shared;
-3. competition mapping row;
-4. team mapping rows in deterministic provider-id order;
-5. existing fixture mapping row if present;
-6. existing team-pair/candidate fixture locks;
-7. attach/mint writes;
-8. existing 1A fixture/provider lock;
-9. player identity lock.
+1. first-write-of-transaction check;
+2. exclusive provider-identity lock with short lock timeout;
+3. relevant mapping row `FOR SHARE`;
+4. current projection row `FOR UPDATE` when present;
+5. canonical-row FK check/lock;
+6. guarded event/projection writes.
 
-Attestation RPCs take:
+An operator mapping correction must not call attest in the same transaction. That would create the row-lock/advisory-lock cycle identified in review.
 
-1. V4 provider-identity lock, exclusive;
-2. relevant mapping/current-attestation rows.
-
-They do not take the provider-fixture lock.
-
-This avoids a cycle with ingest while ensuring an attestation cannot be revoked or changed during one ingest transaction.
-
-A concurrency test must prove:
-
-- an in-flight ingest snapshot cannot see half of an attestation change;
-- revoke/reattest waits for an ingest that already holds the shared provider lock;
-- an ingest that starts after revoke sees no active trust and quarantines.
+PGlite cannot prove cross-session waiting. Tests must prove lock mode/order through catalog/plan evidence, matching A2-A's existing approach; an optional real-Postgres two-session test may supplement it.
 
 ---
 
 ## 10. Historical-ingest trust functions
 
-Do **not** globally redefine `private.provider_mapping_trusted(status, confidence)`.
+Do not redefine `private.provider_mapping_trusted(status, confidence)`. V1 remains inspectable and permanently revoked for ingest activation.
 
-That helper still has legacy meaning for fixture/player-adjacent A2-A code and changing it globally risks unintended player/bootstrap effects.
+Add Stage 1 helpers for teams and competitions. A team/competition identity is trusted only when all are true:
 
-Add new explicit helpers:
+1. current mapping exists;
+2. mapping status is exactly `manual_override`;
+3. current active attestation exists;
+4. mapping and attestation canonical ids agree with the requested id;
+5. projection generation is current and not revoked.
+
+Proposed helpers:
 
 ```text
-private.provider_team_attestation_matches(
-  provider,
-  provider_team_id,
-  team_id
-) -> boolean
-
-private.provider_competition_attestation_matches(
-  provider,
-  provider_competition_id,
-  competition_id
-) -> boolean
+private.provider_team_attestation_matches(provider, provider_team_id, team_id)
+private.provider_competition_attestation_matches(provider, provider_competition_id, competition_id)
 ```
 
-A match means:
+`confirmed`, even at confidence 1, is never sufficient after Stage 1. `unverified` is never trusted.
 
-1. the current mapping row exists;
-2. the current attestation exists;
-3. both point to the same requested canonical id.
+This deliberately uses one V3 column only in the safe direction: Stage 0 makes `manual_override` stable against automation, while V3 insert-only bootstrap always creates `confirmed` weak evidence. Therefore deleting an attested mapping and letting V3 re-insert it cannot silently restore trust.
 
-The ingest RPC should resolve the mapping first, then require attestation agreement.
-
-New/updated quarantine reasons should distinguish:
+New V2 quarantine reasons distinguish at least:
 
 ```text
 team_attestation_missing
 team_attestation_mismatch
+team_mapping_not_manual_override
 competition_attestation_missing
 competition_attestation_mismatch
+competition_mapping_not_manual_override
 ```
 
-Do not collapse these back to generic `team_untrusted` / `competition_untrusted`; the new codes make reconciliation diagnosable.
+Player bootstrap does not call these helpers and remains unchanged.
 
 ---
 
