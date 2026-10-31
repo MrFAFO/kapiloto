@@ -589,6 +589,54 @@ Before Gate 5 is complete:
 - attest both separately;
 - rerun full R7 and the post-import duplicate audit.
 
+### Gate 5B — Supported Competition Registry for V4 launch (D-059)
+
+V4's first user-facing release is intentionally scoped to a reviewed set of
+supported competitions rather than attempting autonomous identity creation for
+arbitrary world football.
+
+Initial supported competitions:
+
+1. Premier League — Sportmonks 8
+2. Bundesliga — Sportmonks 82
+3. La Liga — Sportmonks 564
+4. Serie A — Sportmonks 384
+5. Ligat Ha'al — Sportmonks 372
+
+Product rule: a normal user may request full V4 analysis only for fixtures in a
+competition whose registry state is `supported`. A fixture outside the
+supported registry is not silently bootstrapped into the canonical catalog in
+V1; the product should state that the competition is not yet supported.
+
+Registry lifecycle:
+
+`candidate -> validating -> supported -> paused`
+
+A competition reaches `supported` only after:
+
+- provider entitlement and competition identity are verified;
+- all current member clubs required for user-facing coverage have canonical
+  identities;
+- provider mappings/aliases are reconciled without duplicates;
+- identity attestations are complete under the active V4 trust contract;
+- historical family coverage and parser semantics are validated sufficiently
+  for the features the product will expose;
+- conflict/readiness reports are clean for the supported scope;
+- a documented rollback/pause path exists.
+
+Team bootstrap inside V1 is therefore a **league-onboarding operation**, not a
+per-user runtime operation. When a new league is added later, Kapiloto performs
+the same reviewed onboarding for that league and its clubs, then promotes the
+competition to `supported`.
+
+The canonical catalog does not need to contain every club in world football.
+It needs complete, reviewed identity coverage for the competitions currently
+advertised as supported.
+
+The future autonomous Identity Bootstrap / Reconciliation service remains a
+possible later expansion, but it is **not a launch blocker and not required for
+V4 V1**.
+
 ### Gate 6 — tiny real Match Ledger ingest
 
 Only after M2A is applied, team reconciliation is done and M2B is reviewed,
@@ -737,6 +785,11 @@ Only validated challengers are promoted.
 
 V4 should reach production influence gradually, by versioned component/arm, not as a single "turn V4 on" switch.
 
+Hard product gate: general user-facing V4 activation is restricted to
+competitions whose D-059 Supported Competition Registry state is `supported`.
+V1 does not promise arbitrary world-football coverage. Unsupported
+competitions remain unavailable until their league onboarding is completed.
+
 Preserve:
 
 - frozen V1/V2/V3 replay;
@@ -748,6 +801,10 @@ Preserve:
 
 As of the snapshot date:
 
+- the D-059 Supported Competition Registry and full-club onboarding for the
+  five launch competitions are not complete yet; current pilot reconciliation
+  covers only the pilot identity subset, not the full membership of all five
+  leagues;
 - no broad Sportmonks historical backfill;
 - no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A is applied in production, V1 and V2 ingest remain non-executable by `service_role`, and only the separate M2B migration may grant V2;
 - pilot identity reconciliation is **not fully complete**: 18/20 pilot teams
@@ -844,7 +901,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Pilot reconciliation is at 5/5 competitions and 18/20 teams with 0 Match Ledger observations; R4 for Sportmonks 52 Bournemouth and 676 Sevilla is deliberately deferred until Winner round 264301 settles. After R4/full R7, amend/re-run A2-B and close the remaining M2B readiness gates before the first real Match Ledger ingest.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Pilot reconciliation is at 5/5 competitions and 18/20 pilot teams with 0 Match Ledger observations; R4 for Sportmonks 52 Bournemouth and 676 Sevilla is deliberately deferred until Winner round 264301 settles. D-059 now scopes V4 V1 to five supported competitions (Premier League, Bundesliga, La Liga, Serie A, Ligat Ha'al); before user-facing launch, complete reviewed onboarding for every required club in those five leagues. After R4/full R7, amend/re-run A2-B and close the remaining M2B readiness gates before the first real Match Ledger ingest.
 
 ## 15. Updating this file
 

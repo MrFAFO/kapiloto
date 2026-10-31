@@ -431,3 +431,62 @@ Implementation status:
 Details: `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md`.
 
 Reason: A historical training corpus cannot rely on mutable V3 confidence/status or write-time checks alone. Trust must be independently owned, auditable per observation, revocable at read time, recoverable after mistakes, and activated only through a deliberately bounded pilot.
+
+
+## D-059 — Supported Competition Registry and manual league onboarding for V4 V1
+Decision:
+- **Initial product scope.** The first user-facing V4 release supports exactly
+  five reviewed competitions:
+  - Premier League — Sportmonks 8
+  - Bundesliga — Sportmonks 82
+  - La Liga — Sportmonks 564
+  - Serie A — Sportmonks 384
+  - Ligat Ha'al — Sportmonks 372
+- **Supported-universe model.** V4 V1 does not claim arbitrary world-football
+  coverage. Full structured analysis is available only when the fixture's
+  competition is in the Supported Competition Registry with state
+  `supported`.
+- **Registry lifecycle.** Competition onboarding uses:
+  `candidate -> validating -> supported -> paused`.
+- **Manual expansion.** New leagues are added deliberately by Kapiloto
+  operators/developers. Adding a league means onboarding the league as a whole:
+  provider entitlement/identity, current club identities, aliases/provider
+  mappings, attestations, duplicate/injectivity checks, data-family coverage,
+  parser semantics, readiness/conflict checks and rollback/pause behavior.
+  Only after those gates pass is the league promoted to `supported`.
+- **Complete club coverage inside supported leagues.** A supported league must
+  not depend on a user being the first person to discover an unseen club.
+  Before user-facing support is advertised, all clubs required for the current
+  league membership and intended product coverage must have reviewed canonical
+  identities and provider mappings under the active V4 trust contract.
+- **Unsupported requests.** If a user requests a fixture outside the supported
+  registry, V1 must not silently create canonical teams/competitions at
+  runtime. The product reports that the competition is not yet supported.
+- **No world catalog requirement.** Kapiloto's canonical catalog is allowed to
+  remain incomplete outside supported competitions. This is intentional and
+  reduces identity and historical-data risk.
+- **Future option.** Autonomous on-demand Identity Bootstrap / Reconciliation
+  may be added later. It is no longer a V1 launch requirement and is not a
+  blocker for general user-facing activation within the supported five-league
+  universe.
+- **D-058 compatibility.** Historical structured data still requires the
+  active D-058 trust contract. D-059 scopes which competitions are exposed to
+  users; it does not weaken mapping, attestation, provenance or ingest gates.
+
+Launch requirements for each supported competition:
+- competition identity/entitlement verified;
+- current member clubs fully onboarded for intended coverage;
+- duplicate/injectivity checks clean;
+- active trusted mappings/attestations complete;
+- provider family semantics and historical coverage validated for exposed
+  features;
+- readiness/conflict reports clean for the supported scope;
+- pause/rollback procedure documented and tested.
+
+Reason: the first production release benefits more from a small, complete and
+well-tested football universe than from attempting to resolve every club and
+league dynamically. Five fully supported leagues give users automatic behavior
+inside a clearly defined scope while keeping identity, data quality and
+historical model inputs controllable. New leagues can be added incrementally
+after the same onboarding gates pass.
+
