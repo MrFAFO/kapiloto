@@ -381,6 +381,14 @@ begin
       is distinct from (old.provider, old.provider_team_id, old.team_id, old.attestation_generation_id, old.first_attested_at) then
     raise exception 'an attestation keeps its provider ref, canonical team and generation; revoke and re-attest instead';
   end if;
+  -- A revoked generation is closed for good: it is never reactivated, not
+  -- even by re-inserting its old attest event as the current projection.
+  if exists (
+    select 1 from private.provider_team_identity_attestation_events e
+    where e.attestation_generation_id = new.attestation_generation_id and e.event_kind = 'revoke'
+  ) then
+    raise exception 'attestation generation % of provider team % is revoked and cannot be reactivated', new.attestation_generation_id, new.provider_team_id;
+  end if;
   if not exists (
     select 1 from private.provider_team_identity_attestation_events e
     where e.id = new.latest_event_id and e.event_kind <> 'revoke'
@@ -411,6 +419,12 @@ begin
   if tg_op = 'UPDATE' and (new.provider, new.provider_competition_id, new.competition_id, new.attestation_generation_id, new.first_attested_at)
       is distinct from (old.provider, old.provider_competition_id, old.competition_id, old.attestation_generation_id, old.first_attested_at) then
     raise exception 'an attestation keeps its provider ref, canonical competition and generation; revoke and re-attest instead';
+  end if;
+  if exists (
+    select 1 from private.provider_competition_identity_attestation_events e
+    where e.attestation_generation_id = new.attestation_generation_id and e.event_kind = 'revoke'
+  ) then
+    raise exception 'attestation generation % of provider competition % is revoked and cannot be reactivated', new.attestation_generation_id, new.provider_competition_id;
   end if;
   if not exists (
     select 1 from private.provider_competition_identity_attestation_events e
@@ -615,10 +629,11 @@ $$;
 -- current projection (not revoked, not replaced), and the current mapping
 -- must be manual_override and agree. Worst issue wins:
 --   attestation_missing > generation_revoked > attestation_generation_stale
---   > mapping_not_manual_override > mapping_disagrees.
+--   > mapping_missing > mapping_not_manual_override > mapping_disagrees.
 -- generation_revoked: the sealed generation was revoked and no attestation is
 -- active now. attestation_generation_stale: it was revoked and a different
 -- generation is active now (re-attested; recovery/re-ingest needed).
+-- mapping_missing: the V3 mapping row no longer exists.
 create or replace function private.match_ledger_observation_attestation_issue(p_observation_id uuid)
 returns text
 language plpgsql
@@ -697,14 +712,16 @@ begin
         when v_projection_generation is null then 'generation_revoked'
         when v_revoked or v_projection_generation <> v_ref.attestation_generation_id
           or v_projection_canonical <> v_ref.canonical_id then 'attestation_generation_stale'
-        when v_mapping_status is distinct from 'manual_override' then 'mapping_not_manual_override'
+        when v_mapping_status is null then 'mapping_missing'
+        when v_mapping_status <> 'manual_override' then 'mapping_not_manual_override'
         when v_mapping_canonical <> v_ref.canonical_id then 'mapping_disagrees'
       end;
     end if;
     v_rank := case v_issue
-      when 'attestation_missing' then 5
-      when 'generation_revoked' then 4
-      when 'attestation_generation_stale' then 3
+      when 'attestation_missing' then 6
+      when 'generation_revoked' then 5
+      when 'attestation_generation_stale' then 4
+      when 'mapping_missing' then 3
       when 'mapping_not_manual_override' then 2
       when 'mapping_disagrees' then 1
       else 0
@@ -1656,6 +1673,20 @@ begin
     v_fixture_id := v_candidate;
     v_resolution := 'attached';
   else
+    -- A2-A mint provenance allows one mint per provider fixture id. A chain
+    -- that was withdrawn and whose mapping was removed (recovery) cannot be
+    -- minted again: the operator attaches it to a reviewed canonical fixture
+    -- instead. An audited quarantine, not an exception.
+    if exists (
+      select 1 from public.match_ledger_fixture_mints mi
+      where mi.provider = v.provider and mi.provider_fixture_id = v.provider_fixture_id
+    ) then
+      return private.provider_ingest_result(v.run_id, v.provider, v.provider_fixture_id, 'quarantined',
+        'fixture_mint_exists', null, null,
+        jsonb_build_object('minted_fixture_id', (select mi.fixture_id from public.match_ledger_fixture_mints mi
+                                                 where mi.provider = v.provider and mi.provider_fixture_id = v.provider_fixture_id)),
+        null, v_flags);
+    end if;
     v_mint := coalesce(p_observation->'fixture_mint', '{}'::jsonb);
     if v_mint->>'kickoff_before' is not null and v_run.fixture_mint_kickoff_before is not null
       and (v_mint->>'kickoff_before')::timestamptz > v_run.fixture_mint_kickoff_before then
@@ -2051,7 +2082,7 @@ $$;
 -- Trust-aware retrospective exclusions: the V1 reasons (later_correction,
 -- later_withdrawal) plus the trust reasons of the version the training read
 -- would otherwise select (attestation_missing, generation_revoked,
--- attestation_generation_stale, mapping_not_manual_override,
+-- attestation_generation_stale, mapping_missing, mapping_not_manual_override,
 -- mapping_disagrees). Same filters as the V2 training read.
 create or replace function private.match_ledger_retrospective_exclusions_v2(
   p_provider text,
@@ -2123,6 +2154,10 @@ $$;
 --   shadow_mapping_for_attested_canonical           blocking, warning when the
 --                                                   shadow row is unverified
 --   mapping_unattested                              info (reconciliation worklist)
+--   mint_without_mapping                            warning: a fixture this
+--     provider's ingest minted no longer has its provider fixture mapping
+--     (a withdrawn chain under recovery; entity_kind 'fixture', provider_ref
+--     is the provider fixture id, mapping_canonical_id the minted fixture)
 -- ---------------------------------------------------------------------------
 
 create or replace function public.provider_identity_attestation_conflicts(p_provider text)
@@ -2182,6 +2217,13 @@ as $$
     from map m
     left join att a on a.kind = m.kind and a.ref = m.ref
     where a.ref is null
+    union all
+    select 'mint_without_mapping', 'warning', 'fixture', mi.provider_fixture_id, null, null, mi.fixture_id, null, null
+    from public.match_ledger_fixture_mints mi
+    where mi.provider = p_provider
+      and not exists (
+        select 1 from public.provider_fixture_mappings pm
+        where pm.provider = mi.provider and pm.provider_fixture_id = mi.provider_fixture_id and pm.fixture_id = mi.fixture_id)
   )
   select i.code, i.sev, i.kind, i.ref, i.canonical, i.generation, i.map_canonical, i.map_status, i.related
   from issues i

@@ -428,7 +428,12 @@ phases and player semantics, plus:
   the current ones and 1A finds the football content unchanged, the call
   quarantines `attestation_generation_stale` (phase 2 rolled back) instead of
   returning `unchanged`. Changed content records a new version under the
-  current generations;
+  current generations. A family-status upgrade with no content change is the
+  A2-A `family_status_drift` quarantine and takes precedence; neither writes;
+- a second mint for the same provider fixture id (A2-A mint provenance is
+  unique per `(provider, provider_fixture_id)`) quarantines
+  `fixture_mint_exists` with the minted fixture id in the detail, before any
+  write;
 - the post-write re-check covers mappings, projections (same generations),
   the fixture mapping, the fixture's facts and the candidate window.
 
@@ -437,7 +442,11 @@ mapping, competition projection, team mappings, team projections (sorted),
 incoming fixture mapping, team-pair advisory, candidate mapping rows, selected
 fixture row, writes, 1A fixture/provider advisory, players identity. Attest
 takes the provider identity lock exclusive first and none of the ingest-only
-locks, so the two cannot form a cycle. Accepted residual: the Toto import
+locks, so the two cannot form a cycle. The function-level 5 s `lock_timeout`
+bounds every wait of a V2 call, including the provider-fixture advisory lock:
+two concurrent V2 calls for the same provider fixture id no longer serialize
+as V1 did; the second fails after 5 s and the caller retries. Accepted
+residual: the Toto import
 takes no pair lock and can insert a brand-new duplicate fixture while an
 existing-mapping ingest is in flight (no row exists to lock); that equals
 "ingest first, import second", and the next attempt quarantines.
@@ -456,8 +465,8 @@ generation at once; re-attesting the same team opens a new generation and does
 not bring old observations back. `match_ledger_retrospective_training_exclusions_v2`
 keeps `later_correction` / `later_withdrawal` and adds `attestation_missing`,
 `generation_revoked` (revoked, nothing active), `attestation_generation_stale`
-(revoked and re-attested), `mapping_not_manual_override` and
-`mapping_disagrees`. Recovery written as a later version is available only from
+(revoked and re-attested), `mapping_missing`, `mapping_not_manual_override`
+and `mapping_disagrees`. Recovery written as a later version is available only from
 its real `first_seen_at`: availability policy V1 backdates version 1 only.
 
 **Reports.**
@@ -466,7 +475,11 @@ its real `first_seen_at`: availability policy V1 backdates version 1 only.
   with zero observations. Blocking: `attested_mapping_missing`,
   `attested_mapping_disagrees`, `attested_mapping_not_manual_override`,
   `shadow_mapping_for_attested_canonical` (warning when the shadow row is
-  `unverified`). Info: `mapping_unattested`.
+  `unverified`). Warning: `mint_without_mapping` (`entity_kind = 'fixture'`,
+  `provider_ref` = the provider fixture id, `mapping_canonical_id` = the minted
+  fixture): a fixture this provider's ingest minted no longer has its provider
+  fixture mapping, i.e. a withdrawn chain under recovery. Info:
+  `mapping_unattested`.
 - `match_ledger_provider_ref_conflicts_v2(provider)`: observation level, per
   ref: `*_mapping_missing`, `*_mapping_not_manual_override`,
   `*_attestation_missing`, `*_mapping_attestation_mismatch`,
@@ -497,11 +510,16 @@ withdraw affected chains through the 1A withdrawal, delete or re-point the
 fixture mapping as an operator with the expected old value in the predicate,
 correct the team/competition mapping in its own transaction, attest the right
 identity (new generation), re-ingest under an allow-listed run. Tested end to
-end for attaching to an existing correct canonical fixture. **Open item:** a
-chain V2 wrongly minted cannot be re-minted under the same provider fixture
-id, because the applied A2-A `match_ledger_fixture_mints` is unique per
-`(provider, provider_fixture_id)`; the call fails closed. This needs a
-reviewed decision before the recovery rehearsal (M2B readiness).
+end for attaching to an existing correct canonical fixture.
+
+A chain V2 wrongly **minted** is never minted again: the applied A2-A
+`match_ledger_fixture_mints` is unique per `(provider, provider_fixture_id)`,
+and V2 quarantines `fixture_mint_exists`. Recovery of a minted chain is: the
+operator creates the reviewed canonical `fixtures` row (correct teams,
+competition, kickoff, `finished`), and the re-ingest attaches to it (tested).
+The wrongly minted fixture remains a historical orphan with a withdrawn chain
+and no provider mapping; the readiness report lists it as
+`mint_without_mapping` until an operator decision about the orphan row.
 
 ### Canonical identity rules
 

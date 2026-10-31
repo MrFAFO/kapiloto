@@ -99,6 +99,7 @@ export const PROVIDER_INGEST_V2_QUARANTINE_CODES = [
   "fixture_mapping_possible_postponement",
   "fixture_mapping_reschedule_conflict",
   "fixture_candidate_changed",
+  "fixture_mint_exists",
   "attestation_generation_stale",
 ] as const;
 
@@ -404,8 +405,9 @@ export function buildProviderMatchObservationPayload(observation: ProviderMatchO
 }
 
 /**
- * Validates, then calls the frozen A2-A RPC public.match_ledger_ingest_provider_fixture.
- * Not executable by service_role (D-057, D-058); use recordProviderMatchObservationV2.
+ * @deprecated Calls the frozen A2-A RPC public.match_ledger_ingest_provider_fixture,
+ * which is permanently revoked from service_role (D-057, D-058): in production
+ * it fails with permission denied. Use recordProviderMatchObservationV2.
  */
 export async function recordProviderMatchObservation(
   rpc: ProviderIngestRpc,

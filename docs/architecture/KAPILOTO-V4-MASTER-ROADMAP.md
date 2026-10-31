@@ -494,13 +494,12 @@ D-058 accepted the architecture. M2A is implemented on
 Next: independent code/migration review, merge, production `private`
 exposed-schema check, then apply M2A. Ingest stays disabled until M2B.
 
-Open item found while implementing (to decide before the recovery rehearsal,
-not an M2A blocker): a chain that V2 wrongly **minted** cannot be re-minted
-under the same provider fixture id, because the applied A2-A
-`match_ledger_fixture_mints` table is unique per `(provider,
-provider_fixture_id)`. Recovery by attaching to an existing correct canonical
-fixture works and is tested; recovery of a minted chain needs a reviewed
-decision.
+Recovery of a chain that V2 wrongly **minted**: it is never minted again
+(the applied A2-A `match_ledger_fixture_mints` is unique per
+`(provider, provider_fixture_id)`; V2 quarantines `fixture_mint_exists`). The
+operator creates the reviewed canonical fixture row and the re-ingest attaches
+to it; the orphaned mint is reported as `mint_without_mapping`. Both paths are
+tested; the runbook rehearsal before M2B covers them.
 
 ### Gate 4 — amend A2-B pilot tooling
 

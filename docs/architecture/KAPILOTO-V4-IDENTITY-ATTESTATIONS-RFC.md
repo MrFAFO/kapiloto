@@ -993,8 +993,9 @@ details; they do not change the architecture above.
   whitespace do not change it.
 - **Projection consistency** is trigger-enforced: a projection row always
   equals its latest non-revoke event, never changes provider ref, canonical id,
-  generation or `first_attested_at` in place, and is deleted only after its
-  generation's revoke event.
+  generation or `first_attested_at` in place, is deleted only after its
+  generation's revoke event, and a generation that has a revoke event can never
+  be inserted or updated as the current projection again.
 - **Sidecar check** requires the projection's current (latest) event; an
   older event of the same generation (before an evidence refresh) is refused.
 - **Stale generation (§13.2).** 1A remains the only content-hash authority:
@@ -1010,19 +1011,29 @@ details; they do not change the architecture above.
   `_provider_identity_conflict`, `_candidate_ambiguous`,
   `_competition_unknown`, `_possible_postponement`, `_reschedule_conflict`
   (all `fixture_mapping_*`); `fixture_candidate_changed` (attach target moved
-  under the lock); `attestation_generation_stale`. A2-A codes for
+  under the lock); `fixture_mint_exists` (a mint already exists for the
+  provider fixture id); `attestation_generation_stale`. A family-status
+  upgrade with no content change is `family_status_drift` and takes precedence
+  over the stale generation. A2-A codes for
   unmapped identities, the no-mapping candidate path, drift, families and
   players are kept.
-- **Exclusion reasons (§14.6)** add `mapping_disagrees` next to the four
-  listed. `generation_revoked` means revoked with nothing active now;
-  `attestation_generation_stale` means revoked and re-attested.
+- **Exclusion reasons (§14.6)** add `mapping_missing` and `mapping_disagrees`
+  next to the four listed. `generation_revoked` means revoked with nothing
+  active now; `attestation_generation_stale` means revoked and re-attested.
+- **Readiness report (§14.2)** also reports `mint_without_mapping` (warning,
+  `entity_kind = 'fixture'`): a minted fixture whose provider mapping is gone,
+  i.e. a withdrawn chain under recovery.
+- **Lock timeout.** The function-level 5 s `lock_timeout` bounds every wait of
+  a V2 call, including the provider-fixture advisory lock, so two concurrent
+  V2 calls for one provider fixture id no longer serialize as V1 did.
 - **Reconciliation V2 (§14.3)** also reports `*_mapping_not_manual_override`
   and `*_attestation_generation_stale`.
 - **Run row immutability.** `provider_ingest_runs` (A2-A) is already
   immutable, so a reviewed allowlist cannot be widened after creation.
-- **Open item for the recovery rehearsal (§14.5), not an M2A blocker.** A
-  chain V2 wrongly **minted** cannot be re-minted under the same provider
-  fixture id: the applied A2-A `match_ledger_fixture_mints` is unique per
-  `(provider, provider_fixture_id)`, and the re-ingest fails closed. Recovery
-  by attaching to an existing correct canonical fixture works and is tested.
-  Minted-chain recovery needs a reviewed decision before M2B readiness.
+- **Minted-chain recovery (§14.5).** A chain V2 wrongly **minted** is never
+  minted again: the applied A2-A `match_ledger_fixture_mints` is unique per
+  `(provider, provider_fixture_id)`, and V2 quarantines `fixture_mint_exists`.
+  Recovery is: the operator creates the reviewed canonical fixture row, and the
+  re-ingest attaches to it (tested end to end). The orphaned mint stays
+  reported as `mint_without_mapping` until an operator decision about the
+  orphan row. The runbook rehearsal before M2B covers this path.

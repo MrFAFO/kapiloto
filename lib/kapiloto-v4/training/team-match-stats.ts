@@ -97,6 +97,7 @@ export const RETROSPECTIVE_EXCLUSION_V2_REASONS = [
   "attestation_missing",
   "generation_revoked",
   "attestation_generation_stale",
+  "mapping_missing",
   "mapping_not_manual_override",
   "mapping_disagrees",
 ] as const;

@@ -15,10 +15,11 @@ import {
   canonicalFixtureFor,
   ingestV2,
   operatorSql,
+  revokeCompetition,
   revokeTeam,
   type AttestedWorld,
 } from "./test-support/attestation-fixtures";
-import { ingest, observationFrom, pgliteRpc, seedIngestIdentities, syntheticCapture } from "./test-support/provider-ingest-fixtures";
+import { ingest, observationFrom, pgliteRpc, seedIngestIdentities, syntheticCapture, writeFootprint } from "./test-support/provider-ingest-fixtures";
 
 /** V2 model-facing reads, trust-aware exclusions, reports and the recovery path (D-058), on SYNTHETIC data. */
 
@@ -111,6 +112,19 @@ test("revocation removes a generation from V2 reads at once; an evidence refresh
   assert.deepEqual((await exclusionsV2(db, TRAINING_CUTOFF, only)).map((e) => e.exclusion_reason), ["attestation_generation_stale"]);
   conflicts = (await loadProviderRefConflictsV2(rpc(db), "sportmonks")).filter((c) => c.observation_id === v1.observation_id);
   assert.deepEqual(conflicts.map((c) => [c.issue_code, c.ref_kind]), [["team_attestation_generation_stale", "team_home"]]);
+
+  // A competition revoke excludes the same way.
+  const c = await world(db);
+  const cv1 = await recorded(db, c);
+  const cOnly = [c.seed.competitionId];
+  assert.equal((await strictV2(db, "sportmonks", cOnly)).length, 2);
+  await revokeCompetition(db, c.ids.leagueId, c.seed.competitionId, "synthetic doubt");
+  assert.deepEqual(await strictV2(db, "sportmonks", cOnly), []);
+  assert.deepEqual((await exclusionsV2(db, TRAINING_CUTOFF, cOnly)).map((e) => [e.exclusion_reason, e.selected_observation_id]), [["generation_revoked", cv1.observation_id]]);
+  assert.deepEqual(
+    (await loadProviderRefConflictsV2(rpc(db), "sportmonks")).filter((x) => x.observation_id === cv1.observation_id).map((x) => [x.issue_code, x.ref_kind]),
+    [["competition_attestation_missing", "league"]],
+  );
   await db.close();
 });
 
@@ -128,8 +142,11 @@ test("the current mapping must stay an agreeing manual_override row: demotion, d
   assert.equal((await strictV2(db, "sportmonks", only)).length, 2);
 
   await db.query("delete from public.provider_team_mappings where provider = 'sportmonks' and provider_team_id = $1", [w.ids.awayTeamId]);
+  assert.deepEqual(await strictV2(db, "sportmonks", only), []);
+  assert.deepEqual((await exclusionsV2(db, TRAINING_CUTOFF, only)).map((e) => e.exclusion_reason), ["mapping_missing"]);
   await db.query("insert into public.provider_team_mappings (provider, provider_team_id, team_id, mapping_status, mapping_confidence) values ('sportmonks', $1, $2, 'confirmed', 0.9)", [w.ids.awayTeamId, w.seed.awayTeamId]);
   assert.deepEqual(await strictV2(db, "sportmonks", only), []);
+  assert.deepEqual((await exclusionsV2(db, TRAINING_CUTOFF, only)).map((e) => e.exclusion_reason), ["mapping_not_manual_override"]);
 
   const other = (await db.query<{ id: string }>("insert into public.teams (canonical_name) values ('Synthetic Elsewhere') returning id")).rows[0].id;
   await operatorSql(db, "update public.provider_team_mappings set team_id = $2, mapping_status = 'manual_override' where provider = 'sportmonks' and provider_team_id = $1", [w.ids.awayTeamId, other]);
@@ -276,7 +293,7 @@ test("synthetic recovery: a wrong attestation is revoked, its chain withdrawn an
   await db.close();
 });
 
-test("recovery limit: a wrongly MINTED chain cannot be re-minted under the same provider fixture id (A2-A match_ledger_fixture_mints is unique per provider fixture id)", async () => {
+test("recovery limit: a wrongly MINTED chain is never re-minted under the same provider fixture id; it quarantines fixture_mint_exists, the orphan mint is reported, and attaching to a reviewed canonical fixture recovers it", async () => {
   const db = await createLedgerDatabase();
   const w = await world(db, { attest: false });
   const real = (await db.query<{ id: string }>("insert into public.teams (canonical_name) values ('Synthetic Real Home 2') returning id")).rows[0].id;
@@ -295,10 +312,28 @@ test("recovery limit: a wrongly MINTED chain cannot be re-minted under the same 
   await operatorSql(db, "update public.provider_team_mappings set team_id = $2 where provider = 'sportmonks' and provider_team_id = $1", [w.ids.homeTeamId, real]);
   await attestTeam(db, w.ids.homeTeamId, real);
   // No correct canonical fixture exists, so the re-ingest would have to mint
-  // again; the applied A2-A mint provenance refuses a second mint for the same
-  // provider fixture id. The whole call rolls back (fail closed). Recovering a
-  // wrongly minted chain therefore needs an existing correct fixture to attach
-  // to, or a reviewed follow-up decision before M2B - not a silent workaround here.
-  await assert.rejects(ingestV2(db, w.observation(), "2026-10-30T12:00:00.000Z"), /match_ledger_fixture_mints|duplicate key/);
+  // again; the applied A2-A mint provenance allows one mint per provider
+  // fixture id. V2 quarantines (audited, nothing written) instead of raising.
+  const before = await writeFootprint(db);
+  const blocked = await ingestV2(db, w.observation(), "2026-10-30T12:00:00.000Z");
+  assert.deepEqual([blocked.status, blocked.reason_code], ["quarantined", "fixture_mint_exists"]);
+  assert.deepEqual(await writeFootprint(db), before);
+  const detail = (await db.query<{ detail: { minted_fixture_id: string } }>("select detail from public.provider_ingest_items where reason_code = 'fixture_mint_exists'")).rows[0].detail;
+  assert.equal(detail.minted_fixture_id, wrong.fixture_id);
+  // The readiness report shows the orphaned mint as a warning until recovery completes.
+  const orphan = (await loadProviderIdentityAttestationConflicts(rpc(db), "sportmonks")).filter((c) => c.issue_code === "mint_without_mapping");
+  assert.deepEqual(orphan.map((c) => [c.severity, c.entity_kind, c.provider_ref, c.mapping_canonical_id]), [["warning", "fixture", w.providerFixtureId, wrong.fixture_id]]);
+  assert.deepEqual(blockingAttestationConflicts(await loadProviderIdentityAttestationConflicts(rpc(db), "sportmonks"), { teams: [w.ids.homeTeamId, w.ids.awayTeamId], competitions: [w.ids.leagueId] }), []);
+
+  // Recovery: the operator creates the reviewed canonical fixture; the re-ingest attaches.
+  const reviewedFixture = (await db.query<{ id: string }>(
+    "insert into public.fixtures (competition_id, home_team_id, away_team_id, kickoff_at, status) values ($1, $2, $3, $4, 'finished') returning id",
+    [w.seed.competitionId, real, w.seed.awayTeamId, KICKOFF],
+  )).rows[0].id;
+  const fixed = await ingestV2(db, w.observation({}, { mint: false }), "2026-10-30T13:00:00.000Z");
+  assert.deepEqual([fixed.status, fixed.fixture_resolution, fixed.fixture_id], ["recorded", "attached", reviewedFixture]);
+  assert.deepEqual(fixturesOf(await strictV2(db, "sportmonks", [w.seed.competitionId])), [reviewedFixture]);
+  // The orphan mint stays reported until an operator decision about the orphan row itself.
+  assert.equal((await loadProviderIdentityAttestationConflicts(rpc(db), "sportmonks")).filter((c) => c.issue_code === "mint_without_mapping").length, 1);
   await db.close();
 });

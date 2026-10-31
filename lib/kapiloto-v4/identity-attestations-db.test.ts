@@ -209,6 +209,13 @@ test("revoke needs the expected canonical id and a reason; it closes the generat
   assert.equal(again.attestation_version, 3);
   assert.deepEqual((await teamEvents(db, i.homeTeamId)).map((e) => e.attestation_version), [1, 2, 3]);
 
+  // Revoke still works after the V3 mapping row was deleted (the snapshot is null).
+  await db.query("delete from public.provider_team_mappings where provider = 'sportmonks' and provider_team_id = $1", [i.awayTeamId]);
+  const orphanRevoke = await revokeTeam(db, i.awayTeamId, seed.awayTeamId, "mapping removed first");
+  assert.equal(orphanRevoke.status, "revoked");
+  const orphanEvents = await teamEvents(db, i.awayTeamId);
+  assert.deepEqual(orphanEvents.map((e) => [e.event_kind, e.mapping_status_snapshot]), [["attest", "manual_override"], ["revoke", null]]);
+
   // Competition revoke/re-attest behaves the same.
   const cg1 = (await db.query<{ g: string }>("select attestation_generation_id as g from private.provider_competition_identity_attestations where provider_competition_id = $1", [i.leagueId])).rows[0].g;
   await assert.rejects(revokeCompetition(db, i.leagueId, seed.homeTeamId), /not the expected/);
@@ -384,6 +391,20 @@ test("even with the flag and the lock held deliberately, a projection must equal
     deliberate("delete from private.provider_team_identity_attestations where provider_team_id = $1", [i.homeTeamId]),
     /removed only by a revoke event/,
   );
+  // A revoked generation can never be reactivated, not even by re-inserting
+  // its old attest event as the current projection with flag and lock held.
+  const projection = await teamProjection(db, i.homeTeamId);
+  await revokeTeam(db, i.homeTeamId, seed.homeTeamId, "closing the generation");
+  await assert.rejects(
+    deliberate(
+      `insert into private.provider_team_identity_attestations
+         (provider, provider_team_id, team_id, attestation_generation_id, attestation_version, latest_event_id, attestation_basis, evidence, evidence_sha256, first_attested_at, attested_at, attested_by)
+       values ('sportmonks', $1, $2, $3, 1, $4, $5, $6::jsonb, $7, now(), now(), 'resurrect')`,
+      [i.homeTeamId, seed.homeTeamId, projection.attestation_generation_id, projection.latest_event_id, projection.attestation_basis, JSON.stringify(syntheticEvidence()), projection.evidence_sha256],
+    ),
+    /is revoked and cannot be reactivated/,
+  );
+  assert.equal(await teamProjection(db, i.homeTeamId), undefined);
   // The guard limits accidents; it is not presented as a cryptographic
   // boundary against a deliberately malicious service_role.
   await db.close();

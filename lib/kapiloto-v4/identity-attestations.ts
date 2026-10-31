@@ -236,18 +236,24 @@ export const ATTESTATION_CONFLICT_CODES = [
   "attested_mapping_not_manual_override",
   "shadow_mapping_for_attested_canonical",
   "mapping_unattested",
+  "mint_without_mapping",
 ] as const;
 export type AttestationConflictCode = (typeof ATTESTATION_CONFLICT_CODES)[number];
 export const ATTESTATION_CONFLICT_SEVERITIES = ["blocking", "warning", "info"] as const;
 export type AttestationConflictSeverity = (typeof ATTESTATION_CONFLICT_SEVERITIES)[number];
+/** Report rows are about teams, competitions, or (mint_without_mapping) a minted fixture. */
+export const ATTESTATION_CONFLICT_ENTITY_KINDS = [...ATTESTATION_ENTITY_KINDS, "fixture"] as const;
+export type AttestationConflictEntityKind = (typeof ATTESTATION_CONFLICT_ENTITY_KINDS)[number];
 
 export type AttestationConflict = {
   issue_code: AttestationConflictCode;
   severity: AttestationConflictSeverity;
-  entity_kind: AttestationEntityKind;
+  entity_kind: AttestationConflictEntityKind;
+  /** Provider team/league id, or the provider fixture id for mint_without_mapping. */
   provider_ref: string;
   attested_canonical_id: string | null;
   attestation_generation_id: string | null;
+  /** The mapping's canonical id, or the minted fixture id for mint_without_mapping. */
   mapping_canonical_id: string | null;
   mapping_status: string | null;
   /** The shadow mapping's provider ref (shadow_mapping_for_attested_canonical only). */
@@ -262,12 +268,12 @@ export async function loadProviderIdentityAttestationConflicts(rpc: ProviderIden
     const row = item as Record<string, unknown>;
     if (!(ATTESTATION_CONFLICT_CODES as readonly string[]).includes(row.issue_code as string)) throw new Error(`attestation conflict ${index} has an unknown code`);
     if (!(ATTESTATION_CONFLICT_SEVERITIES as readonly string[]).includes(row.severity as string)) throw new Error(`attestation conflict ${index} has an unknown severity`);
-    if (!(ATTESTATION_ENTITY_KINDS as readonly string[]).includes(row.entity_kind as string)) throw new Error(`attestation conflict ${index} has an unknown entity kind`);
+    if (!(ATTESTATION_CONFLICT_ENTITY_KINDS as readonly string[]).includes(row.entity_kind as string)) throw new Error(`attestation conflict ${index} has an unknown entity kind`);
     return row as unknown as AttestationConflict;
   });
 }
 
-/** Readiness gate for a pilot scope: no blocking issue on any listed provider ref. */
+/** Readiness gate for a pilot scope: no blocking issue on any listed provider team/league ref. */
 export function blockingAttestationConflicts(
   conflicts: AttestationConflict[],
   scope: { teams: string[]; competitions: string[] },
@@ -275,7 +281,9 @@ export function blockingAttestationConflicts(
   const teams = new Set(scope.teams);
   const competitions = new Set(scope.competitions);
   return conflicts.filter(
-    (c) => c.severity === "blocking" && (c.entity_kind === "team" ? teams.has(c.provider_ref) : competitions.has(c.provider_ref)),
+    (c) =>
+      c.severity === "blocking" &&
+      ((c.entity_kind === "team" && teams.has(c.provider_ref)) || (c.entity_kind === "competition" && competitions.has(c.provider_ref))),
   );
 }
 

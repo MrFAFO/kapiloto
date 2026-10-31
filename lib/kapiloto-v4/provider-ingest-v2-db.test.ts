@@ -15,6 +15,7 @@ import {
   ingestV2,
   mapProviderFixture,
   operatorSql,
+  revokeCompetition,
   revokeTeam,
   type AttestedWorld,
 } from "./test-support/attestation-fixtures";
@@ -305,27 +306,35 @@ test("without an existing mapping the A2-A attach/mint guards are preserved afte
 test("unchanged football content under a stale attestation generation quarantines attestation_generation_stale instead of returning unchanged", async () => {
   const db = await createLedgerDatabase();
   const w = await world(db);
-  const v1 = await ingestV2(db, w.observation(), SEEN);
+  // xg not requested at first, so a later xg fetch can be a pure family upgrade.
+  const base = { families: { xg: "not_requested" as const } };
+  const v1 = await ingestV2(db, w.observation(base), SEEN);
   assert.equal(v1.status, "recorded");
 
   // Revoked and not re-attested: no trust at all.
   await revokeTeam(db, w.ids.homeTeamId, w.seed.homeTeamId, "synthetic doubt");
-  await quarantined(db, w, "team_attestation_missing");
+  await quarantined(db, w, "team_attestation_missing", base);
 
   // Re-attested (same canonical team, new generation): identical content is
   // NOT "unchanged" - the latest version is sealed under the revoked generation.
   await attestTeam(db, w.ids.homeTeamId, w.seed.homeTeamId);
   const before = await writeFootprint(db);
-  const stale = await ingestV2(db, w.observation(), LATER);
+  const stale = await ingestV2(db, w.observation(base), LATER);
   assert.deepEqual([stale.status, stale.reason_code, stale.fixture_id], ["quarantined", "attestation_generation_stale", v1.fixture_id]);
   assert.deepEqual(await writeFootprint(db), before);
 
+  // A family upgrade that carries no new content is the A2-A family_status_drift
+  // quarantine, which takes precedence over the stale generation; neither writes.
+  const upgraded = await ingestV2(db, w.observation({ families: { xg: "fetched" }, omitStatTypes: [5304, 5305, 7943] }), "2026-10-30T10:30:00.000Z");
+  assert.deepEqual([upgraded.status, upgraded.reason_code], ["quarantined", "family_status_drift"]);
+  assert.deepEqual(await writeFootprint(db), before);
+
   // Changed football content records a new version sealed under the new generation.
-  const corrected = await ingestV2(db, w.observation({ score90: [3, 1] }), "2026-10-30T11:00:00.000Z");
+  const corrected = await ingestV2(db, w.observation({ ...base, score90: [3, 1] }), "2026-10-30T11:00:00.000Z");
   assert.deepEqual([corrected.status, corrected.observation_version], ["recorded", 2]);
   const generation = (await db.query<{ g: string }>("select attestation_generation_id as g from private.provider_team_identity_attestations where provider_team_id = $1", [w.ids.homeTeamId])).rows[0].g;
   assert.equal(await countRows(db, "match_ledger_observation_identity_attestations", "observation_id = $1 and ref_kind = 'team_home' and attestation_generation_id = $2", [corrected.observation_id, generation]), 1);
-  assert.equal((await ingestV2(db, w.observation({ score90: [3, 1] }), "2026-10-30T12:00:00.000Z")).status, "unchanged");
+  assert.equal((await ingestV2(db, w.observation({ ...base, score90: [3, 1] }), "2026-10-30T12:00:00.000Z")).status, "unchanged");
   await db.close();
 });
 
@@ -408,23 +417,24 @@ test("sidecar rows are written only by V2 ingest: flag, shared lock, sealed refs
     end $$;
   `);
   let k = 0;
-  const forge = async (o: { homeRef?: string; awayRef?: string; teamEvent: string | null; compEvent?: string | null; generation: string }) => {
+  const forge = async (o: { kind?: "team_home" | "league"; competition?: string; homeRef?: string; awayRef?: string; teamEvent: string | null; compEvent?: string | null; generation: string }) => {
     k += 1;
-    const kickoff = `2026-07-0${k}T18:00:00.000Z`;
+    const kickoff = `2026-07-${String(k).padStart(2, "0")}T18:00:00.000Z`;
     const fixtureId = await canonicalFixtureFor(db, w.seed, kickoff);
     const payload = buildMatchLedgerObservationPayload(
       resultOnlyObservation({ fixtureId, providerFixtureId: `forge-${k}` }, w.seed.homeTeamId, w.seed.awayTeamId, { kickoffAt: kickoff, retrievedAt: SEEN, homeGoals: 1, awayGoals: 0 }),
     );
     await setClock(db, SEEN);
-    return db.query("select public.test_forge_sidecar($1::jsonb, $2, $3, $4, $5, 'team_home', $6, $7, $8)", [
+    return db.query("select public.test_forge_sidecar($1::jsonb, $2, $3, $4, $5, $9, $6, $7, $8)", [
       JSON.stringify(payload),
-      w.seed.competitionId,
+      o.competition ?? w.seed.competitionId,
       w.ids.leagueId,
       o.homeRef ?? w.ids.homeTeamId,
       o.awayRef ?? w.ids.awayTeamId,
       o.teamEvent,
       o.compEvent ?? null,
       o.generation,
+      o.kind ?? "team_home",
     ]);
   };
   const league = (await db.query<{ generation: string; event: string }>("select attestation_generation_id as generation, latest_event_id as event from private.provider_competition_identity_attestations where provider_competition_id = $1", [w.ids.leagueId])).rows[0];
@@ -442,6 +452,15 @@ test("sidecar rows are written only by V2 ingest: flag, shared lock, sealed refs
   // A superseded event of the right generation (after an evidence refresh) is not the current event.
   await attestTeam(db, w.ids.homeTeamId, w.seed.homeTeamId, { evidence: { contract_version: "kapiloto-provider-identity-attestation-evidence-v1", sources: ["synthetic:refresh"], reviewed_by: "r", duplicate_audit_sha256: "a".repeat(64) } });
   await assert.rejects(forge({ teamEvent: home.event, generation: home.generation }), /does not name the current team attestation event/);
+
+  // League refs: the same checks against the competition projection.
+  await forge({ kind: "league", teamEvent: null, compEvent: league.event, generation: league.generation });
+  await assert.rejects(forge({ kind: "league", teamEvent: home.event, compEvent: null, generation: league.generation }), /violates check constraint|names a competition attestation event/);
+  await assert.rejects(forge({ kind: "league", teamEvent: null, compEvent: league.event, generation: home.generation }), /does not name the current competition attestation event/);
+  const otherCompetition = (await db.query<{ id: string }>("insert into public.competitions (canonical_name) values ('Synthetic Forge League') returning id")).rows[0].id;
+  await assert.rejects(forge({ kind: "league", competition: otherCompetition, teamEvent: null, compEvent: league.event, generation: league.generation }), /does not name the current competition attestation event/);
+  await revokeCompetition(db, w.ids.leagueId, w.seed.competitionId, "closing the generation");
+  await assert.rejects(forge({ kind: "league", teamEvent: null, compEvent: league.event, generation: league.generation }), /does not name the current competition attestation event/);
 
   for (const sql of ["update public.match_ledger_observation_identity_attestations set provider_ref = 'x'", "delete from public.match_ledger_observation_identity_attestations"]) {
     await assert.rejects(db.query(sql), /immutable/, sql);
