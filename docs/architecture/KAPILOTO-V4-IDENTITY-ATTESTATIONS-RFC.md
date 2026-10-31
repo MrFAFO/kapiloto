@@ -203,15 +203,22 @@ with one row for each `league`, `team_home`, `team_away` identity used by a V2 i
 ```text
 observation_id
 ref_kind
-attestation_event_id
+team_attestation_event_id          // FK for team_home/team_away
+competition_attestation_event_id   // FK for league
 attestation_generation_id
 provider_ref
 canonical_id
 ```
 
-The V2 ingest writes these rows from the current projections in the same transaction as the observation annotations. They cannot be added, changed or deleted later for that observation version.
+Exactly one typed event id is set according to `ref_kind`, and each typed id has a real foreign key to the corresponding immutable event table.
 
-A plain 1A write has no such rows and therefore cannot enter the Stage 1 model-facing corpus.
+A `BEFORE INSERT` integrity trigger verifies that the chosen event's provider, provider ref, canonical id and generation match the observation's sealed provider ref, the sidecar row and the current projection.
+
+Sidecar INSERT also requires the V2-ingest transaction flag and proof that the backend currently holds the shared provider-identity advisory lock. UPDATE/DELETE/TRUNCATE are rejected.
+
+The V2 ingest writes these rows from the current projections in the same transaction as the observation annotations.
+
+A plain 1A write has no such rows and is therefore **excluded by the V2 model-facing readers**. Stage 1 does not claim that a deliberately malicious `service_role` can never manufacture data; its guarantee is enforced through typed FKs, integrity checks, guarded inserts and V2 read semantics.
 
 ---
 
@@ -267,7 +274,9 @@ Attest/revoke must be the first write-capable operation of their transaction. Be
 
 This prevents the deadlock pattern `mapping UPDATE -> attest` against an in-flight ingest. Mapping correction and attestation therefore occur in **separate transactions**; the gap fails closed.
 
-Each RPC uses a short local `lock_timeout` (initial proposal: 5s) so a forgotten operator transaction cannot indefinitely queue behind or block provider ingest.
+Each RPC declares a function-level `SET lock_timeout = '5s'` rather than caller-visible `SET LOCAL`, so the timeout cannot leak into the rest of the caller transaction.
+
+The first-write rule also means **one attest/revoke RPC per transaction**. The pilot reconciliation intentionally uses separate transactions for each identity.
 
 ### 7.2 Attest semantics
 
@@ -326,6 +335,7 @@ Controls:
 - no table privileges for public/anon/authenticated;
 - `service_role` receives minimum table privileges only: projection SELECT/INSERT/UPDATE/DELETE, event SELECT/INSERT; no TRUNCATE/REFERENCES/TRIGGER;
 - every new function explicitly revokes default PUBLIC execute;
+- because Supabase default privileges grant EXECUTE on new public functions to `service_role`, M2A explicitly revokes `match_ledger_ingest_provider_fixture_v2(jsonb)` from `public, anon, authenticated, service_role`; only M2B may grant V2 ingest back to `service_role`;
 - projection DML and event INSERT require both:
   1. a transaction-local internal flag set by the RPC; and
   2. proof that the current backend holds the exclusive provider identity advisory lock;
@@ -373,6 +383,8 @@ Provider identity changes are rare, so Stage 1 intentionally uses one coarse loc
 An operator mapping correction must not call attest in the same transaction. That would create the row-lock/advisory-lock cycle identified in review.
 
 PGlite cannot prove cross-session waiting. Tests must prove lock mode/order through catalog/plan evidence, matching A2-A's existing approach; an optional real-Postgres two-session test may supplement it.
+
+Residual accepted race: Toto import can insert a brand-new duplicate fixture while an existing-mapping ingest is already running because the new row does not yet exist to lock and Toto does not take the V4 pair lock. This is equivalent to "ingest first, import second": the current ingest can commit, and the next ingest attempt sees the duplicate and quarantines. Document it as an A2-A-style residual case.
 
 ---
 
@@ -444,14 +456,16 @@ Rules:
 
 1. `mapping_status = 'unverified'` quarantines as `fixture_mapping_unverified`.
 2. Take the unordered canonical team-pair advisory lock even on this path.
-3. Re-run the same A2-A candidate classification used when no mapping exists.
-4. The mapped canonical fixture must:
-   - have exact attested home/away orientation;
-   - have a non-null competition equal to the attested incoming competition;
-   - have kickoff gap <= 48 hours;
-   - not have status `postponed`, `suspended`, `cancelled`, or `under_review`;
-   - be the **only** `N` candidate;
-   - have no `R`, `X`, `U`, `P`, or `W` blocker and no other provider-identity conflict.
+3. Run the same A2-A candidate classification over the team-pair window, but treat the incoming-id mapping as the candidate being validated rather than as a conflict against itself.
+4. Require:
+   - exactly one candidate carrying the incoming provider fixture id;
+   - that candidate is exactly the currently mapped canonical fixture;
+   - it has exact attested home/away orientation;
+   - it has a non-null competition equal to the attested incoming competition;
+   - kickoff gap is <= 48 hours;
+   - its status is not `postponed`, `suspended`, `cancelled`, or `under_review`;
+   - it is the **only** `N` candidate;
+   - there is no other `R`, `X`, `U`, `P`, `W`, provider-id, orientation or identity-conflicting candidate apart from the validated incoming-id row itself.
 5. Lock the selected canonical fixture row `FOR SHARE` before final fact/status validation.
 6. If any condition fails, quarantine. Never ignore the bad mapping and fall back to another candidate.
 
