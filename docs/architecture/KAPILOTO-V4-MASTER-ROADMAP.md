@@ -368,7 +368,7 @@ Post-checks found no mapping conflicts/provider-ref conflicts.
 
 This was an operator data action, not a migration. A future documentation/reconciliation change may record the operational evidence without pretending the DB update was schema history.
 
-## 8. CURRENT BLOCKER — Stage 1 identity attestations
+## 8. CURRENT BLOCKER — finish pilot identity reconciliation, then A2-B/M2B readiness
 
 Historical Match Ledger ingest is currently paused in production by D-057.
 
@@ -401,15 +401,46 @@ Post-apply verification:
 - V1 and V2 provider ingest are both non-executable by `service_role`;
 - all Stage 1 attestation tables/RPCs/V2 readers/reports exist with the
   intended SECURITY INVOKER / empty-search-path contracts;
-- no team/competition attestation or attestation event exists yet;
-- Match Ledger still has 0 observations;
-- `match_ledger_provider_ref_conflicts_v2('sportmonks')` is empty;
-- readiness currently reports only expected `mapping_unattested` rows.
+- deployment itself created no attestation or Match Ledger data;
+- Match Ledger still had 0 observations after deployment;
+- `match_ledger_provider_ref_conflicts_v2('sportmonks')` was empty.
 
-No real team or competition has been attested.
+### Pilot identity reconciliation execution status
 
-The 20 teams from the 10-fixture pilot remain the first reconciliation scope
-after M2A is merged and applied.
+Reviewed plan:
+`docs/operations/2026-10-31-v4-pilot-identity-reconciliation.md`
+
+Execution record:
+`docs/operations/2026-10-31-v4-pilot-identity-reconciliation-execution.md`
+
+PR #28 was independently red-teamed twice, reconciled, and merged as
+`0bde9b1562c4917e562c10038afd5bafbe7dbab4`.
+
+Production execution completed:
+- R1 read-only baseline snapshot;
+- R2: **5/5 pilot competitions attested** at version 1;
+- R3: the five legacy confidence-1 Sportmonks team mappings were promoted to
+  `manual_override` under locked duplicate audits without changing confidence;
+- R5: **13 new canonical teams** were created with reviewed Telesport/Winner
+  Hebrew spellings, aliases and Sportmonks `manual_override` mappings with
+  `mapping_confidence = NULL`;
+- R6: those 5 legacy + 13 new identities were attested separately, so
+  **18/20 pilot teams are now actively attested**;
+- partial R7 passed: no identity conflicts, no folded canonical duplicates,
+  no Sportmonks injectivity conflict, no provider-ref conflicts, 0 ingest runs,
+  0 fixture mints and 0 Match Ledger observations;
+- V1/V2 ingest remains revoked and all D-057 guards remain enabled.
+
+R4 remains deliberately deferred for the two existing canonical teams:
+- Sportmonks 52 AFC Bournemouth -> `בורנמות'`;
+- Sportmonks 676 Sevilla -> `סביליה`.
+
+Reason: active Winner round 264301 contains Bournemouth-Leeds and
+Getafe-Sevilla. Adding the two mappings can legitimately trigger V3 current-
+round fixture mapping writes. The reviewed default is to finish R4 only after
+round 264301 settles, then run full 20/20 R7.
+
+M2B remains NO-GO.
 
 ### Previously treated as trusted under A2-A columns: 5/20
 
@@ -529,9 +560,12 @@ Apply the independent-review findings to PR #19:
 
 Do not use the old global PASS as backfill approval.
 
-### Gate 5 — reconcile pilot teams through the Stage 1 mechanism
+### ACTIVE — Gate 5: reconcile pilot teams through the Stage 1 mechanism
 
-Classify each missing provider team as one of:
+Status: 5/5 pilot competitions and 18/20 pilot teams are attested. R4 for
+Bournemouth/Sevilla is deferred until round 264301 settles.
+
+The completed reconciliation classified each missing provider team as one of:
 
 1. map to an existing canonical team;
 2. create a new canonical team;
@@ -546,8 +580,14 @@ Rules remain:
 - no silent overwrite;
 - fixture/cross-provider anchors are stronger than names/transliteration.
 
-Re-attest the five mappings that A2-A previously treated as trusted; do not
-grandfather them merely because they are already confidence 1.
+The five mappings that A2-A previously treated as trusted were independently
+re-reviewed, promoted to manual_override and attested; they were not
+grandfathered merely because they were confidence 1.
+
+Before Gate 5 is complete:
+- finish R4 for Sportmonks 52/676 after round 264301 settles;
+- attest both separately;
+- rerun full R7 and the post-import duplicate audit.
 
 ### Gate 6 — tiny real Match Ledger ingest
 
@@ -710,7 +750,9 @@ As of the snapshot date:
 
 - no broad Sportmonks historical backfill;
 - no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A is applied in production, V1 and V2 ingest remain non-executable by `service_role`, and only the separate M2B migration may grant V2;
-- the 15 missing pilot-team mappings are not resolved;
+- pilot identity reconciliation is **not fully complete**: 18/20 pilot teams
+  and 5/5 competitions are attested, while Sportmonks 52 Bournemouth and 676
+  Sevilla are intentionally deferred until round 264301 settles;
 - PR #19 is not merged;
 - V4 Match Ledger is not silently feeding V3 research/probabilities;
 - the V4 lineup baseline is not established as a production-quality lineup predictor;
@@ -802,7 +844,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment and V3 Sportmonks insert-only alignment are deployed; D-058 M2A identity attestations are also applied to production with ingest still disabled. Active work is the reviewed reconciliation of the 5 pilot competitions and 20 pilot teams, then A2-B amendments and the remaining M2B readiness gates before the first real Match Ledger ingest.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Pilot reconciliation is at 5/5 competitions and 18/20 teams with 0 Match Ledger observations; R4 for Sportmonks 52 Bournemouth and 676 Sevilla is deliberately deferred until Winner round 264301 settles. After R4/full R7, amend/re-run A2-B and close the remaining M2B readiness gates before the first real Match Ledger ingest.
 
 ## 15. Updating this file
 
