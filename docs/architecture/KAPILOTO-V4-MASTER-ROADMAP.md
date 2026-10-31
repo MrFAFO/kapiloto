@@ -589,6 +589,58 @@ Before Gate 5 is complete:
 - attest both separately;
 - rerun full R7 and the post-import duplicate audit.
 
+### Gate 5B — autonomous identity bootstrap for user-facing V4 (D-059)
+
+The operator-reviewed pilot reconciliation above is a bootstrap mechanism for
+the foundation, **not** the intended end-user workflow.
+
+A production user may request research or a recommendation for a fixture whose
+team or competition is not yet present in the canonical catalog. General V4
+activation must not turn that into an operator task and must not require a
+pre-populated world-football catalog.
+
+Before general user-facing V4 activation, implement a demand-driven
+**Identity Bootstrap / Reconciliation Service**:
+
+1. the user request or fixture discovery detects an unresolved provider
+   identity;
+2. the service first searches canonical teams, aliases and provider mappings,
+   including normalized Hebrew/English variants and country/competition
+   context;
+3. it gathers a versioned evidence bundle: provider-native id, competition,
+   fixture pair/orientation, official or independent-provider anchors, and
+   Toto/Telesport canonical spelling where a Winner-compatible canonical row
+   must be created;
+4. it runs an atomic duplicate/injectivity audit under the same class of locks
+   proven by the pilot reconciliation;
+5. it deterministically chooses only one of:
+   - attach the provider identity to an existing canonical entity;
+   - create a new canonical entity, protected mapping and aliases;
+   - leave the identity unresolved when evidence is ambiguous;
+6. a successful bootstrap writes auditable V4 provenance/attestation through a
+   dedicated, versioned authorization path;
+7. an unresolved identity never gets guessed. Structured historical features
+   for that identity stay excluded, while the user-facing request may continue
+   in a degraded research-only mode where safe.
+
+Product invariant: **normal users are never asked to perform identity
+reconciliation or wait for an administrator to add a club manually.**
+
+Security invariant: raw provider ingest, web research and an LLM response may
+not directly create canonical identity. Evidence gathering may be automated,
+but the final attach/create decision must be enforced by deterministic,
+versioned policy and database constraints.
+
+D-058's current Sportmonks rule (`manual_override` + active attestation)
+remains the bounded pilot trust path. D-059 does **not** authorize giving a
+general service role unrestricted power to set `manual_override` and
+self-attest. The implementation must expose a dedicated bootstrap RPC/service
+boundary whose evidence requirements, locks, audit record, idempotency and
+recovery behavior are tested before activation.
+
+The tiny operator-bounded M2B ingest pilot may happen before this service is
+complete. **General user-facing V4 production activation may not.**
+
 ### Gate 6 — tiny real Match Ledger ingest
 
 Only after M2A is applied, team reconciliation is done and M2B is reviewed,
@@ -737,6 +789,11 @@ Only validated challengers are promoted.
 
 V4 should reach production influence gradually, by versioned component/arm, not as a single "turn V4 on" switch.
 
+Hard product gate: general user-facing activation requires D-059 autonomous
+identity bootstrap. A request for a previously unseen club/competition must be
+resolved automatically when evidence is sufficient, or degrade safely without
+creating an unverified canonical identity.
+
 Preserve:
 
 - frozen V1/V2/V3 replay;
@@ -748,6 +805,9 @@ Preserve:
 
 As of the snapshot date:
 
+- D-059 autonomous on-demand identity bootstrap is not implemented yet; the
+  current reconciliation is an operator-reviewed pilot and therefore is not
+  sufficient for general user-facing V4 activation;
 - no broad Sportmonks historical backfill;
 - no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A is applied in production, V1 and V2 ingest remain non-executable by `service_role`, and only the separate M2B migration may grant V2;
 - pilot identity reconciliation is **not fully complete**: 18/20 pilot teams
