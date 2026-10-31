@@ -976,35 +976,104 @@ historical trust rules. Columns:
   `match_ledger_mapping_conflicts()`.
 - Detection only: nothing is mutated.
 
-## A2-B (not in this change)
+## A2-B provider pilot (read only)
 
-A2-B covers:
+Implementation: PR #30 / `feat/v4-provider-ingest-a2b-pilot-v2`.
+The original draft PR #19 is superseded by this current-main implementation.
 
-- an operator CLI that captures bundles, hashing the exact response bytes and
-  setting fetch statuses honestly;
-- a verified entitlement snapshot and a run header;
-- team and competition reconciliation, including the preflight that promotes
-  verified Sportmonks competitions to `manual_override`, and
-  `match_ledger_provider_ref_conflicts` as a pilot and backfill gate;
-- a small pilot that checks the seeded definitions against real payloads.
+A2-B is an **operator-dispatched evidence producer**, not an ingest or
+backfill-approval workflow. The provider-calling workflow has no `push`
+trigger. It runs only through `workflow_dispatch`.
 
-No migration is required unless the pilot finds a documentation/payload
-mismatch, which would be fixed with a new `definition_version`.
+The pilot produces three deliberately separate evidence classes:
 
-### Pilot gates (not A2-A database invariants)
+1. **competition identity / entitlement**
+   - all five reviewed Sportmonks league ids must exist in the subscription;
+   - league name, `country.iso2`, `type = league` and
+     `sub_type = domestic` must all agree with the reviewed target;
+   - league pagination is exhaustive and fails closed if the configured hard
+     cap is reached while `has_more = true`.
 
-These must be verified on real Sportmonks payloads during the A2-B pilot
-before they become rules. A2-A deliberately does not enforce them:
+2. **provider-wide field semantics**
+   - participant `meta.location` must discriminate exactly one home and one
+     away participant;
+   - finished FT samples must expose compatible cumulative
+     `2ND_HALF` / `CURRENT` score pairs;
+   - AET / FT_PEN samples must have a non-decreasing `CURRENT` relative to
+     the cumulative 90-minute `2ND_HALF` pair;
+   - lineup ids must discriminate type 11 starter / type 12 bench; sampled
+     complete lineups require exactly 11 starters per team and bench rows;
+   - observed broad position ids must stay within 24/25/26/27, and the
+     provider-wide sample must cover all four;
+   - possession, shots-on-target and non-penalty-xG relations fail on an
+     observed contradiction, but absence of optional values remains
+     `unverified`, never zero.
 
-- cross-stat checks that are sensible but unverified: possession summing to
-  98-102, `shots_on_target <= shots_total`, `npxG <= xG`;
-- whether genuine zero statistics arrive as explicit zero rows or as omitted
-  rows (A2-A infers nothing about provider-side zero semantics);
-- lineup type ids 11 (starter) and 12 (bench);
-- position ids 24-27 (GK/DF/MF/FW);
-- `2ND_HALF` being the cumulative 90-minute score (checked against `CURRENT`
-  for FT matches; relied on alone for AET/FT_PEN);
-- participant `meta.location` as the home/away source.
+3. **per-competition coverage**
+   - family row counts are reported separately for lineups, formations,
+     statistics and xG;
+   - allow-listed stat-type presence and explicit-zero observations are
+     reported by competition;
+   - one competition's evidence never upgrades another competition's missing
+     family to a pass.
+
+There is intentionally no pooled "any competition passed, therefore provider
+passed" rule. Gate evidence is strict: any contradiction is a fail;
+pass+unverified remains unverified. Optional missing evidence is visible in
+coverage and is not manufactured into failure or zero unless the caller's
+later backfill policy requires that family.
+
+### Exact raw evidence
+
+Every Sportmonks HTTP response is archived **before JSON parsing** as the exact
+response bytes at:
+
+`raw/<sha256>.bin`
+
+`raw-index.json` records the hash, sanitized endpoint, HTTP status, content
+type and byte count. The normalized full entitlement rows (including country,
+type and sub_type) also receive a separate `entitlementDetailsSha256`, while
+the existing entitlement-snapshot hash remains backward-compatible with its
+older ID/name contract. This includes entitlement pages, fixture-discovery
+pages, required-season sampling pages and fixture-detail responses.
+
+The capture's `raw_payload_sha256` therefore has a retained byte preimage;
+the parsed capture JSON is additional evidence, never a substitute for the
+raw body.
+
+### Pagination and partial snapshots
+
+All exhaustive list operations are fail closed. If Sportmonks reports
+`has_more = true` on the configured last page, the pilot aborts rather than
+hashing or accepting a partial entitlement/fixture-discovery snapshot.
+
+### Season coverage before historical backfill
+
+The operator may supply repeatable `LEAGUE_ID:SEASON_ID` requirements
+(`--required-season` or `--required-seasons`). Each required historical
+season is sampled through the Sportmonks season-fixture endpoint, and the
+pilot fails if no finished fixture from that exact league/season is captured.
+
+A historical backfill proposal must dispatch A2-B with **every season in its
+scope** listed as required. An unsampled season is not approved merely because
+another season of the same competition passed.
+
+### Explicit zero
+
+Whether a real zero arrives as a provider row is useful evidence, but it is
+not an acceptance gate. `explicitZeroStatTypes` and per-stat zero coverage
+are reported only. Missing remains missing under D-056.
+
+### Backfill approval
+
+The report always emits:
+
+`backfillApproval.approved = false`
+
+A2-B evidence feeds the later reviewed backfill decision. No A2-B PASS,
+provider-semantic PASS, family coverage percentage or season sample creates a
+`provider_ingest_run`, enables V2 ingest, creates a fixture mapping or writes
+a Match Ledger observation.
 
 ## Security
 
