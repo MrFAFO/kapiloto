@@ -53,6 +53,7 @@ const V4_TABLES = [
   "match_ledger_observation_provider_refs",
   "match_ledger_observation_family_fetches",
   "match_ledger_fixture_mints",
+  "match_ledger_observation_identity_attestations",
 ];
 
 const V4_PUBLIC_FUNCTIONS = [
@@ -78,15 +79,34 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.squad_state_inputs_as_of(uuid, uuid, timestamptz, integer)",
   "public.prediction_record_snapshot_v2(jsonb)",
   "public.provider_ingest_record_failure(uuid, text, text, text, jsonb)",
+  // Stage 1 (D-058).
+  "public.provider_identity_attest_team(jsonb)",
+  "public.provider_identity_revoke_team(jsonb)",
+  "public.provider_identity_attest_competition(jsonb)",
+  "public.provider_identity_revoke_competition(jsonb)",
+  "public.match_ledger_team_match_stats_as_of_v2(text, uuid[], timestamptz, timestamptz)",
+  "public.match_ledger_team_match_stats_for_training_v2(text, uuid[], timestamptz, timestamptz, text)",
+  "public.match_ledger_retrospective_training_exclusions_v2(text, uuid[], timestamptz, timestamptz, text)",
+  "public.provider_identity_attestation_conflicts(text)",
+  "public.match_ledger_provider_ref_conflicts_v2(text)",
+  "public.provider_identity_revocation_impact(text, text, text)",
+];
+
+// Historical ingest is not enabled: V1 is permanently revoked (D-057, D-058)
+// and V2 stays revoked until the separate grant-only M2B migration.
+const V4_PAUSED_PUBLIC_FUNCTIONS = [
+  "public.match_ledger_ingest_provider_fixture(jsonb)",
+  "public.match_ledger_ingest_provider_fixture_v2(jsonb)",
+];
+
+// V1 reads/reports whose trust semantics would mislead after Stage 1: present
+// for contract/history inspection, not executable by service_role (D-058).
+const V4_DEAUTHORIZED_V1_FUNCTIONS = [
   "public.match_ledger_team_match_stats_as_of(text, uuid[], timestamptz, timestamptz)",
   "public.match_ledger_team_match_stats_for_training(text, uuid[], timestamptz, timestamptz, text)",
   "public.match_ledger_retrospective_training_exclusions(text, uuid[], timestamptz, timestamptz, text)",
   "public.match_ledger_provider_ref_conflicts(text)",
 ];
-
-// Historical ingest is paused (D-057): not executable even by service_role
-// until Stage 1 replaces the mapping trust columns with attestations.
-const V4_PAUSED_PUBLIC_FUNCTIONS = ["public.match_ledger_ingest_provider_fixture(jsonb)"];
 
 const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.kapiloto_information_clock()",
@@ -117,6 +137,19 @@ const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
   "private.provider_mapping_trusted(text, numeric)",
   "private.provider_competition_mapping_trusted(text)",
   "private.match_ledger_retrospective_exclusions(text, uuid[], timestamptz, timestamptz, text)",
+  "private.provider_identity_evidence_issue(jsonb)",
+  "private.provider_identity_evidence_sha256(jsonb)",
+  "private.lock_provider_identity(text, boolean)",
+  "private.holds_provider_identity_lock(text, boolean)",
+  "private.assert_provider_identity_attestation_write(text)",
+  "private.provider_identity_assert_request(text, text, text)",
+  "private.provider_identity_begin_change(text)",
+  "private.provider_team_attestation_matches(text, text, uuid, uuid)",
+  "private.provider_competition_attestation_matches(text, text, uuid, uuid)",
+  "private.match_ledger_observation_attestation_issue(uuid)",
+  "private.provider_ingest_fixture_candidates_v2(text, text, uuid, uuid, uuid, timestamptz)",
+  "private.match_ledger_team_match_stats_v2(text, uuid[], timestamptz, timestamptz, text, text)",
+  "private.match_ledger_retrospective_exclusions_v2(text, uuid[], timestamptz, timestamptz, text)",
 ];
 
 test("every V4 table is RLS-protected, policy-free and invisible to app users", async () => {
@@ -159,6 +192,15 @@ test("every V4 table is RLS-protected, policy-free and invisible to app users", 
       [fn],
     );
     assert.deepEqual(privileges.rows[0], { anon: false, authenticated: false, service_role: false, definer: false }, fn);
+  }
+  for (const fn of V4_DEAUTHORIZED_V1_FUNCTIONS) {
+    const privileges = await db.query<{ anon: boolean; authenticated: boolean; service_role: boolean }>(
+      `select has_function_privilege('anon', $1::regprocedure, 'execute') as anon,
+              has_function_privilege('authenticated', $1::regprocedure, 'execute') as authenticated,
+              has_function_privilege('service_role', $1::regprocedure, 'execute') as service_role`,
+      [fn],
+    );
+    assert.deepEqual(privileges.rows[0], { anon: false, authenticated: false, service_role: false }, fn);
   }
   for (const fn of V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE) {
     const privileges = await db.query<{ authenticated: boolean; service_role: boolean }>(
@@ -271,6 +313,7 @@ test("no function defined by a V4 migration is executable by app roles or securi
     "supabase/migrations/20261029211641_kapiloto_v4_squad_state_features_v2.sql",
     "supabase/migrations/20261030101247_kapiloto_v4_provider_ingest.sql",
     "supabase/migrations/20261030211645_kapiloto_v4_identity_mapping_guard.sql",
+    "supabase/migrations/20261031100000_kapiloto_v4_identity_attestations.sql",
   ]) {
     for (const match of readFileSync(file, "utf8").matchAll(/create or replace function (?:public|private)\.([a-z_0-9]+)\(/g)) {
       names.add(match[1]);
@@ -290,31 +333,101 @@ test("no function defined by a V4 migration is executable by app roles or securi
   await db.close();
 });
 
-test("service_role cannot ingest while paused; with the grant restored it ingests and reads team match stats (security invoker); audit rows stay immutable", async () => {
+test("after M2A neither ingest RPC is executable by service_role; under a simulated M2B grant of V2 only, service_role attests, ingests, reads V2 and is refused V1", async () => {
   const db = await createLedgerDatabase({ supabaseDefaultPrivileges: true });
-  const seed = await seedIngestIdentities(db);
-  const run = await createIngestRun(db);
-  const capture = syntheticCapture({ kickoffAt: "2026-08-15T18:00:00.000Z", capturedAt: "2026-10-30T08:59:00.000Z" });
-  await db.query("select set_config('kapiloto.test_clock', '2026-10-30T09:00:00.000Z', false)");
+  const ids = { leagueId: "7701", homeTeamId: "77010", awayTeamId: "77011" };
+  const seed = await seedIngestIdentities(db, { ...ids, teamMappingStatus: "manual_override" });
+  const providerFixtureId = "27700001";
+  const run = (await db.query<{ id: string }>(
+    `insert into public.provider_ingest_runs (provider, purpose, ingest_version, scope) values ('sportmonks', 'test', 'kapiloto-sportmonks-ledger-mapping-v1', $1::jsonb) returning id`,
+    [JSON.stringify({ provider_fixture_ids: [providerFixtureId] })],
+  )).rows[0].id;
+  const capture = syntheticCapture({ ...ids, providerFixtureId, kickoffAt: "2026-08-15T18:00:00.000Z", capturedAt: "2026-10-30T08:59:00.000Z" });
   const payload = JSON.stringify(buildProviderMatchObservationPayload(observationFrom(capture, { runId: run })));
+  await db.query("select set_config('kapiloto.test_clock', '2026-10-29T00:00:00.000Z', false)");
 
-  // D-057 pause.
+  // M2A: both paused, even with Supabase's default function grants in place.
   await db.exec("set role service_role");
   await assert.rejects(db.query("select public.match_ledger_ingest_provider_fixture($1::jsonb)", [payload]), /permission denied/);
+  await assert.rejects(db.query("select public.match_ledger_ingest_provider_fixture_v2($1::jsonb)", [payload]), /permission denied/);
+  // Attestation runs as service_role through the invoker RPCs, one identity per call.
+  const attest = (fn: string, body: Record<string, unknown>) => db.query(`select public.${fn}($1::jsonb)`, [JSON.stringify(body)]);
+  const evidence = { contract_version: "kapiloto-provider-identity-attestation-evidence-v1", sources: ["synthetic"], reviewed_by: "synthetic", duplicate_audit_sha256: "a".repeat(64) };
+  await attest("provider_identity_attest_competition", { provider: "sportmonks", provider_competition_id: ids.leagueId, competition_id: seed.competitionId, attestation_basis: "operator_manual", evidence, attested_by: "op" });
+  await attest("provider_identity_attest_team", { provider: "sportmonks", provider_team_id: ids.homeTeamId, team_id: seed.homeTeamId, attestation_basis: "operator_manual", evidence, attested_by: "op" });
+  await attest("provider_identity_attest_team", { provider: "sportmonks", provider_team_id: ids.awayTeamId, team_id: seed.awayTeamId, attestation_basis: "operator_manual", evidence, attested_by: "op" });
+  // Direct projection writes by service_role are refused by the guard; TRUNCATE is not granted.
+  await assert.rejects(db.query("delete from private.provider_team_identity_attestations"), /attest\/revoke RPCs/);
+  await assert.rejects(db.query("truncate private.provider_team_identity_attestations"), /permission denied/);
   await db.exec("reset role");
 
-  // The grant Stage 1 restores: the RPC then runs with service_role's own privileges.
-  await db.exec("grant execute on function public.match_ledger_ingest_provider_fixture(jsonb) to service_role");
+  // What M2B (and only M2B) does: grant V2 ingest to service_role.
+  await db.exec("grant execute on function public.match_ledger_ingest_provider_fixture_v2(jsonb) to service_role");
+  await db.query("select set_config('kapiloto.test_clock', '2026-10-30T09:00:00.000Z', false)");
   await db.exec("set role service_role");
-  const result = await db.query<{ result: { status: string; fixture_resolution: string } }>(
-    "select public.match_ledger_ingest_provider_fixture($1::jsonb) as result",
-    [payload],
-  );
+  const result = await db.query<{ result: { status: string; fixture_resolution: string } }>("select public.match_ledger_ingest_provider_fixture_v2($1::jsonb) as result", [payload]);
   assert.deepEqual([result.rows[0].result.status, result.rows[0].result.fixture_resolution], ["recorded", "minted"]);
-  const rows = await db.query("select * from public.match_ledger_team_match_stats_as_of('sportmonks', $1::uuid[], null, now())", [[seed.competitionId]]);
+  const rows = await db.query("select * from public.match_ledger_team_match_stats_as_of_v2('sportmonks', $1::uuid[], null, now())", [[seed.competitionId]]);
   assert.equal(rows.rows.length, 2);
+  await assert.rejects(db.query("select * from public.match_ledger_team_match_stats_as_of('sportmonks', $1::uuid[], null, now())", [[seed.competitionId]]), /permission denied/);
+  await assert.rejects(db.query("select * from public.match_ledger_provider_ref_conflicts('sportmonks')"), /permission denied/);
+  await assert.rejects(db.query("select public.match_ledger_ingest_provider_fixture($1::jsonb)", [payload]), /permission denied/);
   await assert.rejects(db.query("update public.provider_ingest_items set reason_code = 'x'"), /immutable/);
-  await assert.rejects(db.query("delete from public.match_ledger_observation_provider_refs"), /immutable/);
+  // No DELETE privilege at all (and the immutability trigger behind it).
+  await assert.rejects(db.query("delete from public.match_ledger_observation_identity_attestations"), /permission denied/);
   await db.exec("reset role");
+  await db.close();
+});
+
+test("Stage 1 tables: exact minimal service_role privileges, nothing for app roles, RLS enabled (not counted as a control against BYPASSRLS)", async () => {
+  const db = await createLedgerDatabase({ supabaseDefaultPrivileges: true, testClock: false });
+  const expected: Record<string, string[]> = {
+    "private.provider_team_identity_attestations": ["DELETE", "INSERT", "SELECT", "UPDATE"],
+    "private.provider_competition_identity_attestations": ["DELETE", "INSERT", "SELECT", "UPDATE"],
+    "private.provider_team_identity_attestation_events": ["INSERT", "SELECT"],
+    "private.provider_competition_identity_attestation_events": ["INSERT", "SELECT"],
+    "public.match_ledger_observation_identity_attestations": ["INSERT", "SELECT"],
+  };
+  const privileges = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"];
+  for (const [table, allowed] of Object.entries(expected)) {
+    for (const role of ["service_role", "anon", "authenticated"]) {
+      const held: string[] = [];
+      for (const privilege of privileges) {
+        const ok = (await db.query<{ ok: boolean }>("select has_table_privilege($1, $2, $3) as ok", [role, table, privilege])).rows[0].ok;
+        if (ok) held.push(privilege);
+      }
+      assert.deepEqual(held.sort(), role === "service_role" ? allowed : [], `${role} ${table}`);
+    }
+    assert.equal((await db.query<{ rls: boolean }>("select relrowsecurity as rls from pg_class where oid = $1::regclass", [table])).rows[0].rls, true, table);
+  }
+  // V2 ingest: no EXECUTE entry for PUBLIC, anon, authenticated or service_role.
+  const acl = await db.query<{ grantee: string }>(
+    `select coalesce(r.rolname, 'PUBLIC') as grantee
+     from pg_proc p cross join lateral aclexplode(p.proacl) a left join pg_roles r on r.oid = a.grantee
+     where p.oid = 'public.match_ledger_ingest_provider_fixture_v2(jsonb)'::regprocedure and a.privilege_type = 'EXECUTE'`,
+  );
+  assert.deepEqual(acl.rows.map((r) => r.grantee).filter((g) => ["PUBLIC", "anon", "authenticated", "service_role"].includes(g)), []);
+  // The D-057 guard is still in place after M2A.
+  const guards = await db.query<{ tgname: string }>("select tgname from pg_trigger where tgname like '%_identity_guard' order by tgname");
+  assert.deepEqual(guards.rows.map((r) => r.tgname), ["provider_competition_mappings_identity_guard", "provider_fixture_mappings_identity_guard", "provider_team_mappings_identity_guard"]);
+  await db.close();
+});
+
+test("every function M2A defines is security invoker with an empty search_path and revoked from app roles", async () => {
+  const db = await createLedgerDatabase({ supabaseDefaultPrivileges: true, testClock: false });
+  const names = [...readFileSync("supabase/migrations/20261031100000_kapiloto_v4_identity_attestations.sql", "utf8").matchAll(/create or replace function (public|private)\.([a-z_0-9]+)\(/g)].map((m) => `${m[1]}.${m[2]}`);
+  assert.ok(names.length >= 28, String(names.length));
+  const rows = await db.query<{ fn: string; definer: boolean; config: string[] | null; anon: boolean; authenticated: boolean }>(
+    `select n.nspname || '.' || p.proname as fn, p.prosecdef as definer, p.proconfig as config,
+            has_function_privilege('anon', p.oid, 'execute') as anon, has_function_privilege('authenticated', p.oid, 'execute') as authenticated
+     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname || '.' || p.proname = any($1)`,
+    [names],
+  );
+  assert.equal(rows.rows.length, new Set(names).size);
+  for (const row of rows.rows) {
+    assert.deepEqual([row.definer, row.anon, row.authenticated], [false, false, false], row.fn);
+    assert.ok((row.config ?? []).includes('search_path=""'), row.fn);
+  }
   await db.close();
 });

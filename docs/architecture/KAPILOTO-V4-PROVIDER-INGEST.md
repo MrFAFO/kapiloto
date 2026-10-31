@@ -1,6 +1,10 @@
 # Kapiloto V4 Foundation 1E-A2-A: provider-native Match Ledger ingest
 
 Decision: D-056. Migration: `supabase/migrations/20261030101247_kapiloto_v4_provider_ingest.sql`.
+
+Stage 1 (D-058) adds V2 ingest, attestation trust and V2 reads next to these
+contracts; see "Stage 1 M2A" below. The A2-A trust table below describes the
+frozen V1 functions.
 Code: `lib/kapiloto-v4/provider-ingest.ts`, `sportmonks-ledger.ts`,
 `team-match-stats.ts`, `training/team-match-stats.ts`.
 
@@ -315,10 +319,189 @@ contains it without changing V3 code.
 - **Ingest pause.** `service_role` no longer has EXECUTE on
   `public.match_ledger_ingest_provider_fixture(jsonb)`, because `confirmed`
   at confidence 1 is reachable by a V3 name match seen twice. Stage 1
-  replaces that trust rule with V4-owned attestations and restores the
-  grant. `provider_ingest_record_failure` and every read stay available.
+  (D-058) replaces that trust rule with V4-owned attestations in a separate
+  V2 ingest; the V1 grant never returns, and V2 is granted only by M2B.
+  `provider_ingest_record_failure` stays available.
 - The guard function is not executable by `anon` or `authenticated` and is
   not SECURITY DEFINER; a trigger function needs no EXECUTE grant to fire.
+
+### Stage 1 M2A: identity attestations and V2 ingest (D-058)
+
+Migration: `supabase/migrations/20261031100000_kapiloto_v4_identity_attestations.sql`.
+Code: `lib/kapiloto-v4/identity-attestations.ts`, `provider-ingest.ts`,
+`team-match-stats.ts`, `training/team-match-stats.ts`. Architecture:
+`KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md`.
+
+**M2A does not enable ingest.** Supabase default privileges grant every new
+public function to `service_role`, so
+`match_ledger_ingest_provider_fixture_v2(jsonb)` is revoked explicitly from
+`public`, `anon`, `authenticated` and `service_role`. The V1 ingest stays
+revoked permanently. Only the separate grant-only M2B migration may grant V2.
+
+**Trust rule.** A team or competition identity is trusted only when the
+current mapping is `manual_override` AND agrees with the active V4
+attestation. Confidence is never consulted; `confirmed` (even at 1) and
+`unverified` are never trusted. Stage 0 keeps `manual_override` stable against
+automated writers and V3 inserts are always `confirmed`, so deleting an
+attested mapping and letting V3 re-insert it cannot restore trust.
+
+**Attestation state** (schema `private`):
+
+- `provider_team_identity_attestations` / `provider_competition_identity_attestations`:
+  current projections; primary key per provider ref, unique per canonical
+  entity (one id in each direction); canonical FK `ON DELETE NO ACTION`.
+- `provider_team_identity_attestation_events` / `provider_competition_identity_attestation_events`:
+  immutable history. `attest` opens a generation, `evidence_refresh` continues
+  it, `revoke` closes it. Re-attesting after a revoke opens a NEW generation,
+  even for the same canonical id. Versions are monotonic per provider ref
+  across cycles. Events keep canonical ids without a foreign key.
+- The projection always equals its latest non-revoke event (trigger-checked);
+  provider ref, canonical id and generation never change in place.
+- Evidence (`kapiloto-provider-identity-attestation-evidence-v1`):
+  `contract_version`, non-empty `sources`, `reviewed_by`,
+  `duplicate_audit_sha256`, at most 64 KiB. Identical basis + evidence is an
+  idempotent no-op; changed evidence refreshes within the generation. Evidence
+  is audit data, never an authorization input.
+
+**Attest/revoke RPCs** (`provider_identity_attest_team`, `_revoke_team`,
+`_attest_competition`, `_revoke_competition`): SECURITY INVOKER, empty
+`search_path`, function-level `lock_timeout = 5s`, Sportmonks only, READ
+COMMITTED. Each must be the first write of its transaction
+(`pg_current_xact_id_if_assigned()` is null), so one identity changes per
+transaction and a mapping correction can never share a transaction with an
+attest (that would deadlock against an in-flight ingest). Order: exclusive
+provider identity lock, mapping row `FOR SHARE`, projection rows
+`FOR UPDATE`, then guarded writes. Attest needs an existing `manual_override`
+mapping on the requested canonical id and refuses to re-point an active
+attestation or give a canonical entity a second provider id. Revoke needs the
+expected canonical id and a reason; it never touches the V3 mapping.
+
+**Write guards.** Projection INSERT/UPDATE/DELETE and event INSERT need the
+transaction-local flag the RPC sets only around its own DML (cleared on
+success and on exception) AND the exclusive provider identity advisory lock
+held by the same backend. Events reject UPDATE/DELETE/TRUNCATE. This stops
+accidental writes by application code; it does not make a deliberately
+malicious `service_role` (BYPASSRLS, able to set the flag and take the lock)
+cryptographically unable to manufacture rows.
+
+**Observation provenance.**
+`public.match_ledger_observation_identity_attestations` seals, per V2-recorded
+observation version, the league/home/away attestation event and generation,
+provider ref and canonical id. Typed FKs: `team_attestation_event_id` for team
+refs, `competition_attestation_event_id` for the league, exactly one set. A
+BEFORE INSERT check requires the V2 ingest flag, the shared provider identity
+lock, a matching sealed provider ref, and the projection's current (latest)
+event of the same generation and canonical id. Sealed to the writing
+statement; immutable. Plain 1A writes have none.
+
+**V2 ingest** (`match_ledger_ingest_provider_fixture_v2`): the A2-A contract,
+phases and player semantics, plus:
+
+- a run is mandatory: it must exist, belong to the provider and carry a
+  non-empty `scope.provider_fixture_ids`; an unlisted fixture is an audited
+  quarantine (`fixture_outside_run_scope`) before any write. The run row is
+  immutable. This contains accidents; it is not a boundary against a malicious
+  `service_role`, which can create another run;
+- trust codes: `competition_unmapped`, `competition_mapping_not_manual_override`,
+  `competition_attestation_missing`, `competition_attestation_mismatch`,
+  `team_unmapped`, `team_mapping_not_manual_override`,
+  `team_attestation_missing`, `team_attestation_mismatch`;
+- an existing provider fixture mapping is a pointer, not trust. `unverified`
+  quarantines. Otherwise the team-pair lock is taken (on BOTH paths now), the
+  full A2-A candidate classification runs, the mapped fixture row is locked
+  `FOR SHARE`, and the mapping is accepted only if its fixture has the attested
+  orientation, the attested non-null competition, a kickoff within 48 h, a
+  status other than postponed/suspended/cancelled/under_review, is the only
+  candidate carrying the incoming id, is the only valid `N` candidate, and no
+  other candidate is guarded or identity-conflicting. The validated row is
+  never counted as a conflict with itself. Codes: `fixture_mapping_team_conflict`,
+  `_orientation_conflict`, `_competition_conflict`, `_kickoff_conflict`,
+  `_status_conflict`, `_provider_identity_conflict`, `_candidate_ambiguous`,
+  `_competition_unknown`, `_possible_postponement`, `_reschedule_conflict`,
+  `fixture_mapping_conflict`. A bad mapping never falls back to another
+  candidate. This closes the Toto-reschedule case: the orphaned old fixture
+  and the re-dated one are both `N` (ambiguous), or the old one fails the
+  kickoff check;
+- the no-mapping path keeps the A2-A attach/mint rules; the attach target is
+  re-read `FOR SHARE` (`fixture_candidate_changed` if its facts moved);
+- generation continuity: when the latest version's sealed generations are not
+  the current ones and 1A finds the football content unchanged, the call
+  quarantines `attestation_generation_stale` (phase 2 rolled back) instead of
+  returning `unchanged`. Changed content records a new version under the
+  current generations;
+- the post-write re-check covers mappings, projections (same generations),
+  the fixture mapping, the fixture's facts and the candidate window.
+
+Lock order: provider-fixture advisory, provider identity (shared), competition
+mapping, competition projection, team mappings, team projections (sorted),
+incoming fixture mapping, team-pair advisory, candidate mapping rows, selected
+fixture row, writes, 1A fixture/provider advisory, players identity. Attest
+takes the provider identity lock exclusive first and none of the ingest-only
+locks, so the two cannot form a cycle. Accepted residual: the Toto import
+takes no pair lock and can insert a brand-new duplicate fixture while an
+existing-mapping ingest is in flight (no row exists to lock); that equals
+"ingest first, import second", and the next attempt quarantines.
+
+**V2 reads.** `match_ledger_team_match_stats_as_of_v2` and
+`_for_training_v2` return the V1 row shape over an attestation-gated row set
+(`kapiloto-team-match-stats-v2`). The V1 selection, availability and
+supersession rules run first; the selected version must then have sealed
+league/home/away refs and sidecars whose typed event belongs to the sealed
+generation, that generation must still be the current projection, and the
+current mapping must be an agreeing `manual_override` row. An untrusted
+selected version drops the fixture; it never falls back to an earlier version.
+Every provider is gated the same way: plain 1A writes, A2-A (V1) ingests and
+providers without Stage 1 attestations return zero V2 rows. A revoke removes a
+generation at once; re-attesting the same team opens a new generation and does
+not bring old observations back. `match_ledger_retrospective_training_exclusions_v2`
+keeps `later_correction` / `later_withdrawal` and adds `attestation_missing`,
+`generation_revoked` (revoked, nothing active), `attestation_generation_stale`
+(revoked and re-attested), `mapping_not_manual_override` and
+`mapping_disagrees`. Recovery written as a later version is available only from
+its real `first_seen_at`: availability policy V1 backdates version 1 only.
+
+**Reports.**
+
+- `provider_identity_attestation_conflicts(provider)`: entity level, works
+  with zero observations. Blocking: `attested_mapping_missing`,
+  `attested_mapping_disagrees`, `attested_mapping_not_manual_override`,
+  `shadow_mapping_for_attested_canonical` (warning when the shadow row is
+  `unverified`). Info: `mapping_unattested`.
+- `match_ledger_provider_ref_conflicts_v2(provider)`: observation level, per
+  ref: `*_mapping_missing`, `*_mapping_not_manual_override`,
+  `*_attestation_missing`, `*_mapping_attestation_mismatch`,
+  `*_attested_canonical_drift`, `*_attestation_generation_stale`, and
+  `fixture_competition_drift`.
+- `provider_identity_revocation_impact(provider, entity_kind, provider_ref)`:
+  observation versions sealed under each generation (active/revoked, latest
+  or not), their fixture mappings and A2 mints, and unattested observations
+  naming the ref or its canonical ids.
+
+**De-authorized V1 contracts.** Present for inspection, not executable by
+`service_role`: `match_ledger_team_match_stats_as_of`,
+`match_ledger_team_match_stats_for_training`,
+`match_ledger_retrospective_training_exclusions`,
+`match_ledger_provider_ref_conflicts`. `match_ledger_mapping_conflicts` is
+unchanged.
+
+**Reads not covered by Stage 1 (M2B gate).** `squad_state_inputs_as_of`,
+`match_ledger_observation_as_of`, `match_ledger_provider_team_matches_as_of`,
+`match_ledger_provider_player_matches_as_of` and the lineup/squad-state
+snapshot paths that depend on them are unchanged and not attestation-aware. A
+boundary test proves no production app, script or cron path calls them (or
+any V4 ingest/read RPC). M2B stays NO-GO until they are versioned or kept
+disabled under that gate.
+
+**Recovery.** Revoke (V2 reads are safe at once), read the impact report,
+withdraw affected chains through the 1A withdrawal, delete or re-point the
+fixture mapping as an operator with the expected old value in the predicate,
+correct the team/competition mapping in its own transaction, attest the right
+identity (new generation), re-ingest under an allow-listed run. Tested end to
+end for attaching to an existing correct canonical fixture. **Open item:** a
+chain V2 wrongly minted cannot be re-minted under the same provider fixture
+id, because the applied A2-A `match_ledger_fixture_mints` is unique per
+`(provider, provider_fixture_id)`; the call fails closed. This needs a
+reviewed decision before the recovery rehearsal (M2B readiness).
 
 ### Canonical identity rules
 

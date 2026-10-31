@@ -125,3 +125,21 @@ export const TEAM_MATCH_STATS_CONTRACT_VERSION = "kapiloto-team-match-stats-v1";
 
 /** Canonical JSON whose SHA-256 a provider ingest run records as its entitlement snapshot. */
 export const PROVIDER_ENTITLEMENT_SNAPSHOT_VERSION = "kapiloto-provider-entitlement-snapshot-v1";
+
+/** Evidence object of a V4 provider identity attestation (D-058); audit data, never policy. */
+export const PROVIDER_IDENTITY_ATTESTATION_EVIDENCE_VERSION = "kapiloto-provider-identity-attestation-evidence-v1";
+
+/**
+ * Stage 1 historical-ingest trust (D-058): a team or competition identity is
+ * trusted only when the current mapping is manual_override AND agrees with the
+ * active V4 attestation; observations seal the attestation generation used.
+ */
+export const PROVIDER_IDENTITY_TRUST_RULE_VERSION = "kapiloto-provider-identity-attestation-trust-v1";
+
+/**
+ * Rows returned by match_ledger_team_match_stats_as_of_v2 / _for_training_v2:
+ * the kapiloto-team-match-stats-v1 row shape over the attestation-gated row
+ * set (sealed refs + sealed current attestation generation + agreeing
+ * manual_override mapping, for every provider).
+ */
+export const TEAM_MATCH_STATS_V2_CONTRACT_VERSION = "kapiloto-team-match-stats-v2";

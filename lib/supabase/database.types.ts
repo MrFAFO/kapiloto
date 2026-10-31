@@ -2661,6 +2661,44 @@ export type Database = {
           },
         ]
       }
+      match_ledger_observation_identity_attestations: {
+        Row: {
+          attestation_generation_id: string
+          canonical_id: string
+          competition_attestation_event_id: string | null
+          observation_id: string
+          provider_ref: string
+          ref_kind: string
+          team_attestation_event_id: string | null
+        }
+        Insert: {
+          attestation_generation_id: string
+          canonical_id: string
+          competition_attestation_event_id?: string | null
+          observation_id: string
+          provider_ref: string
+          ref_kind: string
+          team_attestation_event_id?: string | null
+        }
+        Update: {
+          attestation_generation_id?: string
+          canonical_id?: string
+          competition_attestation_event_id?: string | null
+          observation_id?: string
+          provider_ref?: string
+          ref_kind?: string
+          team_attestation_event_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_ledger_observation_identity_attestations_observation_id_fkey"
+            columns: ["observation_id"]
+            isOneToOne: false
+            referencedRelation: "match_ledger_observations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       match_ledger_observation_provider_refs: {
         Row: {
           canonical_id: string | null
@@ -4963,6 +5001,10 @@ export type Database = {
         Args: { p_observation: Json }
         Returns: Json
       }
+      match_ledger_ingest_provider_fixture_v2: {
+        Args: { p_observation: Json }
+        Returns: Json
+      }
       match_ledger_mapping_conflicts: {
         Args: { p_provider: string }
         Returns: {
@@ -5051,6 +5093,25 @@ export type Database = {
           ref_kind: string
         }[]
       }
+      match_ledger_provider_ref_conflicts_v2: {
+        Args: { p_provider: string }
+        Returns: {
+          current_attestation_generation_id: string | null
+          current_attested_canonical_id: string | null
+          current_mapping_canonical_id: string | null
+          current_mapping_status: string | null
+          fixture_id: string
+          is_current_version: boolean
+          issue_code: string
+          observation_id: string
+          observation_version: number
+          provider_fixture_id: string
+          provider_ref: string
+          recorded_canonical_id: string
+          ref_kind: string
+          sealed_attestation_generation_id: string | null
+        }[]
+      }
       match_ledger_record_observation: {
         Args: { p_observation: Json }
         Returns: Json
@@ -5065,6 +5126,16 @@ export type Database = {
         }
         Returns: Json[]
       }
+      match_ledger_retrospective_training_exclusions_v2: {
+        Args: {
+          p_competition_ids: string[] | null
+          p_from: string | null
+          p_provider: string
+          p_policy: string
+          p_training_cutoff: string
+        }
+        Returns: Json[]
+      }
       match_ledger_team_match_stats_as_of: {
         Args: {
           p_competition_ids: string[] | null
@@ -5074,7 +5145,26 @@ export type Database = {
         }
         Returns: Json[]
       }
+      match_ledger_team_match_stats_as_of_v2: {
+        Args: {
+          p_competition_ids: string[] | null
+          p_from: string | null
+          p_provider: string
+          p_cutoff: string
+        }
+        Returns: Json[]
+      }
       match_ledger_team_match_stats_for_training: {
+        Args: {
+          p_competition_ids: string[] | null
+          p_from: string | null
+          p_provider: string
+          p_policy: string
+          p_training_cutoff: string
+        }
+        Returns: Json[]
+      }
+      match_ledger_team_match_stats_for_training_v2: {
         Args: {
           p_competition_ids: string[] | null
           p_from: string | null
@@ -5097,6 +5187,52 @@ export type Database = {
       }
       prediction_record_snapshot_v2: {
         Args: { p_snapshot: Json }
+        Returns: Json
+      }
+      provider_identity_attest_competition: {
+        Args: { p_attestation: Json }
+        Returns: Json
+      }
+      provider_identity_attest_team: {
+        Args: { p_attestation: Json }
+        Returns: Json
+      }
+      provider_identity_attestation_conflicts: {
+        Args: { p_provider: string }
+        Returns: {
+          attestation_generation_id: string | null
+          attested_canonical_id: string | null
+          entity_kind: string
+          issue_code: string
+          mapping_canonical_id: string | null
+          mapping_status: string | null
+          provider_ref: string
+          related_provider_ref: string | null
+          severity: string
+        }[]
+      }
+      provider_identity_revocation_impact: {
+        Args: { p_entity_kind: string; p_provider: string; p_provider_ref: string }
+        Returns: {
+          attestation_generation_id: string | null
+          canonical_id: string | null
+          detail: Json
+          fixture_id: string | null
+          generation_state: string | null
+          impact_kind: string
+          is_latest_version: boolean | null
+          latest_observation_kind: string | null
+          observation_id: string | null
+          observation_version: number | null
+          provider_fixture_id: string | null
+        }[]
+      }
+      provider_identity_revoke_competition: {
+        Args: { p_revocation: Json }
+        Returns: Json
+      }
+      provider_identity_revoke_team: {
+        Args: { p_revocation: Json }
         Returns: Json
       }
       provider_ingest_record_failure: {

@@ -36,9 +36,10 @@ const XMAX_LOCK_ONLY = 0x0080;
 const XMAX_IS_MULTI = 0x1000;
 const KEYS_UPDATED = 0x2000;
 
-/** The row lock the CURRENT transaction holds on each matching row, in ctid order. */
+/** The row lock the CURRENT transaction holds on each matching row, in ctid order (table defaults to schema public). */
 export async function heldRowLocks(db: PGlite, table: string, where: string, params: unknown[] = []): Promise<HeldRowLock[]> {
-  const rows = await db.query<{ ctid: string }>(`select ctid::text as ctid from public.${table} where ${where} order by ctid`, params);
+  const relation = table.includes(".") ? table : `public.${table}`;
+  const rows = await db.query<{ ctid: string }>(`select ctid::text as ctid from ${relation} where ${where} order by ctid`, params);
   const out: HeldRowLock[] = [];
   for (const { ctid } of rows.rows) {
     const [block, lp] = ctid.replace(/[()]/g, "").split(",").map(Number);
@@ -46,7 +47,7 @@ export async function heldRowLocks(db: PGlite, table: string, where: string, par
       await db.query<{ infomask: number; infomask2: number; mine: boolean }>(
         `select t_infomask as infomask, t_infomask2 as infomask2, coalesce(t_xmax = xid(pg_current_xact_id()), false) as mine
          from heap_page_items(get_raw_page($1, $2)) where lp = $3`,
-        [`public.${table}`, block, lp],
+        [relation, block, lp],
       )
     ).rows[0];
     if (tuple.infomask & XMAX_IS_MULTI) out.push("multixact");
