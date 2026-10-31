@@ -416,16 +416,17 @@ Player bootstrap does not call these helpers and remains unchanged.
 
 ## 11. Existing Sportmonks data
 
-No existing Sportmonks team or competition row is auto-attested.
+No existing Sportmonks team or competition row is auto-attested or grandfathered.
 
 In particular:
 
-- the five pilot competitions being `manual_override` does not automatically create V4 trust;
-- the five pilot teams previously considered trusted do not remain trusted merely because their V3 row says confidence 1;
-- the 15 unmapped pilot teams still require reconciliation;
-- every active attestation must be produced through the Stage 1 RPC after evidence review.
+- the five pilot competitions being `manual_override` is only a stable mapping prerequisite, not V4 trust;
+- the five pilot teams previously treated as trusted under A2-A must be independently reviewed, promoted to `manual_override` where appropriate, and attested;
+- the 15 currently unmapped pilot teams require explicit reconciliation before any attestation;
+- `confirmed + confidence=1` from pre-D-057 data is suspect and never sufficient;
+- an active attestation whose mapping later ceases to be `manual_override` immediately fails trust.
 
-This avoids laundering pre-D-057 state into the new trust system.
+Stage 1 reconciliation must also surface possible duplicate canonical teams before attestation. Evidence carries a `duplicate_audit_sha256`; the operator workflow must review same-normalized-name/alias candidates rather than assuming a provider id proves canonical uniqueness.
 
 ---
 
@@ -433,93 +434,172 @@ This avoids laundering pre-D-057 state into the new trust system.
 
 There is intentionally **no fixture attestation table** in Stage 1.
 
-Fixture identity is derived from:
-
-- attested home team;
-- attested away team;
-- attested competition;
-- orientation;
-- kickoff relation;
-- the existing candidate/attach/mint safeguards.
+Fixture identity is derived from attested/manual-override home team, away team and competition plus the existing A2-A candidate safeguards.
 
 ### 12.1 Existing provider fixture mapping
 
-If a row exists for the incoming `(provider, provider_fixture_id)`, its
-`mapping_status` and `mapping_confidence` are **not historical-ingest trust**.
+An existing `(provider, provider_fixture_id)` mapping is an operational pointer, not a trust statement.
 
-The mapping may only pin the canonical fixture if the target fixture is re-validated against the current payload:
+Rules:
 
-- canonical home team == attested incoming home team;
-- canonical away team == attested incoming away team;
-- canonical competition == attested incoming competition;
-- kickoff gap is within the accepted identity window;
-- fixture is not a contradictory postponed/reschedule candidate under the existing guards.
+1. `mapping_status = 'unverified'` quarantines as `fixture_mapping_unverified`.
+2. Take the unordered canonical team-pair advisory lock even on this path.
+3. Re-run the same A2-A candidate classification used when no mapping exists.
+4. The mapped canonical fixture must:
+   - have exact attested home/away orientation;
+   - have a non-null competition equal to the attested incoming competition;
+   - have kickoff gap <= 48 hours;
+   - not have status `postponed`, `suspended`, `cancelled`, or `under_review`;
+   - be the **only** `N` candidate;
+   - have no `R`, `X`, `U`, `P`, or `W` blocker and no other provider-identity conflict.
+5. Lock the selected canonical fixture row `FOR SHARE` before final fact/status validation.
+6. If any condition fails, quarantine. Never ignore the bad mapping and fall back to another candidate.
 
-If any fact fails, quarantine.
+This specifically closes the Toto-reschedule failure mode: Toto import matches fixtures by exact kickoff and may create a second canonical fixture after a schedule change while an insert-only Sportmonks mapping remains pinned to the old row. A mapping is accepted only if the candidate algorithm independently agrees that its target is still unique.
 
-Proposed new reason codes:
+Suggested explicit codes include:
 
 ```text
+fixture_mapping_unverified
 fixture_mapping_team_conflict
 fixture_mapping_orientation_conflict
 fixture_mapping_competition_conflict
 fixture_mapping_kickoff_conflict
+fixture_mapping_status_conflict
+fixture_mapping_candidate_ambiguous
+fixture_mapping_reschedule_conflict
 ```
+
+Where possible, reuse existing A2-A candidate reason semantics with a `fixture_mapping_` prefix rather than creating divergent logic.
 
 ### 12.2 Kickoff tolerance
 
-Initial proposal: reuse the existing ±48-hour identity window.
+Keep the current ±48-hour identity window.
 
-Reason:
+The 48-hour width is **not** sufficient by itself. Safety comes from the full uniqueness/classification rule above: same teams, same orientation, same competition, acceptable status, exactly one `N` candidate, and no blocker candidates.
 
-- the current candidate algorithm already relies on the invariant that the same two teams do not represent two distinct intended fixtures within that window;
-- it tolerates ordinary provider/time corrections without making a mapping authoritative by itself.
-
-This point is explicitly open for review. If reviewers can justify a tighter safe bound for finished historical fixtures, use it.
-
-If an existing provider mapping fails the kickoff check, do **not** ignore it and silently candidate-search around it. A contradictory provider mapping is evidence of an identity problem and must quarantine for reconciliation.
+A tighter window would create false quarantines for legitimate reschedules while failing to solve the orphaned-duplicate problem on its own.
 
 ### 12.3 No existing provider fixture mapping
 
-Keep the existing A2-A candidate search / attach / mint rules unless review identifies a concrete flaw.
+Keep the existing A2-A candidate search / attach / mint rules, now after Stage 1 team/competition trust succeeds.
 
-Any fixture mapping created by a successful attach/mint remains an operational lookup. Future trust still derives from attestations + fixture facts, not its confidence column.
+Any fixture mapping written by a successful V2 attach/mint is still only an operational lookup. Future trust derives from the same attestation + fixture-fact checks.
+
+### 12.4 Duplicate-canonical mint risk
+
+Before M2B, reconciliation must explicitly review duplicate canonical-team candidates. Otherwise an attestation to a duplicate canonical row can cause A2 to mint a parallel fixture chain that represents a match already present under the real canonical team.
+
+The readiness/recovery reports should surface suspicious minted fixtures whose team names/aliases collide with another canonical pair in the same competition/window. This is a reconciliation signal, not an automatic merge.
 
 ---
 
-## 13. Post-write re-check
+## 13. V2 ingest, sealed provenance and post-write re-check
 
-The existing post-write defense-in-depth must move to the new trust boundary.
+Stage 1 does **not** redefine the A2-A ingest function in place.
 
-Before commit, re-check:
+Add:
 
-- team mappings still equal the canonical ids used by the ingest;
-- team attestations still exist and agree;
-- competition mapping still equals the canonical competition used;
-- competition attestation still exists and agrees;
+`public.match_ledger_ingest_provider_fixture_v2(jsonb)`
+
+The V1 function remains present and permanently revoked from `service_role` after Stage 1.
+
+### 13.1 Run scope is mandatory
+
+V2 ingest requires:
+
+- non-null `run_id`;
+- an existing immutable `provider_ingest_runs` row for the same provider;
+- `scope.provider_fixture_ids` to be a non-empty array;
+- the incoming `provider_fixture_id` to be explicitly listed.
+
+An out-of-scope fixture quarantines before any phase-2 write.
+
+This makes M2B's tiny pilot genuinely tiny even though SQL EXECUTE itself is role-wide.
+
+### 13.2 Observation attestation sidecar
+
+On a recorded observation, V2 writes sealed league/home/away attestation rows from the active projections. The sidecar records the exact event/generation used by that observation version.
+
+Direct 1A writes do not have this sidecar.
+
+### 13.3 Post-write defense in depth
+
+Before commit, V2 re-checks:
+
+- team mappings still exist, are `manual_override` and equal the canonical ids used;
+- team projections still exist in the same sealed generation and agree;
+- competition mapping still exists, is `manual_override` and agrees;
+- competition projection still exists in the same sealed generation and agrees;
 - provider fixture mapping still points at the fixture used;
-- canonical fixture still agrees on home/away/competition and the approved kickoff relation.
+- canonical fixture row still matches home/away/competition/status/kickoff requirements;
+- the existing-mapping uniqueness/classification still has no blocker when applicable.
 
-Because ingest holds the shared provider-identity advisory lock, an attestation revoke/re-attest cannot pass concurrently.
+Because V2 holds the shared provider-identity lock and projection/mapping row locks, attest/revoke cannot pass concurrently.
 
-Any failure raises and rolls back the entire phase-2 write.
+Any failure raises and rolls phase 2 back.
 
 ---
 
-## 14. Reconciliation reports
+## 14. Model-facing reads, readiness and recovery reports
 
-Do not `DROP FUNCTION` or replace the return type of the existing
-`public.match_ledger_provider_ref_conflicts(text)`.
+Trust must be enforced at read time as well as write time.
 
-The project treats migrations as additive, and frozen/older contracts should remain inspectable.
+### 14.1 Versioned historical reads
 
-Create a successor:
+Add new V2 readers rather than changing return-shape/row-set semantics in place:
 
 ```text
-public.match_ledger_provider_ref_conflicts_v2(text)
+private.match_ledger_team_match_stats_v2(...)
+public.match_ledger_team_match_stats_as_of_v2(...)
+public.match_ledger_team_match_stats_for_training_v2(...)
 ```
 
-The V2 report should distinguish at least:
+For Sportmonks, a model-facing V2 row is returned only when its observation:
+
+1. has sealed provider refs for `league`, `team_home`, `team_away`;
+2. has sealed attestation sidecars for all three refs;
+3. each sealed event belongs to the generation recorded for the observation;
+4. no revoke event closed that generation;
+5. the current projection still uses that generation and canonical id;
+6. the current mapping exists, is `manual_override`, and agrees with the same canonical id;
+7. all existing availability/supersession rules still pass.
+
+A later evidence refresh in the same generation does not invalidate earlier observations. A revoke followed by re-attest starts a new generation, so observations from the revoked generation stay excluded until explicitly recovered/re-ingested.
+
+Plain 1A observations or any observation with missing attestation provenance are excluded, not merely flagged.
+
+Once M2A lands, `service_role` EXECUTE should be revoked from the old V1 model-facing team-match-stat readers and granted to V2 only. The V1 functions remain present for contract/history inspection.
+
+### 14.2 Entity-level readiness report
+
+Create:
+
+`public.provider_identity_attestation_conflicts(p_provider text)`
+
+This works even when zero Match Ledger observations exist. It reports at least:
+
+```text
+attested_mapping_missing
+attested_mapping_disagrees
+attested_mapping_not_manual_override
+shadow_mapping_for_attested_canonical
+mapping_unattested              // informational reconciliation worklist
+```
+
+The report should return provider ref, canonical id, mapping status/current target and severity. M2B readiness fails on blocking codes for the pilot scope.
+
+`shadow_mapping_for_attested_canonical` is blocking for another non-`unverified` provider row that points at an actively attested canonical entity; unverified shadows may be reported as warnings.
+
+### 14.3 Observation/provider-ref reconciliation V2
+
+Keep the old `public.match_ledger_provider_ref_conflicts(text)` function present, but revoke `service_role` EXECUTE after M2A because its old confidence-based trust semantics become misleading.
+
+Add:
+
+`public.match_ledger_provider_ref_conflicts_v2(text)`
+
+with attestation-aware observation-level codes such as:
 
 - `team_mapping_missing`
 - `team_attestation_missing`
@@ -529,206 +609,286 @@ The V2 report should distinguish at least:
 - `competition_attestation_missing`
 - `competition_mapping_attestation_mismatch`
 - `competition_attested_canonical_drift`
-- `fixture_competition_drift`
+- `fixture_competition_drift`.
 
-The existing `public.match_ledger_mapping_conflicts(text)` remains useful for:
+The existing `public.match_ledger_mapping_conflicts(text)` remains for fixture/player/coach drift and is not redefined.
 
-- fixture mapping drift;
-- player mapping/merge drift;
-- coach mapping/merge drift.
+### 14.4 Revocation impact report
 
-The old provider-ref report may remain present for historical/debug compatibility. Whether `service_role` EXECUTE should be revoked from the old V1 report is an explicit review question; do not drop the function.
+Create a read-only report:
+
+`public.provider_identity_revocation_impact(provider, entity_kind, provider_ref)`
+
+It identifies at least:
+
+- observation versions sealed under the revoked generation;
+- current/latest chains affected;
+- fixture mappings associated with those provider fixture ids;
+- A2 fixture mints associated with those chains;
+- refs-less/direct-1A observations for the same provider that V2 readers already exclude.
+
+### 14.5 Recovery semantics
+
+Revocation provides immediate safety because V2 readers exclude the revoked generation. Before M2B, rehearse the full recovery runbook on synthetic data:
+
+1. revoke the bad attestation;
+2. inspect impact report;
+3. withdraw affected observation chains through the immutable 1A withdrawal mechanism;
+4. delete or explicitly re-point affected provider fixture mappings using the Stage 0 operator override and expected-old-value predicates;
+5. correct/promote team/competition mapping to `manual_override` in a separate transaction;
+6. attest the correct canonical identity in a new generation;
+7. re-ingest under an allow-listed V2 run;
+8. confirm V2 readers contain only the corrected chain and all reports are clean.
+
+Wrong minted canonical fixtures may remain as historical orphan rows if immutable ledger history references them; recovery correctness comes from withdrawal, mapping repair, new canonical attachment and V2 read exclusion, not rewriting old ledger rows.
 
 ---
 
 ## 15. Security
 
-Required Stage 1 security properties:
+Required Stage 1 properties:
 
-- attestation tables are not public API tables;
-- RLS enabled;
-- no `anon` / `authenticated` table privileges;
-- RPC execute only for `service_role`;
-- no Stage 1 function is `SECURITY DEFINER`;
-- fixed empty search path;
-- direct current-projection DML requires the internal transaction flag;
-- event history immutable;
-- JSON input is validated before any DML;
-- arbitrary evidence JSON is audit data and never executed/interpreted as policy.
+- no new Stage 1 function is SECURITY DEFINER;
+- every function uses fixed empty `search_path`;
+- PostgreSQL's default PUBLIC function execute is explicitly revoked for every new public/private function;
+- `anon` and `authenticated` have no Stage 1 table privileges and no RPC execute;
+- `service_role` gets only the minimum privileges described in §8;
+- RLS is enabled but is not treated as a control against `service_role` BYPASSRLS;
+- current-projection/event DML guards require the internal flag **and** held exclusive advisory lock;
+- event history cannot be updated/deleted/truncated and direct event INSERT without the guarded RPC path fails;
+- JSON evidence is validated and size-bounded but never interpreted as executable policy;
+- `attested_by`/`reviewed_by` are audit fields, never authorization inputs; events also record `current_user`.
 
-Security tests must inspect catalog state, not merely exercise happy-path RPC calls.
+Production pre-apply check: verify through Supabase project configuration/Data API behavior that `private` is not an exposed schema. The repository and `current_setting('pgrst.db_schemas', true)` do not prove this configuration, so M2A deployment stays blocked until the operator check is explicit.
+
+Catalog tests must enumerate the actual created functions/tables and validate privileges, rather than relying only on a handwritten list.
 
 ---
 
-## 16. Stage 1 migration split
+## 16. Stage 1 migration and activation split
 
-Do not combine trust-model construction with ingest activation.
+Do not combine trust construction, reconciliation and ingest activation.
 
 ### M2A — Identity attestation foundation
 
-Contains:
+M2A contains:
 
-- private current projection tables;
-- immutable event tables;
-- indexes and injectivity constraints;
-- DML guards;
-- provider identity advisory lock helper;
+- current team/competition projection tables;
+- immutable generation/event tables;
+- observation attestation sidecar;
+- injectivity and NO ACTION canonical FKs;
+- guarded DML/event-write machinery;
+- provider identity advisory-lock helper;
 - attest/revoke RPCs;
-- attestation-match helpers;
-- updated ingest function using attestations and fixture fact checks;
-- post-write re-check update;
+- attestation trust helpers requiring `manual_override`;
+- `match_ledger_ingest_provider_fixture_v2(jsonb)` with mandatory run allowlist;
+- existing-fixture uniqueness/fact checks;
+- post-write re-checks;
+- V2 model-facing reads;
+- entity-level readiness report;
 - provider-ref conflict report V2;
+- revocation-impact report;
 - security grants/revokes;
-- tests and documentation.
+- tests/documentation.
 
-**M2A leaves `service_role` EXECUTE on
-`match_ledger_ingest_provider_fixture(jsonb)` revoked.**
+M2A leaves both V1 and V2 provider-ingest RPCs **not executable by `service_role`**.
 
-Applying M2A therefore cannot accidentally start historical ingestion.
+The old V1 ingest RPC is never re-granted after Stage 1.
 
-### Reconciliation / readiness stage
+### Reconciliation/readiness stage
 
-After M2A:
+After M2A and before M2B:
 
-- attest the five pilot competitions from reviewed evidence;
-- reconcile and attest all 20 pilot teams, including re-attesting the five that old A2-A treated as trusted;
-- amend PR #19 and rerun the provider pilot under the strengthened acceptance model;
-- confirm reconciliation reports are clean for the intended tiny pilot scope.
+- create/promote reviewed pilot mappings to `manual_override`;
+- attest all five pilot competitions;
+- reconcile and attest all 20 pilot teams, including independent re-attestation of the five old confidence-1 rows;
+- entity-level report has no blocking issue for pilot refs;
+- provider-ref/fixture conflict reports are clean for the intended scope;
+- duplicate-canonical audit evidence exists for every attestation;
+- PR #19 is amended and the provider pilot re-run under the strengthened acceptance model;
+- recovery runbook is rehearsed end to end on synthetic data;
+- production `private` schema exposure check is clean.
 
 ### M2B — Tiny-pilot activation
 
-A separate small migration may restore service-role EXECUTE on the ingest RPC only when the operator is ready for the tiny real Match Ledger pilot.
+M2B contains **grant-only activation** for `match_ledger_ingest_provider_fixture_v2(jsonb)`.
 
-M2B should contain no identity logic.
+The pilot run itself must have an explicit `scope.provider_fixture_ids` allowlist, enforced inside V2.
 
-This makes activation independently reviewable and reversible.
+Do not merge a pending revoke migration into main before M2B application, because a normal future `db push` would apply it automatically. Instead, prepare and independently review the exact M2C revoke SQL/branch in advance and keep it unmerged until needed.
+
+### M2C — Immediate pause/rollback
+
+M2C simply revokes `service_role` EXECUTE on the V2 ingest RPC again. It contains no identity/data mutation.
+
+If the tiny pilot fails any integrity gate, M2C is applied before further investigation. If the pilot passes, activation for the next staged scope still requires a separately reviewed run allowlist.
 
 ---
 
 ## 17. Test plan
 
-Stage 1 is not ready without database tests covering all of these.
+Stage 1 is NO-GO without the following.
 
-### Attestation state
+### Attestation state / audit
 
-- missing provider mapping -> attest rejected;
-- provider mapping canonical mismatch -> attest rejected;
-- first exact attest succeeds;
-- same canonical id can refresh evidence;
-- refresh increments version and appends event;
-- same provider id cannot silently re-point;
-- same canonical team cannot receive a second active provider id;
-- same canonical competition cannot receive a second active provider id;
-- revoke removes current projection and preserves immutable event;
-- re-attest after revoke works only against the current agreeing mapping;
-- direct DML without RPC flag fails;
-- event mutation fails.
+- missing mapping rejected;
+- non-`manual_override` mapping rejected;
+- mapping canonical mismatch rejected;
+- first attest succeeds and creates generation;
+- identical refresh is idempotent no-op;
+- changed evidence refresh stays in generation, increments global version and appends event;
+- same provider id cannot re-point while active;
+- same canonical target cannot receive second active provider id;
+- revoke requires expected canonical id + reason;
+- revoke closes generation and removes projection;
+- re-attest after revoke uses new generation and continued event version;
+- direct projection DML rejected without guard+lock;
+- direct event INSERT rejected;
+- event update/delete/truncate rejected;
+- canonical team/competition delete blocked while actively attested and allowed only after revoke.
 
-### Ingest trust
+### Read-side trust / recovery
 
-- mapped but unattested competition -> quarantine;
-- mapped but unattested home/away team -> quarantine;
-- attestation and mapping disagreement -> quarantine;
-- exact mapping+attestation agreement resolves;
-- `confirmed + confidence=1` without attestation is not trusted;
-- `manual_override` without attestation is not trusted;
-- player bootstrap behavior is unchanged.
+- plain 1A Sportmonks observation is excluded from V2 readers;
+- observation without sealed refs or attestation sidecars is excluded;
+- current active generation is included;
+- evidence refresh in same generation keeps observation included;
+- revoke excludes all observations sealed to that generation;
+- re-attesting same canonical id in a new generation does not resurrect old observations;
+- impact report lists affected observations, mints and fixture mappings;
+- synthetic withdrawal/mapping-repair/re-ingest recovery produces only corrected V2 history.
+
+### Entity readiness
+
+- entity report works with zero observations;
+- all blocking codes are covered;
+- delete + V3-style `confirmed/0.9` re-insert is not trusted;
+- `unverified` + agreeing attestation is not trusted;
+- shadow non-unverified mapping for an attested canonical is reported.
 
 ### Fixture identity
 
-- correct existing fixture mapping + facts -> allowed;
-- wrong home/away -> quarantine;
-- reversed orientation -> quarantine;
-- wrong competition -> quarantine;
-- kickoff outside accepted bound -> quarantine;
-- mapping status/confidence does not override factual mismatch;
-- no existing mapping follows existing A2-A attach/mint guards;
-- wrong existing mapping is not silently bypassed by candidate search.
+- correct existing mapping accepted only when it is unique `N` candidate;
+- orphaned stale fixture after kickoff reschedule quarantines;
+- duplicate candidate <=48h quarantines;
+- reversed orientation quarantines;
+- null/wrong competition quarantines;
+- postponed/suspended/cancelled/under_review mapped target quarantines;
+- unverified fixture mapping quarantines;
+- kickoff exactly at and just beyond 48h boundary;
+- bad existing mapping never falls back to candidate search;
+- no-existing-mapping path preserves existing A2-A attach/mint guards;
+- selected fixture row is locked `FOR SHARE`.
 
-### Concurrency
+### Run scope / activation
 
-- ingest holds shared provider identity lock;
-- revoke/attest waits behind in-flight ingest;
-- ingest after revoke quarantines;
-- two competing attestations cannot bypass injectivity;
-- mapping change under the Stage 0 operator path cannot race past the ingest re-check.
+- V2 rejects null run id;
+- V2 rejects missing/empty `scope.provider_fixture_ids`;
+- V2 rejects fixture outside allowlist;
+- M2A leaves V1 and V2 ingest EXECUTE false for service_role;
+- M2B grants V2 only;
+- old V1 ingest is never re-granted.
 
-### Security / migration
+### Concurrency / locks
 
-- RLS enabled;
+- shared provider lock appears after provider-fixture lock;
+- projection/mapping row lock order is deterministic;
+- pair lock is acquired on both fixture paths;
+- attest/revoke first-write-of-transaction rule works;
+- mapping update then attest is rejected rather than entering the deadlock pattern;
+- lock timeout exists on provider identity acquisition;
+- Stage 0 guard remains active after M2A;
+- PGlite limitation is documented; optional real-Postgres two-session test may supplement catalog/plan evidence.
+
+### Security / migration compatibility
+
+- RLS enabled where intended;
 - no anon/authenticated grants;
-- service-role RPC-only surface;
+- exact minimal service_role table privileges;
+- all new functions revoked from PUBLIC by default then explicitly granted as intended;
 - no SECURITY DEFINER;
-- fixed search path;
-- old report functions remain present;
-- V2 report exists;
-- ingest EXECUTE remains revoked after M2A;
-- migration is additive.
+- fixed empty search path;
+- old provider-ref report remains present but service_role execute revoked;
+- V2 report exists and is granted;
+- V1 model-facing read functions remain present but service_role uses V2;
+- private-table allowlist added to boundary tests;
+- byte-for-byte/hash pins cover already-applied A2-A and Stage 0 migrations;
+- M2A added to all migration/security test enumerations;
+- player bootstrap behavior unchanged;
+- new quarantine codes added to TypeScript contracts/tests.
 
 ### Regression
 
+- focused DB/locking/security/provider-ingest tests;
 - V4 full suite;
 - Kapiloto suite;
 - research-v2/V3 suites;
 - full `npm test`;
 - typecheck;
-- production webpack build.
+- production webpack build;
+- mutation tests for trust/fixture/read-side gates where practical.
 
 ---
 
 ## 18. Operational sequence
 
-The intended order after this RFC is approved:
-
-1. independent architecture review by Opus;
-2. independent architecture review by Fable;
-3. reconcile review findings into one accepted Stage 1 design;
-4. implement M2A on a new branch;
-5. independent code/migration review;
-6. merge M2A;
-7. apply the exact canonical M2A migration to production;
-8. verify security/locks/trust functions in production;
-9. perform evidence-backed team/competition reconciliation through the RPCs;
-10. amend and rerun A2-B;
-11. only then create/review M2B to enable the tiny ingest pilot;
-12. run tiny real ingest;
-13. inspect persisted ledger rows and conflict reports;
-14. proceed to staged backfill only after the pilot gates pass.
+1. Reconcile Opus and Fable architecture findings into this RFC.
+2. Run final independent sanity review of the revised RFC by both reviewers.
+3. Resolve any remaining blocker; no implementation while a blocker remains.
+4. Record the accepted design as D-058.
+5. Implement M2A on a new branch only.
+6. Independent code/migration review by at least one external reviewer plus direct diff/runtime review.
+7. Merge M2A.
+8. Apply the exact canonical M2A migration to production.
+9. Verify catalog privileges, locks, Data API exposure, reports and that ingest remains paused.
+10. Reconcile/create/promote pilot mappings and attest five competitions + 20 teams through the reviewed process.
+11. Amend/rerun A2-B PR #19.
+12. Rehearse recovery runbook on synthetic data.
+13. Review M2B plus the pre-reviewed unmerged M2C revoke.
+14. Apply M2B.
+15. Run the allow-listed 1–2 fixture real Match Ledger pilot.
+16. Inspect persisted observations, attestation sidecars, V2 reads, impact/conflict reports and idempotent re-ingest.
+17. Apply M2C immediately if any gate fails; otherwise continue only with a newly reviewed staged scope.
+18. Expand gradually: 10 pilot fixtures -> one matchweek/competition -> one season slice -> broader corpus.
 
 ---
 
-## 19. Explicit review questions
+## 19. Review reconciliation decisions
 
-Reviewers should challenge these points rather than merely approve the design:
+Independent Opus and Fable reviews agreed on the core architecture and independently found the same major missing controls. This revision adopts the strictest compatible resolution:
 
-1. Is current-projection + immutable-events better here than a pure append-only attestation model?
-2. Is a provider-wide shared/exclusive advisory lock too coarse, or is the simplicity worth it for rare operator writes?
-3. Is the proposed ±48-hour kickoff bound too permissive for an existing provider fixture mapping?
-4. Should an evidence refresh of the same canonical id update the current projection, or should every attestation version be a separate current-state row?
-5. Should the old V1 provider-ref report keep service-role EXECUTE after V2 exists, or should it remain present but be de-authorized to prevent accidental use?
-6. Are separate team and competition tables preferable to a generic entity attestation table?
-7. Are there any paths where V3 mapping INSERTs could still create an identity that Stage 1 would accidentally trust?
-8. Is there any lock-order/deadlock scenario missed by the proposed provider identity lock?
-9. Should the existing fixture mapping path require a tighter kickoff bound or another independent fixture field?
-10. Is keeping ingest disabled until a separate M2B activation migration unnecessarily conservative, or the correct blast-radius control?
-11. Is the attestation evidence taxonomy too weak/too strong for repeatable reconciliation?
-12. Are there any existing frozen-contract/additive-migration constraints this RFC violates?
+1. **Read-side enforcement:** accepted. V2 readers exclude refs-less/unattested/revoked generations.
+2. **Observation provenance:** accepted. V2 observations seal attestation event/generation ids.
+3. **Pre-ingest readiness report:** accepted. Entity-level conflicts do not depend on existing observations.
+4. **Existing fixture uniqueness:** accepted. Existing mappings run the full pair/candidate classification under the pair lock.
+5. **`manual_override` prerequisite:** accepted. It is necessary but not sufficient, specifically to prevent delete + V3 reinsert from regaining trust.
+6. **Fixture status/null competition:** accepted as fail-closed conditions.
+7. **Versioned ingest/read/report contracts:** accepted. No in-place trust-model replacement.
+8. **Run allowlist:** accepted and mandatory for V2.
+9. **Recovery/impact path:** accepted before activation.
+10. **RPC DML guard hardening:** accepted; flag is narrow-lived and lock-held is required.
+11. **Canonical fixture row lock:** accepted despite Fable calling it optional; the cost is low and it strengthens post-check stability.
+12. **±48h window:** retained, but only with full candidate uniqueness; reviewers agreed the window itself is not the safety mechanism.
+13. **M2A/M2B split:** retained and strengthened with a pre-reviewed, unmerged M2C revoke path.
+14. **Projection + immutable events:** retained, now with explicit generations and idempotent refresh.
+15. **Players:** unchanged.
 
-A reviewer should return concrete objections, counterexamples and exact changes, not only a verdict.
+One production check remains intentionally external to the repo: confirm `private` is not an exposed Data API schema before M2A is applied.
 
 ---
 
 ## 20. Acceptance criteria for leaving RFC state
 
-This RFC is ready for implementation only when:
+This RFC is ready for M2A implementation only when:
 
-- Opus review has been reconciled;
-- Fable review has been reconciled;
-- no unresolved critical trust/lock/security issue remains;
-- fixture identity semantics are explicit;
-- attestation mutation/revocation semantics are explicit;
-- M2A/M2B separation is accepted;
-- additive migration/report-versioning policy is accepted;
-- the implementation test matrix is agreed.
+- the revised document receives final independent sanity review from Opus and Fable;
+- neither review identifies an unresolved BLOCKING trust/concurrency/security issue;
+- the `manual_override + attestation + generation` trust rule is accepted;
+- V2 reader semantics and revocation behavior are accepted;
+- existing fixture uniqueness/classification behavior is accepted;
+- V2 run allowlist and M2B/M2C activation model are accepted;
+- recovery semantics are accepted;
+- security/grant assumptions are explicit;
+- the full implementation test matrix is agreed.
 
-Until then, historical ingest remains paused.
+Until all criteria pass, historical provider ingest remains paused.
