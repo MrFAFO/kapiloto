@@ -385,9 +385,21 @@ async function main(): Promise<void> {
     competitions: entitlement.map((row) => ({ providerLeagueId: row.providerLeagueId, name: row.name })),
   };
   const entitlementSha256 = providerEntitlementSnapshotSha256(entitlementSnapshot);
+  const entitlementDetailsSha256 = sha256(
+    new TextEncoder().encode(JSON.stringify(entitlement)),
+  );
   await writeFile(
     path.join(args.out, "entitlement.json"),
-    JSON.stringify({ ...entitlementSnapshot, details: entitlement, sha256: entitlementSha256 }, null, 2) + "\n",
+    JSON.stringify(
+      {
+        ...entitlementSnapshot,
+        details: entitlement,
+        sha256: entitlementSha256,
+        details_sha256: entitlementDetailsSha256,
+      },
+      null,
+      2,
+    ) + "\n",
     "utf8",
   );
 
@@ -558,6 +570,7 @@ async function main(): Promise<void> {
     scoringLookbackDays: DEFAULT_SHADOW_CYCLE_CONFIG.scoringLookbackDays,
     fixtureMintKickoffBefore: mintBound,
     entitlementSnapshotSha256: entitlementSha256,
+    entitlementDetailsSha256,
     targets,
     recentCounts,
     providerSemanticEvidence,
@@ -586,6 +599,8 @@ async function main(): Promise<void> {
       error: item.parseError,
     })),
     rawResponses: archive.snapshot().length,
+    entitlementSnapshotSha256: entitlementSha256,
+    entitlementDetailsSha256,
     mintBound,
     backfillApproved: false,
   }, null, 2) + "\n");
