@@ -388,8 +388,18 @@ identity. At minimum:
 - player bootstrap semantics remain separate and unchanged;
 - ingest EXECUTE is re-granted only after the Stage 1 migration and tests pass.
 
+Accepted design: D-058 and `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md`.
+
+**M2A status: implemented on branch `feat/v4-identity-attestations-m2a`
+(migration `20261031100000_kapiloto_v4_identity_attestations.sql`), draft PR,
+not merged, not applied to production.** It builds the attestation state,
+attest/revoke RPCs, sealed observation provenance, V2 ingest, V2 reads and the
+readiness/impact/reconciliation reports. Ingest stays disabled: V1 and V2
+ingest are both non-executable by `service_role`. No real team or competition
+has been attested.
+
 The 20 teams from the 10-fixture pilot remain the first reconciliation scope
-after Stage 1 lands.
+after M2A is merged and applied.
 
 ### Previously treated as trusted under A2-A columns: 5/20
 
@@ -460,22 +470,36 @@ The D-057 DB trigger remains the safety boundary; the V3 code change removes
 the repeated overwrite attempts and self-promotion path rather than replacing
 the database guard.
 
-### Gate 3 — Stage 1 V4 identity attestations
+### Gate 3 — Stage 1 V4 identity attestations (M2A built; review pending)
 
-Implement the reviewed attestation architecture before any provider ingest is
-re-enabled.
+D-058 accepted the architecture. M2A is implemented on
+`feat/v4-identity-attestations-m2a` (draft PR, not merged, not applied):
 
-Required properties:
+- current team/competition projections plus immutable event generations,
+  injectivity in both directions, `ON DELETE NO ACTION` canonical FKs;
+- attest/revoke RPCs (Sportmonks only, `manual_override` mapping required,
+  first-write-of-transaction rule, function-level `lock_timeout = 5s`,
+  exclusive provider identity lock, flag + lock-guarded projection/event DML);
+- observation identity-attestation sidecar with typed event FKs and integrity
+  checks;
+- `match_ledger_ingest_provider_fixture_v2` (mandatory run allowlist, full
+  candidate classification for existing fixture mappings, pair lock on both
+  paths, selected fixture row `FOR SHARE`, `attestation_generation_stale`);
+- V2 team-match-stat reads and trust-aware exclusions for every provider;
+- entity readiness report, observation-level reconciliation V2, revocation
+  impact report;
+- V1 ingest and V2 ingest both revoked from `service_role`; the V1 stat reads,
+  V1 exclusions and V1 provider-ref report are de-authorized but present.
 
-- immutable/current attestation state plus append-only events;
-- service-role-only access, RLS, no SECURITY DEFINER;
-- explicit attest/revoke RPCs;
-- mapping + attestation agreement for team/competition trust;
-- injectivity at the trusted boundary;
-- reconciliation/conflict reporting;
-- fixture trust derived from attested identities and fixture facts;
-- full lock/security/atomicity tests;
-- ingest EXECUTE re-granted only at the end of the migration.
+Next: independent code/migration review, merge, production `private`
+exposed-schema check, then apply M2A. Ingest stays disabled until M2B.
+
+Recovery of a chain that V2 wrongly **minted**: it is never minted again
+(the applied A2-A `match_ledger_fixture_mints` is unique per
+`(provider, provider_fixture_id)`; V2 quarantines `fixture_mint_exists`). The
+operator creates the reviewed canonical fixture row and the re-ingest attaches
+to it; the orphaned mint is reported as `mint_without_mapping`. Both paths are
+tested; the runbook rehearsal before M2B covers them.
 
 ### Gate 4 — amend A2-B pilot tooling
 
@@ -516,8 +540,12 @@ grandfather them merely because they are already confidence 1.
 
 ### Gate 6 — tiny real Match Ledger ingest
 
-Only after Stage 1 and team reconciliation, re-enable ingest and run the
-smallest useful real pilot.
+Only after M2A is applied, team reconciliation is done and M2B is reviewed,
+grant V2 ingest (M2B) and run the smallest useful real pilot. M2B stays NO-GO
+while the 1A/1C Match Ledger reads (`squad_state_inputs_as_of`, the 1A
+observation/team/player as-of reads and the lineup/squad-state snapshot paths)
+are not attestation-aware and could be activated; a boundary test now proves
+no production app/script/cron path calls them.
 
 Minimum expectations:
 
@@ -670,7 +698,7 @@ Preserve:
 As of the snapshot date:
 
 - no broad Sportmonks historical backfill;
-- no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest is intentionally paused by D-057 until Stage 1 attestations land;
+- no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A (on a branch, not applied) keeps V1 and V2 ingest non-executable by `service_role`, and only the separate M2B migration may grant V2;
 - the 15 missing pilot-team mappings are not resolved;
 - PR #19 is not merged;
 - V4 Match Ledger is not silently feeding V3 research/probabilities;

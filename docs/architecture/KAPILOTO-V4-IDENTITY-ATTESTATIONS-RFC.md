@@ -970,3 +970,70 @@ All M2A architecture acceptance criteria are now satisfied:
 Therefore **M2A architecture is ready for implementation**.
 
 Historical provider ingest remains paused. M2B remains NO-GO until §14.7's uncovered readers are gated/versioned and every readiness condition in §16 passes.
+
+---
+
+## 21. M2A implementation notes
+
+Implemented on `feat/v4-identity-attestations-m2a` in
+`supabase/migrations/20261031100000_kapiloto_v4_identity_attestations.sql`.
+Not merged; not applied to production. These notes record concrete names and
+details; they do not change the architecture above.
+
+- **Objects.** Private: `provider_team_identity_attestations`,
+  `provider_competition_identity_attestations`,
+  `provider_team_identity_attestation_events`,
+  `provider_competition_identity_attestation_events`. Public sidecar:
+  `match_ledger_observation_identity_attestations`
+  (`team_attestation_event_id` / `competition_attestation_event_id`). RPCs as
+  in §7; V2 ingest, reads and reports as in §13-§14. Trust helpers take an
+  optional expected generation:
+  `private.provider_team_attestation_matches(provider, ref, team_id, generation)`.
+- **Evidence hash** is the SHA-256 of jsonb's normalized text, so key order and
+  whitespace do not change it.
+- **Projection consistency** is trigger-enforced: a projection row always
+  equals its latest non-revoke event, never changes provider ref, canonical id,
+  generation or `first_attested_at` in place, is deleted only after its
+  generation's revoke event, and a generation that has a revoke event can never
+  be inserted or updated as the current projection again.
+- **Sidecar check** requires the projection's current (latest) event; an
+  older event of the same generation (before an evidence refresh) is refused.
+- **Stale generation (§13.2).** 1A remains the only content-hash authority:
+  V2 computes generation staleness before calling 1A and, when 1A reports the
+  content unchanged, turns that into the `attestation_generation_stale`
+  quarantine and rolls phase 2 back.
+- **Concrete quarantine codes.** `fixture_outside_run_scope`;
+  `competition_mapping_not_manual_override`, `competition_attestation_missing`,
+  `competition_attestation_mismatch`; `team_mapping_not_manual_override`,
+  `team_attestation_missing`, `team_attestation_mismatch`;
+  `fixture_mapping_team_conflict`, `_orientation_conflict`,
+  `_competition_conflict`, `_kickoff_conflict`, `_status_conflict`,
+  `_provider_identity_conflict`, `_candidate_ambiguous`,
+  `_competition_unknown`, `_possible_postponement`, `_reschedule_conflict`
+  (all `fixture_mapping_*`); `fixture_candidate_changed` (attach target moved
+  under the lock); `fixture_mint_exists` (a mint already exists for the
+  provider fixture id); `attestation_generation_stale`. A family-status
+  upgrade with no content change is `family_status_drift` and takes precedence
+  over the stale generation. A2-A codes for
+  unmapped identities, the no-mapping candidate path, drift, families and
+  players are kept.
+- **Exclusion reasons (§14.6)** add `mapping_missing` and `mapping_disagrees`
+  next to the four listed. `generation_revoked` means revoked with nothing
+  active now; `attestation_generation_stale` means revoked and re-attested.
+- **Readiness report (§14.2)** also reports `mint_without_mapping` (warning,
+  `entity_kind = 'fixture'`): a minted fixture whose provider mapping is gone,
+  i.e. a withdrawn chain under recovery.
+- **Lock timeout.** The function-level 5 s `lock_timeout` bounds every wait of
+  a V2 call, including the provider-fixture advisory lock, so two concurrent
+  V2 calls for one provider fixture id no longer serialize as V1 did.
+- **Reconciliation V2 (§14.3)** also reports `*_mapping_not_manual_override`
+  and `*_attestation_generation_stale`.
+- **Run row immutability.** `provider_ingest_runs` (A2-A) is already
+  immutable, so a reviewed allowlist cannot be widened after creation.
+- **Minted-chain recovery (§14.5).** A chain V2 wrongly **minted** is never
+  minted again: the applied A2-A `match_ledger_fixture_mints` is unique per
+  `(provider, provider_fixture_id)`, and V2 quarantines `fixture_mint_exists`.
+  Recovery is: the operator creates the reviewed canonical fixture row, and the
+  re-ingest attaches to it (tested end to end). The orphaned mint stays
+  reported as `mint_without_mapping` until an operator decision about the
+  orphan row. The runbook rehearsal before M2B covers this path.

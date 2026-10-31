@@ -1,5 +1,5 @@
 import type { DataStatus, MatchStatus, TeamSide } from "./match-ledger";
-import { TEAM_MATCH_STATS_CONTRACT_VERSION } from "./versions";
+import { TEAM_MATCH_STATS_CONTRACT_VERSION, TEAM_MATCH_STATS_V2_CONTRACT_VERSION } from "./versions";
 
 /**
  * kapiloto-team-match-stats-v1: canonical per-team, per-fixture match stats
@@ -86,7 +86,7 @@ export type TeamMatchStatsRow = {
 };
 
 export type TeamMatchStatsResult = {
-  contractVersion: typeof TEAM_MATCH_STATS_CONTRACT_VERSION;
+  contractVersion: typeof TEAM_MATCH_STATS_CONTRACT_VERSION | typeof TEAM_MATCH_STATS_V2_CONTRACT_VERSION;
   evaluationClass: "actual" | "retrospective";
   availabilityPolicy: string | null;
   provider: string;
@@ -94,9 +94,17 @@ export type TeamMatchStatsResult = {
   rows: TeamMatchStatsRow[];
 };
 
+/**
+ * asOf / forTraining are the frozen A2-A (V1) reads: present for inspection,
+ * not executable by service_role after D-058 because they return
+ * observations without attestation provenance. The Stage 1 historical path
+ * is asOfV2 / forTrainingV2: same row shape, attestation-gated row set.
+ */
 export const TEAM_MATCH_STATS_FUNCTIONS = {
   asOf: "match_ledger_team_match_stats_as_of",
   forTraining: "match_ledger_team_match_stats_for_training",
+  asOfV2: "match_ledger_team_match_stats_as_of_v2",
+  forTrainingV2: "match_ledger_team_match_stats_for_training_v2",
 } as const;
 
 export type TeamMatchStatsQuery = {
@@ -108,7 +116,7 @@ export type TeamMatchStatsQuery = {
 };
 
 export type TeamMatchStatsRpc = (
-  fn: typeof TEAM_MATCH_STATS_FUNCTIONS.asOf,
+  fn: typeof TEAM_MATCH_STATS_FUNCTIONS.asOf | typeof TEAM_MATCH_STATS_FUNCTIONS.asOfV2,
   args: { p_provider: string; p_competition_ids: string[] | null; p_from: string | null; p_cutoff: string },
 ) => Promise<unknown>;
 
@@ -195,7 +203,34 @@ export function assertTeamMatchStatsQuery(query: TeamMatchStatsQuery, cutoff: st
   if (query.competitionIds !== null && query.competitionIds.length === 0) throw new Error("competitionIds must be null or non-empty");
 }
 
-/** Strict as-of read: only observations the ledger actually knew at the cutoff. */
+/**
+ * Stage 1 strict as-of read (D-058): the V1 strict read restricted to
+ * observations whose sealed league/home/away attestation generations are
+ * still current and whose mappings are agreeing manual_override rows. Plain 1A
+ * writes and providers without Stage 1 attestations return no rows.
+ */
+export async function loadTeamMatchStatsV2(
+  rpc: TeamMatchStatsRpc,
+  query: TeamMatchStatsQuery & { cutoff: string },
+): Promise<TeamMatchStatsResult> {
+  assertTeamMatchStatsQuery(query, query.cutoff);
+  const value = await rpc(TEAM_MATCH_STATS_FUNCTIONS.asOfV2, {
+    p_provider: query.provider,
+    p_competition_ids: query.competitionIds?.map((id) => id.toLowerCase()) ?? null,
+    p_from: query.from,
+    p_cutoff: query.cutoff,
+  });
+  return {
+    contractVersion: TEAM_MATCH_STATS_V2_CONTRACT_VERSION,
+    evaluationClass: "actual",
+    availabilityPolicy: null,
+    provider: query.provider,
+    cutoff: query.cutoff,
+    rows: parseTeamMatchStatsRows(value, { evaluationClass: "actual", availabilityPolicy: null, provider: query.provider, cutoff: query.cutoff }),
+  };
+}
+
+/** Frozen V1 strict as-of read: only observations the ledger actually knew at the cutoff. */
 export async function loadTeamMatchStats(
   rpc: TeamMatchStatsRpc,
   query: TeamMatchStatsQuery & { cutoff: string },

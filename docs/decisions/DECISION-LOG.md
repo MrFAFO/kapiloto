@@ -423,6 +423,7 @@ Decision:
 Implementation status:
 - Independent Opus and Fable final reviews both concluded that **M2A architecture is ready for implementation** after the above spec/test details are folded in.
 - M2B remains NO-GO until uncovered reads are gated, the entity/reconciliation reports are clean for pilot scope, the recovery runbook is rehearsed, A2-B is amended/re-run, the reviewed run allowlist is fixed, and the production `private` schema exposure check is clean.
+- M2A is implemented on `feat/v4-identity-attestations-m2a` (migration `20261031100000_kapiloto_v4_identity_attestations.sql`; not merged, not applied). Implementation clarification, not a redesign: a chain V2 wrongly minted is never minted again because the applied A2-A `match_ledger_fixture_mints` is unique per `(provider, provider_fixture_id)`; V2 quarantines `fixture_mint_exists`, recovery attaches the re-ingest to an operator-created reviewed canonical fixture, and the orphaned mint is reported as `mint_without_mapping`. A revoked attestation generation can never be reactivated, even by direct projection writes.
 
 Details: `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md`.
 

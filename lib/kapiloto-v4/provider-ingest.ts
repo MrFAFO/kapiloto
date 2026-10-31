@@ -72,7 +72,40 @@ export const PROVIDER_INGEST_QUARANTINE_CODES = [
   "family_status_downgrade",
   "family_status_drift",
 ] as const;
-export type ProviderIngestQuarantineCode = (typeof PROVIDER_INGEST_QUARANTINE_CODES)[number];
+
+/**
+ * Quarantine codes of the V2 ingest (D-058) beyond the A2-A codes it keeps
+ * (competition_unmapped, team_unmapped, team_identity_conflict, the
+ * no-mapping candidate codes, drift and family codes, player_mapping_unverified,
+ * fixture_mapping_unverified, fixture_mapping_conflict). V2 never returns
+ * competition_untrusted, team_untrusted or fixture_mapping_untrusted.
+ */
+export const PROVIDER_INGEST_V2_QUARANTINE_CODES = [
+  "fixture_outside_run_scope",
+  "competition_mapping_not_manual_override",
+  "competition_attestation_missing",
+  "competition_attestation_mismatch",
+  "team_mapping_not_manual_override",
+  "team_attestation_missing",
+  "team_attestation_mismatch",
+  "fixture_mapping_team_conflict",
+  "fixture_mapping_orientation_conflict",
+  "fixture_mapping_competition_conflict",
+  "fixture_mapping_kickoff_conflict",
+  "fixture_mapping_status_conflict",
+  "fixture_mapping_provider_identity_conflict",
+  "fixture_mapping_candidate_ambiguous",
+  "fixture_mapping_competition_unknown",
+  "fixture_mapping_possible_postponement",
+  "fixture_mapping_reschedule_conflict",
+  "fixture_candidate_changed",
+  "fixture_mint_exists",
+  "attestation_generation_stale",
+] as const;
+
+export type ProviderIngestQuarantineCode =
+  | (typeof PROVIDER_INGEST_QUARANTINE_CODES)[number]
+  | (typeof PROVIDER_INGEST_V2_QUARANTINE_CODES)[number];
 
 /**
  * Recoverable capture issues a parser normalized away (closed set, mirrored by
@@ -96,14 +129,24 @@ export const MAX_CAPTURE_QUALITY_FLAGS = 32;
 export const FIXTURE_RESOLUTIONS = ["existing_mapping", "attached", "minted"] as const;
 export type FixtureResolution = (typeof FIXTURE_RESOLUTIONS)[number];
 
+/**
+ * ingestFixture / providerRefConflicts are the frozen A2-A (V1) contracts:
+ * present for inspection, not executable by service_role (D-057, D-058).
+ * The Stage 1 path is ingestFixtureV2 (granted only by the separate M2B
+ * migration) and providerRefConflictsV2.
+ */
 export const PROVIDER_INGEST_FUNCTIONS = {
   ingestFixture: "match_ledger_ingest_provider_fixture",
+  ingestFixtureV2: "match_ledger_ingest_provider_fixture_v2",
   recordFailure: "provider_ingest_record_failure",
   providerRefConflicts: "match_ledger_provider_ref_conflicts",
+  providerRefConflictsV2: "match_ledger_provider_ref_conflicts_v2",
 } as const;
 
 /**
- * Historical ingest trust boundary, stricter than V3's own resolution:
+ * A2-A (V1) historical ingest trust boundary, superseded by D-058 for the V2
+ * path (manual_override mapping AND agreeing V4 attestation; confidence is
+ * never consulted). Kept because the V1 functions remain inspectable:
  * a team or an existing fixture mapping is trusted only as manual_override, or
  * confirmed with mapping_confidence = 1; a competition mapping only as
  * manual_override (the table has no confidence). Mirrors
@@ -192,6 +235,8 @@ export type ProviderIngestResult = {
   /** recorded: first annotated version; matched: refs equal the latest version's. */
   provider_refs_status?: "recorded" | "matched" | "unrecorded" | "drift";
   players_minted?: number;
+  /** V2 only: the attestation generations the call resolved league/home/away under. */
+  attestation_generations?: { league: string; team_home: string; team_away: string };
 };
 
 export type ProviderIngestFailureResult = {
@@ -359,7 +404,11 @@ export function buildProviderMatchObservationPayload(observation: ProviderMatchO
   };
 }
 
-/** Validates, then calls public.match_ledger_ingest_provider_fixture (service_role). */
+/**
+ * @deprecated Calls the frozen A2-A RPC public.match_ledger_ingest_provider_fixture,
+ * which is permanently revoked from service_role (D-057, D-058): in production
+ * it fails with permission denied. Use recordProviderMatchObservationV2.
+ */
 export async function recordProviderMatchObservation(
   rpc: ProviderIngestRpc,
   observation: ProviderMatchObservation,
@@ -367,6 +416,25 @@ export async function recordProviderMatchObservation(
   const issues = validateProviderMatchObservation(observation);
   if (issues.length > 0) throw new Error(`invalid provider match observation: ${issues.join("; ")}`);
   return (await rpc(PROVIDER_INGEST_FUNCTIONS.ingestFixture, {
+    p_observation: buildProviderMatchObservationPayload(observation),
+  })) as ProviderIngestResult;
+}
+
+/**
+ * Validates, then calls public.match_ledger_ingest_provider_fixture_v2 (D-058).
+ * A run is mandatory: its immutable scope.provider_fixture_ids must list the
+ * fixture, or the RPC quarantines fixture_outside_run_scope. That allowlist
+ * contains accidents; it is not a boundary against a deliberately malicious
+ * service_role. Not executable by service_role until the M2B migration.
+ */
+export async function recordProviderMatchObservationV2(
+  rpc: ProviderIngestRpc,
+  observation: ProviderMatchObservation,
+): Promise<ProviderIngestResult> {
+  const issues = validateProviderMatchObservation(observation);
+  if (observation.runId === null) issues.push("V2 ingest requires a runId");
+  if (issues.length > 0) throw new Error(`invalid provider match observation: ${issues.join("; ")}`);
+  return (await rpc(PROVIDER_INGEST_FUNCTIONS.ingestFixtureV2, {
     p_observation: buildProviderMatchObservationPayload(observation),
   })) as ProviderIngestResult;
 }
@@ -505,5 +573,54 @@ export async function loadProviderRefConflicts(rpc: ProviderIngestRpc, provider:
       ...(row as unknown as ProviderRefConflict),
       current_mapping_confidence: row.current_mapping_confidence === null || row.current_mapping_confidence === undefined ? null : Number(row.current_mapping_confidence),
     };
+  });
+}
+
+/** Attestation-aware observation-level reconciliation (D-058). */
+export const PROVIDER_REF_CONFLICT_V2_CODES = [
+  "team_mapping_missing",
+  "team_mapping_not_manual_override",
+  "team_attestation_missing",
+  "team_mapping_attestation_mismatch",
+  "team_attested_canonical_drift",
+  "team_attestation_generation_stale",
+  "competition_mapping_missing",
+  "competition_mapping_not_manual_override",
+  "competition_attestation_missing",
+  "competition_mapping_attestation_mismatch",
+  "competition_attested_canonical_drift",
+  "competition_attestation_generation_stale",
+  "fixture_competition_drift",
+] as const;
+export type ProviderRefConflictV2Code = (typeof PROVIDER_REF_CONFLICT_V2_CODES)[number];
+
+export type ProviderRefConflictV2 = {
+  issue_code: ProviderRefConflictV2Code;
+  observation_id: string;
+  observation_version: number;
+  is_current_version: boolean;
+  fixture_id: string;
+  provider_fixture_id: string;
+  ref_kind: "league" | "team_home" | "team_away";
+  provider_ref: string;
+  recorded_canonical_id: string;
+  sealed_attestation_generation_id: string | null;
+  current_mapping_canonical_id: string | null;
+  current_mapping_status: string | null;
+  current_attested_canonical_id: string | null;
+  current_attestation_generation_id: string | null;
+};
+
+/** Detection only: sealed refs/generations vs today's mappings and attestations. */
+export async function loadProviderRefConflictsV2(rpc: ProviderIngestRpc, provider: string): Promise<ProviderRefConflictV2[]> {
+  if (!PROVIDER.test(provider)) throw new Error("invalid provider");
+  const value = await rpc(PROVIDER_INGEST_FUNCTIONS.providerRefConflictsV2, { p_provider: provider });
+  if (!Array.isArray(value)) throw new Error("provider-ref conflicts must be an array");
+  return value.map((item, index) => {
+    const row = item as Record<string, unknown>;
+    if (!(PROVIDER_REF_CONFLICT_V2_CODES as readonly string[]).includes(row.issue_code as string)) {
+      throw new Error(`provider-ref conflict ${index} has an unknown issue code`);
+    }
+    return row as unknown as ProviderRefConflictV2;
   });
 }

@@ -2,7 +2,8 @@
 // (1A), the document/claim knowledge registry and the prediction registry
 // (1B), roster membership and the deterministic pre-match squad state (1C),
 // the lineup forecast baseline with Prediction Registry V2 (1D), and the
-// provider-native Match Ledger ingest with strict team match stats (1E-A2-A).
+// provider-native Match Ledger ingest with strict team match stats (1E-A2-A),
+// and Stage 1 provider identity attestations with V2 ingest/reads (D-058).
 // The retrospective training read (./training) is deliberately not exported.
 // Not wired into V3 research yet; lib/kapiloto must not import this module.
 export * from "./versions";
@@ -22,3 +23,4 @@ export * from "./lineup-snapshot";
 export * from "./provider-ingest";
 export * from "./sportmonks-ledger";
 export * from "./team-match-stats";
+export * from "./identity-attestations";

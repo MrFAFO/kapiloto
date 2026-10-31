@@ -13,7 +13,9 @@ const V4_MIGRATIONS = [
   /_kapiloto_v4_squad_state_features_v2\.sql$/,
   /_kapiloto_v4_provider_ingest\.sql$/,
   /_kapiloto_v4_identity_mapping_guard\.sql$/,
+  /_kapiloto_v4_identity_attestations\.sql$/,
 ];
+const IDENTITY_ATTESTATIONS_MIGRATION = /_kapiloto_v4_identity_attestations\.sql$/;
 // The one deliberate exception to "no trigger on a V3 table" (D-057): a
 // row-level BEFORE UPDATE guard on the three V3 identity mapping tables.
 const IDENTITY_GUARD_MIGRATION = /_kapiloto_v4_identity_mapping_guard\.sql$/;
@@ -57,6 +59,14 @@ const V4_TABLES = new Set([
   "match_ledger_observation_provider_refs",
   "match_ledger_observation_family_fetches",
   "match_ledger_fixture_mints",
+  "match_ledger_observation_identity_attestations",
+]);
+// V4-owned tables in the unexposed private schema (D-058 attestation state).
+const V4_PRIVATE_TABLES = new Set([
+  "provider_team_identity_attestation_events",
+  "provider_competition_identity_attestation_events",
+  "provider_team_identity_attestations",
+  "provider_competition_identity_attestations",
 ]);
 
 function sourceFiles(dir: string): string[] {
@@ -93,7 +103,7 @@ test("the V4 migrations are the latest, in order, and strictly additive", () => 
     assert.equal(matches.length, 1, String(pattern));
     return matches[0];
   });
-  // 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A, the D-057 guard in order, and nothing after them.
+  // 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A, the D-057 guard, Stage 1 M2A in order, and nothing after them.
   assert.deepEqual(files.slice(-v4.length), v4);
   for (const file of v4) {
     const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
@@ -107,6 +117,9 @@ test("the V4 migrations are the latest, in order, and strictly additive", () => 
     }
     for (const match of sql.matchAll(/\bcreate\s+table\s+public\.([a-z_]+)/g)) {
       assert.ok(V4_TABLES.has(match[1]), `${file} creates unexpected table ${match[1]}`);
+    }
+    for (const match of sql.matchAll(/\b(?:create|alter)\s+table\s+private\.([a-z_]+)/g)) {
+      assert.ok(V4_PRIVATE_TABLES.has(match[1]), `${file} creates or alters unexpected private table ${match[1]}`);
     }
   }
   // 1B onwards add no trigger, constraint or index to an existing (pre-V4)
@@ -149,8 +162,9 @@ test("the 1D migration does not redefine any V1 prediction registry function", (
   assert.ok(sql.includes("create or replace function public.prediction_record_snapshot_v2("));
 });
 
-// Foundation 1A, 1B, 1C, 1D and 1E-A1 are applied; their migrations
-// must never change (line endings normalized so CRLF checkouts hash the same).
+// Foundation 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A and the D-057 guard are applied;
+// their migrations must never change (line endings normalized so CRLF
+// checkouts hash the same).
 test("the applied V4 migrations are byte-for-byte unchanged", () => {
   const applied: Record<string, string> = {
     "20261028010437_kapiloto_v4_entities_match_ledger.sql": "8e9ebcebe0e930c85f929a9906926f52c95c9d784edd3a70dc8d8e94b357b0a9",
@@ -158,6 +172,8 @@ test("the applied V4 migrations are byte-for-byte unchanged", () => {
     "20261029074019_kapiloto_v4_roster_squad_state.sql": "48fcddd3fa9588afaf7a5a8f461b92fe7bf9d956c27a39a6a7b79a9e9ceb0199",
     "20261029085303_kapiloto_v4_lineup_prediction_registry_v2.sql": "0e9b51be73b69544864a1a2dd53b350d0942cb9ec883e638a941ffc0917e9297",
     "20261029211641_kapiloto_v4_squad_state_features_v2.sql": "421b3df180e9a745d44c184111838a423e771b12bee0e74b3a35419aee51ca6b",
+    "20261030101247_kapiloto_v4_provider_ingest.sql": "5ab815c4c74f08b5505c8cc850f972fd7fd9847f032dcdd97f3e5afe64379cf8",
+    "20261030211645_kapiloto_v4_identity_mapping_guard.sql": "6f2e1a4b5b7a091481eca9b6c435bda47952fd4b4bace46ae3dfe4446cd207b3",
   };
   for (const [file, sha256] of Object.entries(applied)) {
     const text = readFileSync(join(ROOT, "supabase", "migrations", file), "utf8").replace(/\r\n/g, "\n");
@@ -205,5 +221,71 @@ test("only training code imports the retrospective team-stats loader", () => {
   for (const name of ["squad-state.ts", "lineup-snapshot.ts", "lineup-model.ts", "prediction-registry.ts", "index.ts"]) {
     const text = readFileSync(join(v4, name), "utf8");
     assert.ok(!text.includes("training/") && !text.includes("ForTraining") && !text.includes("retrospective-training"), name);
+  }
+});
+
+// Stage 1 M2A (D-058) adds versioned V2 contracts next to the V1 ones: it
+// never redefines a V1/1A/A2-A function or the D-057 guard, never alters a V3
+// table, never creates teams/competitions/team or competition mappings, and
+// never grants V2 ingest (only the separate M2B migration may).
+test("the M2A migration is additive: no V1 redefinition, no V3 table change, V2 ingest explicitly revoked from service_role and never granted", () => {
+  const dir = join(ROOT, "supabase", "migrations");
+  const file = readdirSync(dir).find((name) => IDENTITY_ATTESTATIONS_MIGRATION.test(name))!;
+  const sql = readFileSync(join(dir, file), "utf8").toLowerCase().replace(/\r\n/g, "\n");
+  const code = sql.split("\n").filter((line) => !line.trimStart().startsWith("--")).join("\n");
+  for (const fn of [
+    "public.match_ledger_ingest_provider_fixture",
+    "public.match_ledger_record_observation",
+    "public.match_ledger_team_match_stats_as_of",
+    "public.match_ledger_team_match_stats_for_training",
+    "public.match_ledger_retrospective_training_exclusions",
+    "public.match_ledger_provider_ref_conflicts",
+    "public.match_ledger_mapping_conflicts",
+    "public.squad_state_inputs_as_of",
+    "public.match_ledger_observation_as_of",
+    "public.match_ledger_provider_team_matches_as_of",
+    "public.match_ledger_provider_player_matches_as_of",
+    "private.provider_mapping_trusted",
+    "private.provider_competition_mapping_trusted",
+    "private.match_ledger_team_match_stats",
+    "private.match_ledger_effective_versions",
+    "private.match_ledger_retrospective_exclusions",
+    "private.guard_v3_identity_mapping_update",
+    "private.seal_match_ledger_observation_annotation",
+  ]) {
+    assert.ok(!code.includes(`create or replace function ${fn}(`), fn);
+  }
+  for (const v3 of ["fixtures", "teams", "competitions", "provider_team_mappings", "provider_competition_mappings", "provider_fixture_mappings", "round_games"]) {
+    assert.ok(!code.includes(`alter table public.${v3} `), v3);
+    assert.ok(!new RegExp(`\\bon\\s+public\\.${v3}\\b`).test(code), v3);
+  }
+  for (const table of ["teams", "competitions", "provider_team_mappings", "provider_competition_mappings"]) {
+    assert.ok(!new RegExp(`insert\\s+into\\s+public\\.${table}\\b`).test(code), table);
+  }
+  assert.doesNotMatch(code, /\bgrant\b[^;]*\bmatch_ledger_ingest_provider_fixture(_v2)?\(/);
+  assert.match(code, /revoke all on function public\.match_ledger_ingest_provider_fixture_v2\(jsonb\) from public, anon, authenticated, service_role;/);
+  assert.doesNotMatch(code, /\bdrop\s+trigger\b|\bdisable\s+trigger\b/);
+});
+
+// D-058 M2B gate: the 1A/1C Match Ledger reads are not attestation-aware, so
+// no production path may activate them (or any V4 consumer) until
+// attestation-aware successors exist. This guard keeps that true.
+test("no production app/script/cron path calls the uncovered Match Ledger consumers or any V4 ingest/read RPC", () => {
+  const consumers = /squad_state_inputs_as_of|match_ledger_observation_as_of|match_ledger_provider_(team|player)_matches_as_of|prediction_record_snapshot(_v2)?|match_ledger_ingest_provider_fixture(_v2)?|match_ledger_team_match_stats|provider_identity_(attest|revoke)|kapiloto-v4/;
+  const productionFiles = ["app", "components", "scripts", "lib"]
+    .flatMap((dir) => sourceFiles(join(ROOT, dir)))
+    .concat(readdirSync(join(ROOT, "scripts")).filter((name) => /\.(mjs|js)$/.test(name)).map((name) => join(ROOT, "scripts", name)))
+    .filter((file) => !/\.test\.tsx?$/.test(file))
+    .filter((file) => !relative(ROOT, file).replace(/\\/g, "/").startsWith("lib/kapiloto-v4/"))
+    .filter((file) => relative(ROOT, file).replace(/\\/g, "/") !== "lib/supabase/database.types.ts");
+  const offenders = productionFiles.filter((file) => consumers.test(readFileSync(file, "utf8"))).map((file) => relative(ROOT, file));
+  assert.deepEqual(offenders, []);
+  assert.doesNotMatch(readFileSync(join(ROOT, "vercel.json"), "utf8"), consumers);
+  // Database cron jobs (pg_cron) never schedule them either.
+  const dir = join(ROOT, "supabase", "migrations");
+  for (const file of readdirSync(dir).filter((name) => name.endsWith(".sql"))) {
+    for (const match of readFileSync(join(dir, file), "utf8").matchAll(/cron\.schedule\(([\s\S]*?)\);/g)) {
+      assert.doesNotMatch(match[1], consumers, file);
+    }
   }
 });
