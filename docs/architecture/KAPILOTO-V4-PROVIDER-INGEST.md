@@ -1031,7 +1031,10 @@ response bytes at:
 `raw/<sha256>.bin`
 
 `raw-index.json` records the hash, sanitized endpoint, HTTP status, content
-type and byte count. This includes entitlement pages, fixture-discovery
+type and byte count. The normalized full entitlement rows (including country,
+type and sub_type) also receive a separate `entitlementDetailsSha256`, while
+the existing entitlement-snapshot hash remains backward-compatible with its
+older ID/name contract. This includes entitlement pages, fixture-discovery
 pages, required-season sampling pages and fixture-detail responses.
 
 The capture's `raw_payload_sha256` therefore has a retained byte preimage;
