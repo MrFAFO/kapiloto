@@ -433,71 +433,60 @@ Details: `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md`.
 Reason: A historical training corpus cannot rely on mutable V3 confidence/status or write-time checks alone. Trust must be independently owned, auditable per observation, revocable at read time, recoverable after mistakes, and activated only through a deliberately bounded pilot.
 
 
-## D-059 — Autonomous on-demand canonical identity bootstrap for user-facing V4
+## D-059 — Supported Competition Registry and manual league onboarding for V4 V1
 Decision:
-- **Product invariant.** A normal user may request research or a recommendation
-  for a fixture whose team or competition is not yet present in Kapiloto's
-  canonical catalog. That request must not become an operator/admin task.
-  General user-facing V4 therefore requires an autonomous identity bootstrap
-  path.
-- **Demand-driven, not world-catalog prefill.** Kapiloto does not need to
-  pre-create every club in world football. Bootstrap runs when an unresolved
-  identity is actually needed by a user request, fixture discovery or an
-  explicitly approved prewarm.
-- **Separate authority boundary.** Raw provider ingest, web research and LLM
-  output do not directly create canonical teams/competitions. They may gather
-  evidence. A dedicated, versioned Identity Bootstrap / Reconciliation service
-  owns the final attach/create decision and database write.
-- **Deterministic evidence gate.** Before an automatic attach/create, the
-  service must combine provider-native ids with competition/country context,
-  fixture pair/orientation, canonical/alias/provider duplicate search and,
-  where applicable, independent official/cross-provider evidence and the
-  Toto/Telesport canonical spelling needed to avoid a parallel Winner identity.
-  An LLM-only name match is never sufficient.
-- **Three outcomes only.**
-  1. attach the provider id to exactly one existing canonical entity;
-  2. create one new canonical entity plus protected provider mapping/aliases;
-  3. leave the identity unresolved when evidence is ambiguous.
-  The service never fuzzy-merges merely to satisfy the request.
-- **Automatic user experience.** An unresolved identity is an internal
-  quarantine/worklist condition, not a request for the end user to resolve
-  database identity. Where safe, the request may continue with reduced
-  research-only coverage while structured historical features for that entity
-  remain excluded.
-- **Concurrency/injectivity.** Automatic creation must use the same class of
-  atomic duplicate audit, provider-qualified predicates, locking, injectivity
-  checks, idempotency and post-write verification proven by the 2026-10-31
-  pilot reconciliation.
-- **Auditability.** Every automatic attach/create freezes its evidence-policy
-  version, evidence bundle/hash, duplicate-audit hash, provider refs,
-  canonical id, timestamps and resulting attestation/provenance so the
-  decision can later be reproduced, revoked or repaired.
-- **D-058 compatibility.** The current Sportmonks pilot trust rule
-  (`manual_override` plus active V4 attestation) remains valid for the bounded
-  operator pilot. D-059 does not authorize a broad service-role permission to
-  set legacy `manual_override` and self-attest. The implementation must use a
-  dedicated constrained RPC/service boundary; whether it reuses the legacy
-  mapping-status value internally or introduces a new machine-attested state is
-  an implementation/RFC decision, not something callers may infer.
-- **Activation boundary.** The tiny reviewed M2B provider-ingest pilot may
-  precede D-059 because it is fixture-scoped and operator-bounded. General
-  user-facing V4 activation is forbidden until autonomous bootstrap and its
-  degraded/unresolved behavior are implemented and tested.
+- **Initial product scope.** The first user-facing V4 release supports exactly
+  five reviewed competitions:
+  - Premier League — Sportmonks 8
+  - Bundesliga — Sportmonks 82
+  - La Liga — Sportmonks 564
+  - Serie A — Sportmonks 384
+  - Ligat Ha'al — Sportmonks 372
+- **Supported-universe model.** V4 V1 does not claim arbitrary world-football
+  coverage. Full structured analysis is available only when the fixture's
+  competition is in the Supported Competition Registry with state
+  `supported`.
+- **Registry lifecycle.** Competition onboarding uses:
+  `candidate -> validating -> supported -> paused`.
+- **Manual expansion.** New leagues are added deliberately by Kapiloto
+  operators/developers. Adding a league means onboarding the league as a whole:
+  provider entitlement/identity, current club identities, aliases/provider
+  mappings, attestations, duplicate/injectivity checks, data-family coverage,
+  parser semantics, readiness/conflict checks and rollback/pause behavior.
+  Only after those gates pass is the league promoted to `supported`.
+- **Complete club coverage inside supported leagues.** A supported league must
+  not depend on a user being the first person to discover an unseen club.
+  Before user-facing support is advertised, all clubs required for the current
+  league membership and intended product coverage must have reviewed canonical
+  identities and provider mappings under the active V4 trust contract.
+- **Unsupported requests.** If a user requests a fixture outside the supported
+  registry, V1 must not silently create canonical teams/competitions at
+  runtime. The product reports that the competition is not yet supported.
+- **No world catalog requirement.** Kapiloto's canonical catalog is allowed to
+  remain incomplete outside supported competitions. This is intentional and
+  reduces identity and historical-data risk.
+- **Future option.** Autonomous on-demand Identity Bootstrap / Reconciliation
+  may be added later. It is no longer a V1 launch requirement and is not a
+  blocker for general user-facing activation within the supported five-league
+  universe.
+- **D-058 compatibility.** Historical structured data still requires the
+  active D-058 trust contract. D-059 scopes which competitions are exposed to
+  users; it does not weaken mapping, attestation, provenance or ingest gates.
 
-Implementation requirements before user-facing activation:
-- versioned bootstrap evidence/policy contract;
-- attach-existing and create-new paths;
-- team and competition coverage;
-- atomic duplicate/injectivity protection;
-- idempotent concurrent-request behavior;
-- revocation/recovery path;
-- failure/degraded-mode semantics that do not require user intervention;
-- integration tests beginning from an unseen club requested through the real
-  recommendation/research entrypoint.
+Launch requirements for each supported competition:
+- competition identity/entitlement verified;
+- current member clubs fully onboarded for intended coverage;
+- duplicate/injectivity checks clean;
+- active trusted mappings/attestations complete;
+- provider family semantics and historical coverage validated for exposed
+  features;
+- readiness/conflict reports clean for the supported scope;
+- pause/rollback procedure documented and tested.
 
-Reason: a recommendation system that only works for identities preloaded by an
-operator is not autonomous at the product boundary. At the same time, allowing
-raw ingest or an LLM to invent canonical identity would poison historical data
-and model training. The system therefore has to automate the same evidence-
-based reconciliation discipline proven by the pilot, not remove that
-discipline.
+Reason: the first production release benefits more from a small, complete and
+well-tested football universe than from attempting to resolve every club and
+league dynamically. Five fully supported leagues give users automatic behavior
+inside a clearly defined scope while keeping identity, data quality and
+historical model inputs controllable. New leagues can be added incrementally
+after the same onboarding gates pass.
+
