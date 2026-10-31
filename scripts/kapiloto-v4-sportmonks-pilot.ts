@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { DEFAULT_SHADOW_CYCLE_CONFIG } from "../lib/evaluation/shadow-cycle";
@@ -360,6 +360,16 @@ function selectFixture(
   selected.set(key, { row, reasons: [reason] });
 }
 
+async function ensureEmptyOutputDirectory(root: string): Promise<void> {
+  await mkdir(root, { recursive: true });
+  const entries = await readdir(root);
+  if (entries.length > 0) {
+    throw new Error(
+      `A2-B output directory must be empty before a run: ${root} contains ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const token = process.env.SPORTMONKS_API_TOKEN?.trim();
@@ -372,7 +382,7 @@ async function main(): Promise<void> {
   const endDate = isoDate(now);
   const mintBound = fixtureMintKickoffBefore(capturedAt, DEFAULT_SHADOW_CYCLE_CONFIG.scoringLookbackDays);
 
-  await mkdir(args.out, { recursive: true });
+  await ensureEmptyOutputDirectory(args.out);
   await mkdir(path.join(args.out, "captures"), { recursive: true });
   const archive = new RawArchive(args.out);
   await archive.init();
