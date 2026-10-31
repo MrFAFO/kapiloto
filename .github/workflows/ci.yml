@@ -33,6 +33,9 @@ jobs:
       - name: Provider tests
         run: npm run test:providers
 
+      - name: V4 A2-B pilot tests
+        run: npx tsx --test lib/kapiloto-v4/sportmonks-pilot.test.ts
+
       - name: Football feature tests
         run: npm run test:features
 
