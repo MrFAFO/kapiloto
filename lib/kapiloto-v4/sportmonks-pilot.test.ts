@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertSportmonksA2BPaginationComplete,
   auditSportmonksA2BCapture,
+  auditSportmonksA2BLeagueIdentity,
   buildSportmonksA2BCapture,
   buildSportmonksA2BCompetitionProfile,
   sportmonksLeagueNameMatches,
@@ -228,4 +230,70 @@ test("competition profiles keep family/stat coverage per league", () => {
 test("league-name comparison is case and punctuation insensitive", () => {
   assert.equal(sportmonksLeagueNameMatches("Ligat Ha'Al", "Ligat ha'Al"), true);
   assert.equal(sportmonksLeagueNameMatches("Premier League", "La Liga"), false);
+});
+
+
+test("league identity requires entitlement, exact country and domestic league semantics", () => {
+  const good = auditSportmonksA2BLeagueIdentity({
+    expectedName: "Premier League",
+    expectedCountryIso2: "GB",
+    expectedType: "league",
+    expectedSubType: "domestic",
+    actual: {
+      name: "Premier League",
+      countryId: "462",
+      countryIso2: "GB",
+      type: "league",
+      subType: "domestic",
+      active: true,
+    },
+  });
+  assert.equal(good.identityStatus, "pass");
+
+  const wrongCountry = auditSportmonksA2BLeagueIdentity({
+    expectedName: "Premier League",
+    expectedCountryIso2: "GB",
+    expectedType: "league",
+    expectedSubType: "domestic",
+    actual: {
+      name: "Premier League",
+      countryId: "999",
+      countryIso2: "US",
+      type: "league",
+      subType: "domestic",
+      active: true,
+    },
+  });
+  assert.equal(wrongCountry.identityStatus, "fail");
+  assert.equal(wrongCountry.nameMatches, true);
+  assert.equal(wrongCountry.countryMatches, false);
+});
+
+test("pagination caps fail closed when the provider says more pages exist", () => {
+  assert.doesNotThrow(() =>
+    assertSportmonksA2BPaginationComplete({
+      label: "entitlement",
+      page: 199,
+      cap: 200,
+      hasMore: true,
+    }),
+  );
+  assert.throws(
+    () =>
+      assertSportmonksA2BPaginationComplete({
+        label: "entitlement",
+        page: 200,
+        cap: 200,
+        hasMore: true,
+      }),
+    /refusing a partial snapshot/,
+  );
+  assert.doesNotThrow(() =>
+    assertSportmonksA2BPaginationComplete({
+      label: "entitlement",
+      page: 200,
+      cap: 200,
+      hasMore: false,
+    }),
+  );
 });
