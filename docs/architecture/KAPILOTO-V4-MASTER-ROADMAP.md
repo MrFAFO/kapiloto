@@ -589,57 +589,53 @@ Before Gate 5 is complete:
 - attest both separately;
 - rerun full R7 and the post-import duplicate audit.
 
-### Gate 5B — autonomous identity bootstrap for user-facing V4 (D-059)
+### Gate 5B — Supported Competition Registry for V4 launch (D-059)
 
-The operator-reviewed pilot reconciliation above is a bootstrap mechanism for
-the foundation, **not** the intended end-user workflow.
+V4's first user-facing release is intentionally scoped to a reviewed set of
+supported competitions rather than attempting autonomous identity creation for
+arbitrary world football.
 
-A production user may request research or a recommendation for a fixture whose
-team or competition is not yet present in the canonical catalog. General V4
-activation must not turn that into an operator task and must not require a
-pre-populated world-football catalog.
+Initial supported competitions:
 
-Before general user-facing V4 activation, implement a demand-driven
-**Identity Bootstrap / Reconciliation Service**:
+1. Premier League — Sportmonks 8
+2. Bundesliga — Sportmonks 82
+3. La Liga — Sportmonks 564
+4. Serie A — Sportmonks 384
+5. Ligat Ha'al — Sportmonks 372
 
-1. the user request or fixture discovery detects an unresolved provider
-   identity;
-2. the service first searches canonical teams, aliases and provider mappings,
-   including normalized Hebrew/English variants and country/competition
-   context;
-3. it gathers a versioned evidence bundle: provider-native id, competition,
-   fixture pair/orientation, official or independent-provider anchors, and
-   Toto/Telesport canonical spelling where a Winner-compatible canonical row
-   must be created;
-4. it runs an atomic duplicate/injectivity audit under the same class of locks
-   proven by the pilot reconciliation;
-5. it deterministically chooses only one of:
-   - attach the provider identity to an existing canonical entity;
-   - create a new canonical entity, protected mapping and aliases;
-   - leave the identity unresolved when evidence is ambiguous;
-6. a successful bootstrap writes auditable V4 provenance/attestation through a
-   dedicated, versioned authorization path;
-7. an unresolved identity never gets guessed. Structured historical features
-   for that identity stay excluded, while the user-facing request may continue
-   in a degraded research-only mode where safe.
+Product rule: a normal user may request full V4 analysis only for fixtures in a
+competition whose registry state is `supported`. A fixture outside the
+supported registry is not silently bootstrapped into the canonical catalog in
+V1; the product should state that the competition is not yet supported.
 
-Product invariant: **normal users are never asked to perform identity
-reconciliation or wait for an administrator to add a club manually.**
+Registry lifecycle:
 
-Security invariant: raw provider ingest, web research and an LLM response may
-not directly create canonical identity. Evidence gathering may be automated,
-but the final attach/create decision must be enforced by deterministic,
-versioned policy and database constraints.
+`candidate -> validating -> supported -> paused`
 
-D-058's current Sportmonks rule (`manual_override` + active attestation)
-remains the bounded pilot trust path. D-059 does **not** authorize giving a
-general service role unrestricted power to set `manual_override` and
-self-attest. The implementation must expose a dedicated bootstrap RPC/service
-boundary whose evidence requirements, locks, audit record, idempotency and
-recovery behavior are tested before activation.
+A competition reaches `supported` only after:
 
-The tiny operator-bounded M2B ingest pilot may happen before this service is
-complete. **General user-facing V4 production activation may not.**
+- provider entitlement and competition identity are verified;
+- all current member clubs required for user-facing coverage have canonical
+  identities;
+- provider mappings/aliases are reconciled without duplicates;
+- identity attestations are complete under the active V4 trust contract;
+- historical family coverage and parser semantics are validated sufficiently
+  for the features the product will expose;
+- conflict/readiness reports are clean for the supported scope;
+- a documented rollback/pause path exists.
+
+Team bootstrap inside V1 is therefore a **league-onboarding operation**, not a
+per-user runtime operation. When a new league is added later, Kapiloto performs
+the same reviewed onboarding for that league and its clubs, then promotes the
+competition to `supported`.
+
+The canonical catalog does not need to contain every club in world football.
+It needs complete, reviewed identity coverage for the competitions currently
+advertised as supported.
+
+The future autonomous Identity Bootstrap / Reconciliation service remains a
+possible later expansion, but it is **not a launch blocker and not required for
+V4 V1**.
 
 ### Gate 6 — tiny real Match Ledger ingest
 
@@ -789,10 +785,10 @@ Only validated challengers are promoted.
 
 V4 should reach production influence gradually, by versioned component/arm, not as a single "turn V4 on" switch.
 
-Hard product gate: general user-facing activation requires D-059 autonomous
-identity bootstrap. A request for a previously unseen club/competition must be
-resolved automatically when evidence is sufficient, or degrade safely without
-creating an unverified canonical identity.
+Hard product gate: general user-facing V4 activation is restricted to
+competitions whose D-059 Supported Competition Registry state is `supported`.
+V1 does not promise arbitrary world-football coverage. Unsupported
+competitions remain unavailable until their league onboarding is completed.
 
 Preserve:
 
@@ -805,9 +801,10 @@ Preserve:
 
 As of the snapshot date:
 
-- D-059 autonomous on-demand identity bootstrap is not implemented yet; the
-  current reconciliation is an operator-reviewed pilot and therefore is not
-  sufficient for general user-facing V4 activation;
+- the D-059 Supported Competition Registry and full-club onboarding for the
+  five launch competitions are not complete yet; current pilot reconciliation
+  covers only the pilot identity subset, not the full membership of all five
+  leagues;
 - no broad Sportmonks historical backfill;
 - no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A is applied in production, V1 and V2 ingest remain non-executable by `service_role`, and only the separate M2B migration may grant V2;
 - pilot identity reconciliation is **not fully complete**: 18/20 pilot teams
@@ -904,7 +901,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Pilot reconciliation is at 5/5 competitions and 18/20 teams with 0 Match Ledger observations; R4 for Sportmonks 52 Bournemouth and 676 Sevilla is deliberately deferred until Winner round 264301 settles. After R4/full R7, amend/re-run A2-B and close the remaining M2B readiness gates before the first real Match Ledger ingest.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Pilot reconciliation is at 5/5 competitions and 18/20 pilot teams with 0 Match Ledger observations; R4 for Sportmonks 52 Bournemouth and 676 Sevilla is deliberately deferred until Winner round 264301 settles. D-059 now scopes V4 V1 to five supported competitions (Premier League, Bundesliga, La Liga, Serie A, Ligat Ha'al); before user-facing launch, complete reviewed onboarding for every required club in those five leagues. After R4/full R7, amend/re-run A2-B and close the remaining M2B readiness gates before the first real Match Ledger ingest.
 
 ## 15. Updating this file
 
