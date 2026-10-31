@@ -421,9 +421,12 @@ Decision:
 - **Residual race.** Toto import may insert a new duplicate fixture while an existing-mapping ingest is already in flight because the new row does not yet exist to lock. This is accepted as ingest-first/import-second ordering: the current ingest may commit, and the next attempt sees the duplicate and quarantines.
 
 Implementation status:
-- Independent Opus and Fable final reviews both concluded that **M2A architecture is ready for implementation** after the above spec/test details are folded in.
-- M2B remains NO-GO until uncovered reads are gated, the entity/reconciliation reports are clean for pilot scope, the recovery runbook is rehearsed, A2-B is amended/re-run, the reviewed run allowlist is fixed, and the production `private` schema exposure check is clean.
-- M2A is implemented on `feat/v4-identity-attestations-m2a` (migration `20261031100000_kapiloto_v4_identity_attestations.sql`; not merged, not applied). Implementation clarification, not a redesign: a chain V2 wrongly minted is never minted again because the applied A2-A `match_ledger_fixture_mints` is unique per `(provider, provider_fixture_id)`; V2 quarantines `fixture_mint_exists`, recovery attaches the re-ingest to an operator-created reviewed canonical fixture, and the orphaned mint is reported as `mint_without_mapping`. A revoked attestation generation can never be reactivated, even by direct projection writes.
+- Independent Opus and Fable reviews concluded that **M2A architecture and implementation were ready** after the final hardening pass.
+- M2A was merged at `5327dc371751a75b79d2c2612471b55b7c6436af` and production migration `20261031100000_kapiloto_v4_identity_attestations.sql` was applied on 2026-10-31.
+- Production post-checks passed: `private` is not exposed through the Data API; V1/V2 ingest remain revoked from `service_role`; Stage 1 RPC/read/report grants match the intended service-role-only surface; no attestation/event/sidecar rows were created; Match Ledger still contains 0 observations.
+- Current Sportmonks readiness is fail-closed and expected: five competition mappings are `manual_override` but unattested, existing team mappings are unattested, and `match_ledger_provider_ref_conflicts_v2('sportmonks')` is empty.
+- M2B remains NO-GO until uncovered reads are gated, the entity/reconciliation reports are clean for pilot scope, the recovery runbook is rehearsed, A2-B is amended/re-run, and the reviewed run allowlist is fixed.
+- Implementation clarification, not a redesign: a chain V2 wrongly minted is never minted again because the applied A2-A `match_ledger_fixture_mints` is unique per `(provider, provider_fixture_id)`; V2 quarantines `fixture_mint_exists`, recovery attaches the re-ingest to an operator-created reviewed canonical fixture, and the orphaned mint is reported as `mint_without_mapping`. A revoked attestation generation can never be reactivated, even by direct projection writes.
 
 Details: `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md`.
 
