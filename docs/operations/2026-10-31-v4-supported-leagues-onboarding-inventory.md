@@ -37,17 +37,17 @@ Production catalog/mapping counts on 2026-10-31:
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Premier League | 20 | 20 | 16 | 16 | 0 | 4 |
 | Bundesliga | 18 | 18 | 18 | 18 | 0 | 0 |
-| La Liga | 20 | 15 | 9 | 3 | 5 | 6 |
+| La Liga | 20 | 20 | 14 | 14 | 0 | 6 |
 | Serie A | 20 | 11 | 10 | 4 | 9 | 1 |
 | Ligat Ha'al | 14 | 14 | 14 | 14 | 0 | 0 |
-| **Total** | **92** | **78** | **67** | **55** | **14** | **11** |
+| **Total** | **92** | **83** | **72** | **66** | **9** | **11** |
 
 Interpretation:
 
-- **55** clubs are now through the reviewed V4 attestation path.
-- **12** additional clubs already have a Sportmonks mapping but still need reviewed D-058 promotion/attestation for supported-league trust.
+- **66** clubs are now through the reviewed V4 attestation path.
+- **6** additional clubs already have a Sportmonks mapping but still need reviewed D-058 promotion/attestation for supported-league trust.
 - **11** clubs already exist canonically but need a Sportmonks mapping plus attestation.
-- **14** clubs do not yet exist canonically and require reviewed canonical creation, mapping, aliases and attestation.
+- **9** clubs do not yet exist canonically and require reviewed canonical creation, mapping, aliases and attestation.
 
 The counts above describe coverage only. A `confirmed` Sportmonks mapping is not trusted historical identity under D-058.
 
@@ -171,43 +171,61 @@ Provider-family/history gates still remain.
 
 ## 5. La Liga — 20 clubs
 
-Official membership:
-Athletic Club, Atlético de Madrid, CA Osasuna, Celta, Deportivo Alavés,
-Elche CF, FC Barcelona, Getafe CF, Levante UD, Málaga CF, R. Racing Club,
-Rayo Vallecano, RC Deportivo, RCD Espanyol de Barcelona, Real Betis,
-Real Madrid, Real Sociedad, Sevilla FC, Valencia CF, Villarreal CF.
+Official 2026/27 membership is frozen by the immutable Sportmonks roster
+capture and cross-checked against the official La Liga club list.
 
-### Canonical missing — 5
+Capture:
 
-- Atlético de Madrid
-- Deportivo Alavés
-- Levante UD
-- Málaga CF
-- RC Deportivo
+- league: `564 / La Liga`
+- season: `27965 / 2026/2027`
+- teams: `20`
+- team-set SHA-256:
+  `40b74af3f2c0695f6dbe04991b9048efe543bea2b24b318c103a8dd5fc5ab3e6`
 
-### Canonical exists, Sportmonks mapping missing — 6
+### Identity-complete — 14/20
 
-- Athletic Club — existing `אתלטיק בילבאו`
-- Elche CF — existing `אלצ'ה`
-- Getafe CF — existing `חטאפה`
-- Rayo Vallecano — existing `ראיו ואייקאנו`
-- Real Sociedad — existing `ריאל סוסיאדד`
-- Sevilla FC — existing `סביליה` — Sportmonks 676 is intentionally deferred until Winner round 264301 settles
+Previously attested:
 
-### Already Sportmonks mapped — 9
-
-- CA Osasuna
-- Celta
 - FC Barcelona
-- R. Racing Club
-- RCD Espanyol de Barcelona
-- Real Betis
+- CA Osasuna
 - Real Madrid
-- Valencia CF
-- Villarreal CF
 
-Already V4-attested from the pilot:
-CA Osasuna, FC Barcelona, Real Madrid.
+Existing mapped identities promoted and attested in phase 1:
+
+- Celta de Vigo
+- Valencia
+- Real Betis
+- Espanyol
+- Villarreal
+- Racing Santander
+
+New canonical identities created, mapped and attested in phase 1:
+
+- Málaga — `מלאגה`
+- Deportivo A Coruña — `דפורטיבו לה קורוניה`
+- Deportivo Alavés — `אלאבס`
+- Levante — `לבאנטה`
+- Atlético de Madrid — `אתלטיקו מדריד`
+
+Execution record:
+`docs/operations/2026-11-01-v4-laliga-identity-onboarding-phase1.md`.
+
+### Existing canonical, Sportmonks mapping deferred — 6
+
+All six participate in Winner round `264301`, which remains
+`under_review`, so adding a new Sportmonks mapping remains deliberately
+deferred:
+
+- Getafe — existing `חטאפה` — Sportmonks 106
+- Rayo Vallecano — existing `ראיו ואייקאנו` — Sportmonks 377
+- Real Sociedad — existing `ריאל סוסיאדד` — Sportmonks 594
+- Sevilla — existing `סביליה` — Sportmonks 676
+- Elche — existing `אלצ'ה` — Sportmonks 1099
+- Athletic Club — existing `אתלטיק בילבאו` — Sportmonks 13258
+
+Current La Liga identity status: **14/20 complete**.
+
+Registry status: **validating**, not yet `supported`.
 
 ## 6. Serie A — 20 clubs
 
@@ -277,7 +295,7 @@ historical ingest quality for the V4 features that will be exposed.
 
 ### Class A — existing canonical + existing Sportmonks mapping, not yet attested
 
-Count: **12**
+Count: **6**
 
 For each:
 - independently verify provider identity;
@@ -299,14 +317,14 @@ For each:
 - create `manual_override` mapping with `mapping_confidence = NULL`;
 - attest separately.
 
-Bournemouth, Arsenal, Ipswich, Liverpool and Sevilla are reviewed Class-B
-identities but remain temporarily deferred because they participate in the
-active Winner round 264301 and a new provider-team mapping could change V3
-fixture-mapping behavior.
+Bournemouth, Arsenal, Ipswich, Liverpool, Getafe, Rayo Vallecano, Real
+Sociedad, Sevilla, Elche and Athletic Club are reviewed Class-B identities but
+remain temporarily deferred because they participate in Winner round 264301
+and a new provider-team mapping could change V3 fixture-mapping behavior.
 
 ### Class C — canonical team missing
 
-Count: **14**
+Count: **9**
 
 For each:
 - verify current official league membership;
@@ -351,7 +369,8 @@ Recommended order:
    Ipswich and Liverpool after round 264301 settles;
 3. complete deferred Sevilla after round 264301 settles;
 4. Bundesliga identity onboarding — **DONE 18/18**;
-5. complete La Liga identity onboarding;
+5. La Liga phase 1 — **DONE 14/20**; complete Getafe, Rayo Vallecano,
+   Real Sociedad, Sevilla, Elche and Athletic Club after round 264301 settles;
 6. complete Serie A identity onboarding;
 7. run full five-league collision/readiness audit;
 8. validate provider-family/history gates per league;
