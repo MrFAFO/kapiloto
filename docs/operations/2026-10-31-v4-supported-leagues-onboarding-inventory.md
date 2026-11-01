@@ -36,18 +36,18 @@ Production catalog/mapping counts on 2026-10-31:
 | League | Current clubs | Canonical teams present | Sportmonks mapped | V4 team attested | Canonical missing | Existing canonical without Sportmonks mapping |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Premier League | 20 | 20 | 16 | 16 | 0 | 4 |
-| Bundesliga | 18 | 8 | 8 | 4 | 10 | 0 |
+| Bundesliga | 18 | 18 | 18 | 18 | 0 | 0 |
 | La Liga | 20 | 15 | 9 | 3 | 5 | 6 |
 | Serie A | 20 | 11 | 10 | 4 | 9 | 1 |
 | Ligat Ha'al | 14 | 14 | 14 | 14 | 0 | 0 |
-| **Total** | **92** | **68** | **57** | **41** | **24** | **11** |
+| **Total** | **92** | **78** | **67** | **55** | **14** | **11** |
 
 Interpretation:
 
-- **41** clubs are now through the reviewed V4 attestation path.
-- **16** additional clubs already have a Sportmonks mapping but still need reviewed D-058 promotion/attestation for supported-league trust.
+- **55** clubs are now through the reviewed V4 attestation path.
+- **12** additional clubs already have a Sportmonks mapping but still need reviewed D-058 promotion/attestation for supported-league trust.
 - **11** clubs already exist canonically but need a Sportmonks mapping plus attestation.
-- **24** clubs do not yet exist canonically and require reviewed canonical creation, mapping, aliases and attestation.
+- **14** clubs do not yet exist canonically and require reviewed canonical creation, mapping, aliases and attestation.
 
 The counts above describe coverage only. A `confirmed` Sportmonks mapping is not trusted historical identity under D-058.
 
@@ -118,41 +118,56 @@ Registry status: **validating**, not yet `supported`.
 
 ## 4. Bundesliga — 18 clubs
 
-Official membership:
-FC Bayern München, Borussia Dortmund, RB Leipzig, VfB Stuttgart, TSG
-Hoffenheim, Bayer 04 Leverkusen, Sport-Club Freiburg, Eintracht Frankfurt,
-FC Augsburg, 1. FSV Mainz 05, 1. FC Union Berlin, Borussia Mönchengladbach,
-Hamburger SV, 1. FC Köln, SV Werder Bremen, FC Schalke 04, SV Elversberg,
-SC Paderborn 07.
+Official 2026/27 membership is now **identity-complete 18/18**.
 
-### Canonical missing — 10
+The immutable Sportmonks roster capture resolved:
 
-- Borussia Dortmund
-- RB Leipzig
-- VfB Stuttgart
-- Eintracht Frankfurt
-- FC Augsburg
-- 1. FSV Mainz 05
-- 1. FC Union Berlin
-- Borussia Mönchengladbach
-- SV Werder Bremen
-- SV Elversberg
+- league: `82 / Bundesliga`
+- season: `28321 / 2026/2027`
+- teams: `18`
+- team-set SHA-256:
+  `7119ee57fcba90e282b436a6b2599d6522e653148d744ed7bfdb10d175d35795`
 
-### Canonical exists, Sportmonks mapping missing — 0
+All 18 current clubs now have:
+- one canonical team;
+- one reviewed Sportmonks mapping;
+- `manual_override` mapping status;
+- active D-058 V4 team attestation.
 
-### Already Sportmonks mapped — 8
+Previously attested from the pilot:
 
 - FC Bayern München
 - TSG Hoffenheim
 - Bayer 04 Leverkusen
 - Sport-Club Freiburg
-- Hamburger SV
-- 1. FC Köln
+
+Existing mapped identities promoted and attested:
+
 - FC Schalke 04
 - SC Paderborn 07
+- Hamburger SV
+- 1. FC Köln
 
-Already V4-attested from the pilot:
-FC Bayern München, TSG Hoffenheim, Bayer 04 Leverkusen, Sport-Club Freiburg.
+New canonical identities created, mapped and attested:
+
+- Borussia Dortmund — `בורוסיה דורטמונד`
+- SV Werder Bremen — `ורדר ברמן`
+- FC Augsburg — `אוגסבורג`
+- RB Leipzig — `ר.ב. לייפציג`
+- Eintracht Frankfurt — `איינטרכט פרנקפורט`
+- Borussia Mönchengladbach — `מנשנגלדבאך`
+- 1. FSV Mainz 05 — `מיינץ`
+- 1. FC Union Berlin — `אוניון ברלין`
+- VfB Stuttgart — `שטוטגרט`
+- SV Elversberg — `אלברסברג`
+
+Execution record:
+`docs/operations/2026-11-01-v4-bundesliga-identity-onboarding-execution.md`.
+
+Identity status: **complete 18/18**.
+
+Registry status: **validating**, not yet `supported`.
+Provider-family/history gates still remain.
 
 ## 5. La Liga — 20 clubs
 
@@ -262,7 +277,7 @@ historical ingest quality for the V4 features that will be exposed.
 
 ### Class A — existing canonical + existing Sportmonks mapping, not yet attested
 
-Count: **16**
+Count: **12**
 
 For each:
 - independently verify provider identity;
@@ -291,7 +306,7 @@ fixture-mapping behavior.
 
 ### Class C — canonical team missing
 
-Count: **24**
+Count: **14**
 
 For each:
 - verify current official league membership;
@@ -335,7 +350,7 @@ Recommended order:
 2. Premier League phase 1 — **DONE 16/20**; complete Bournemouth, Arsenal,
    Ipswich and Liverpool after round 264301 settles;
 3. complete deferred Sevilla after round 264301 settles;
-4. complete Bundesliga identity onboarding;
+4. Bundesliga identity onboarding — **DONE 18/18**;
 5. complete La Liga identity onboarding;
 6. complete Serie A identity onboarding;
 7. run full five-league collision/readiness audit;
