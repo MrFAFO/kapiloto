@@ -658,6 +658,8 @@ Execution records:
   `docs/operations/2026-11-01-v4-bundesliga-identity-onboarding-execution.md`
 - La Liga phase 1:
   `docs/operations/2026-11-01-v4-laliga-identity-onboarding-phase1.md`
+- Serie A phase 1:
+  `docs/operations/2026-11-01-v4-serie-a-identity-onboarding-phase1.md`
 
 Premier League provider membership is frozen by the read-only Sportmonks
 season-roster capture for league 8 / season 28083. That capture returned the
@@ -834,9 +836,11 @@ As of the snapshot date:
 
 - the D-059 Supported Competition Registry is not fully complete yet; Ligat
   Ha'al is identity-complete 14/14, Bundesliga is identity-complete 18/18,
-  Premier League is 16/20 and La Liga is 14/20, while Serie A still requires
-  full-club identity onboarding and all five still require the applicable
-  provider-family/history gates before `supported`;
+  Premier League is 16/20, La Liga is 14/20 and Serie A is 19/20. All 92
+  launch-universe clubs now exist canonically; the only 11 remaining identity
+  gaps are deferred Class-B provider mappings tied to Winner round 264301.
+  All five leagues still require the applicable provider-family/history gates
+  before `supported`;
 - no broad Sportmonks historical backfill;
 - no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A is applied in production, V1 and V2 ingest remain non-executable by `service_role`, and only the separate M2B migration may grant V2;
 - pilot identity reconciliation is **not fully complete**: 18/20 pilot teams
@@ -933,7 +937,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Match Ledger still has 0 observations and V1/V2 ingest remains disabled. Ligat Ha'al is identity-complete 14/14. Bundesliga is identity-complete 18/18. Premier League remains 16/20 and La Liga is now 14/20 from a frozen Sportmonks league 564 / season 27965 roster capture. Round 264301 remains under_review, so Liverpool 8, Arsenal 19, Bournemouth 52, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Sevilla 676, Elche 1099 and Athletic Club 13258 remain deliberately deferred. Next identity work is Serie A. Once round 264301 settles, finish all ten deferred Class-B mappings/attestations and rerun league/pilot readiness. After identity readiness, amend/re-run A2-B and close the remaining M2B gates before the first real Match Ledger ingest.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Match Ledger still has 0 observations and V1/V2 ingest remains disabled. Ligat Ha'al is identity-complete 14/14. Bundesliga is identity-complete 18/18. Premier League remains 16/20, La Liga 14/20 and Serie A 19/20 from frozen current-season Sportmonks roster captures. All 92 launch-universe clubs now exist canonically. Round 264301 remains under_review, so the only remaining identity work is the 11 deferred Class-B mappings/attestations: Liverpool 8, Arsenal 19, Bournemouth 52, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Sevilla 676, Elche 1099, Athletic Club 13258 and Juventus 625. Once round 264301 settles, finish those 11 identities and rerun the full five-league/pilot readiness audit. After identity readiness, validate provider-family/history gates, amend/re-run A2-B and close the remaining M2B gates before the first real Match Ledger ingest.
 
 ## 15. Updating this file
 
