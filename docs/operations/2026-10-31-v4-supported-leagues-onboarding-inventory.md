@@ -38,16 +38,16 @@ Production catalog/mapping counts on 2026-10-31:
 | Premier League | 20 | 20 | 16 | 16 | 0 | 4 |
 | Bundesliga | 18 | 18 | 18 | 18 | 0 | 0 |
 | La Liga | 20 | 20 | 14 | 14 | 0 | 6 |
-| Serie A | 20 | 11 | 10 | 4 | 9 | 1 |
+| Serie A | 20 | 20 | 19 | 19 | 0 | 1 |
 | Ligat Ha'al | 14 | 14 | 14 | 14 | 0 | 0 |
-| **Total** | **92** | **83** | **72** | **66** | **9** | **11** |
+| **Total** | **92** | **92** | **81** | **81** | **0** | **11** |
 
 Interpretation:
 
-- **66** clubs are now through the reviewed V4 attestation path.
-- **6** additional clubs already have a Sportmonks mapping but still need reviewed D-058 promotion/attestation for supported-league trust.
-- **11** clubs already exist canonically but need a Sportmonks mapping plus attestation.
-- **9** clubs do not yet exist canonically and require reviewed canonical creation, mapping, aliases and attestation.
+- **81** clubs are now through the reviewed V4 attestation path.
+- **0** clubs remain in Class A (existing Sportmonks mapping but not yet V4-attested).
+- **11** clubs already exist canonically but still need a Sportmonks mapping plus attestation.
+- **0** current launch-universe clubs are missing canonically.
 
 The counts above describe coverage only. A `confirmed` Sportmonks mapping is not trusted historical identity under D-058.
 
@@ -229,42 +229,61 @@ Registry status: **validating**, not yet `supported`.
 
 ## 6. Serie A — 20 clubs
 
-Official membership:
-Atalanta, Bologna, Cagliari, Como, Fiorentina, Frosinone, Genoa, Inter,
-Juventus, Lazio, Lecce, Milan, Monza, Napoli, Parma, Roma, Sassuolo, Torino,
-Udinese, Venezia.
+Official 2026/27 membership is frozen by the immutable Sportmonks roster
+capture and cross-checked against Lega Serie A.
 
-### Canonical missing — 9
+Capture:
 
-- Como
-- Genoa
-- Lazio
-- Monza
-- Parma
-- Sassuolo
-- Torino
-- Udinese
-- Venezia
+- league: `384 / Serie A`
+- season: `27895 / 2026/2027`
+- teams: `20`
+- team-set SHA-256:
+  `ab4d41933e56bb8b51a277ee18bfadf323dc13072e20ea1142ce70ab5a3c2b9a`
 
-### Canonical exists, Sportmonks mapping missing — 1
+### Identity-complete — 19/20
 
-- Juventus — existing `יובנטוס`
+Previously attested:
 
-### Already Sportmonks mapped — 10
-
-- Atalanta
-- Bologna
-- Cagliari
 - Fiorentina
+- Atalanta
 - Frosinone
-- Inter
 - Lecce
-- Milan
-- Napoli
-- Roma
 
-Already V4-attested from the pilot:
-Atalanta, Fiorentina, Frosinone, Lecce.
+Existing mapped identities promoted and attested in phase 1:
+
+- Roma
+- AC Milan
+- Cagliari
+- Napoli
+- Inter
+- Bologna
+
+New canonical identities created, mapped and attested in phase 1:
+
+- Lazio — `לאציו`
+- Genoa — `גנואה`
+- Venezia — `ונציה`
+- Como — `קומו`
+- Udinese — `אודינזה`
+- Parma — `פארמה`
+- Torino — `טורינו`
+- Monza — `מונצה`
+- Sassuolo — `ססואולו`
+
+Execution record:
+`docs/operations/2026-11-01-v4-serie-a-identity-onboarding-phase1.md`.
+
+### Existing canonical, Sportmonks mapping deferred — 1
+
+Juventus participates in Winner round `264301`, which remains
+`under_review`, so adding a new Sportmonks mapping remains deliberately
+deferred:
+
+- Juventus — existing `יובנטוס` — Sportmonks 625
+
+Current Serie A identity status: **19/20 complete**.
+
+Registry status: **validating**, not yet `supported`.
 
 ## 7. Ligat Ha'al — 14 clubs
 
@@ -295,7 +314,7 @@ historical ingest quality for the V4 features that will be exposed.
 
 ### Class A — existing canonical + existing Sportmonks mapping, not yet attested
 
-Count: **6**
+Count: **0**
 
 For each:
 - independently verify provider identity;
@@ -318,13 +337,15 @@ For each:
 - attest separately.
 
 Bournemouth, Arsenal, Ipswich, Liverpool, Getafe, Rayo Vallecano, Real
-Sociedad, Sevilla, Elche and Athletic Club are reviewed Class-B identities but
-remain temporarily deferred because they participate in Winner round 264301
-and a new provider-team mapping could change V3 fixture-mapping behavior.
+Sociedad, Sevilla, Elche, Athletic Club and Juventus are the **only 11**
+remaining launch-universe identity gaps. All are reviewed Class-B identities
+and remain temporarily deferred because they participate in Winner round
+264301 and a new provider-team mapping could change V3 fixture-mapping
+behavior.
 
 ### Class C — canonical team missing
 
-Count: **9**
+Count: **0**
 
 For each:
 - verify current official league membership;
@@ -371,10 +392,12 @@ Recommended order:
 4. Bundesliga identity onboarding — **DONE 18/18**;
 5. La Liga phase 1 — **DONE 14/20**; complete Getafe, Rayo Vallecano,
    Real Sociedad, Sevilla, Elche and Athletic Club after round 264301 settles;
-6. complete Serie A identity onboarding;
-7. run full five-league collision/readiness audit;
-8. validate provider-family/history gates per league;
-9. only then promote each qualifying competition from `validating` to `supported`.
+6. Serie A phase 1 — **DONE 19/20**; complete Juventus after round 264301 settles;
+7. after round 264301 settles, complete all **11 deferred Class-B** identities
+   across Premier League, La Liga and Serie A;
+8. run full five-league collision/readiness audit;
+9. validate provider-family/history gates per league;
+10. only then promote each qualifying competition from `validating` to `supported`.
 
 This order gives a small first complete league and repeatedly exercises all
 three onboarding classes before the larger European catalogs are finished.
