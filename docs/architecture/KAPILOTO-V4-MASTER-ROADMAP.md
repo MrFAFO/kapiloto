@@ -643,7 +643,7 @@ Current onboarding status:
 - Premier League: **16/20 identity-complete**; Liverpool 8, Arsenal 19,
   Bournemouth 52 and Ipswich 116 are deferred until Winner round 264301 is no
   longer active;
-- Bundesliga: incomplete;
+- Bundesliga: **identity-complete 18/18**, registry still `validating`;
 - La Liga: incomplete;
 - Serie A: incomplete.
 
@@ -652,6 +652,8 @@ Execution records:
   `docs/operations/2026-10-31-v4-ligat-haal-identity-onboarding-execution.md`
 - Premier League phase 1:
   `docs/operations/2026-10-31-v4-premier-league-identity-onboarding-phase1.md`
+- Bundesliga:
+  `docs/operations/2026-11-01-v4-bundesliga-identity-onboarding-execution.md`
 
 Premier League provider membership is frozen by the read-only Sportmonks
 season-roster capture for league 8 / season 28083. That capture returned the
@@ -827,10 +829,10 @@ Preserve:
 As of the snapshot date:
 
 - the D-059 Supported Competition Registry is not fully complete yet; Ligat
-  Ha'al identity onboarding is complete 14/14 and Premier League is 16/20,
-  while Bundesliga, La Liga and Serie A still require full-club identity
-  onboarding and all five still require the applicable provider-family/history
-  gates before `supported`;
+  Ha'al is identity-complete 14/14, Bundesliga is identity-complete 18/18 and
+  Premier League is 16/20, while La Liga and Serie A still require full-club
+  identity onboarding and all five still require the applicable provider-
+  family/history gates before `supported`;
 - no broad Sportmonks historical backfill;
 - no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A is applied in production, V1 and V2 ingest remain non-executable by `service_role`, and only the separate M2B migration may grant V2;
 - pilot identity reconciliation is **not fully complete**: 18/20 pilot teams
@@ -927,7 +929,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Match Ledger still has 0 observations and V1/V2 ingest remains disabled. Ligat Ha'al is identity-complete 14/14. Premier League phase 1 is complete at 16/20 using an immutable Sportmonks season-roster capture; Liverpool 8, Arsenal 19, Bournemouth 52 and Ipswich 116 are deliberately deferred because Winner round 264301 is active. Sevilla 676 is likewise deferred. When round 264301 settles, finish those five Class-B mappings/attestations, rerun league/pilot readiness, then continue Bundesliga, La Liga and Serie A onboarding. After identity readiness, amend/re-run A2-B and close the remaining M2B gates before the first real Match Ledger ingest.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Match Ledger still has 0 observations and V1/V2 ingest remains disabled. Ligat Ha'al is identity-complete 14/14. Bundesliga is identity-complete 18/18 from Sportmonks league 82 / season 28321 with a frozen 18-team roster capture. Premier League phase 1 remains 16/20; Liverpool 8, Arsenal 19, Bournemouth 52 and Ipswich 116 are deliberately deferred while Winner round 264301 remains under_review, and Sevilla 676 is likewise deferred. Next identity work is La Liga and Serie A; once round 264301 settles, finish the five deferred Class-B mappings/attestations and rerun league/pilot readiness. After identity readiness, amend/re-run A2-B and close the remaining M2B gates before the first real Match Ledger ingest.
 
 ## 15. Updating this file
 
