@@ -107,14 +107,15 @@ M2C itself never mutates identity, mapping, fixture or Match Ledger data.
 2. Execute `docs/operations/sql/kapiloto-v4-m2c-verify.sql` as a separate
    execution. Re-run it until it reports PASS. It fails while any of these
    holds:
-   - a role other than the owner and the Supabase operator roles (`postgres`,
-     `supabase_admin`) holds EXECUTE on either RPC, PUBLIC included;
-   - `service_role`, `anon`, `authenticated` or `authenticator` can execute
-     either RPC, including through membership;
-   - an application role owns either RPC;
+   - either ingest RPC is owned by anything other than the reviewed Supabase
+     operator roles (`postgres` or `supabase_admin`);
+   - any non-operator role can execute either RPC, including through role
+     membership, PUBLIC or an explicit/default grant;
    - a SECURITY DEFINER function or a pg_cron job calls either RPC (both run
      as their owner and would bypass the revoke);
-   - another backend is still executing an ingest call.
+   - the Sportmonks provider-identity `ShareLock` is still held by any backend
+     (the authoritative V2-ingest drain signal), or pg_stat_activity still
+     shows an ingest call.
 
 **In-flight semantics.**
 
@@ -230,8 +231,11 @@ report). This is the default.
 - The template refuses unless all of these hold:
   - the row still has the reviewed old identity;
   - it was minted by this provider fixture id;
-  - nothing but this provider fixture's mapping and the V4 ledger references
-    it (it scans every foreign key to `fixtures`);
+  - nothing but this provider fixture's mapping, its immutable
+    `provider_ingest_items` audit rows for the same Sportmonks fixture id,
+    and the V4 ledger references it; the template scans every foreign key to
+    `fixtures` and separately checks the soft `provider_ingest_items.fixture_id`
+    reference;
   - every ledger chain on it is withdrawn;
   - no other canonical fixture already represents the corrected match.
 - Why in place:
@@ -451,12 +455,14 @@ Stop and require a new review if any of these occurs:
   - the body text;
   - a simulated M2B grant paused with zero data change (content digest of
     every touched table);
-  - the verification failing on each open path;
-  - in-flight and prepared-statement semantics.
+  - the verification failing on each open path, owner drift, and inherited
+    role privilege;
+  - advisory-lock drain, in-flight and prepared-statement semantics.
 - `lib/kapiloto-v4/recovery-runbook-db.test.ts`:
   - the end-to-end I1 rehearsal (two chains, in-place correction, service_role
     paused throughout);
-  - I2 in place, plus the superseded parallel-fixture path shown blocked;
+  - I2 in place, plus the superseded parallel-fixture path and foreign soft
+    ingest-audit reference shown blocked;
   - I1 §E3 orphan;
   - I3 trusted withdrawal without a revoke;
   - out-of-order failure and resume;
