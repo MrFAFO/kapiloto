@@ -31,6 +31,7 @@ import {
   SQUAD_STATE_BUILDER_VERSION,
   SQUAD_STATE_CONTRACT_VERSION,
   SQUAD_STATE_INPUTS_CONTRACT_VERSION,
+  SQUAD_STATE_READ_V2_VERSION,
 } from "./versions";
 
 /**
@@ -152,6 +153,7 @@ export function buildLineupForecastSnapshot(args: {
   const selected = new Set(state.history_selection.map((s) => s.observation_id));
   const context: SquadStateContext = {
     subjectTeamId: state.fixture.team_id,
+    squadStateReadVersion: SQUAD_STATE_READ_V2_VERSION,
     squadStateInputsContract: SQUAD_STATE_INPUTS_CONTRACT_VERSION,
     squadStateContract: SQUAD_STATE_CONTRACT_VERSION,
     // The versions the state itself was built with (never assumed).
