@@ -236,8 +236,11 @@ function parseTelesportScore(
   const match = rawScore.match(/^(\d+)\s*[-:]\s*(\d+)$/);
   if (!match) return null;
 
-  const home = Number(match[1]);
-  const away = Number(match[2]);
+  // Telesport's RTL Winner 16 markup exposes the numeric score in
+  // away-home text order. Team identity remains home then away, so map the
+  // second number back to home before any field or settlement logic sees it.
+  const away = Number(match[1]);
+  const home = Number(match[2]);
   if (!Number.isInteger(home) || !Number.isInteger(away)) return null;
 
   return { home, away };
