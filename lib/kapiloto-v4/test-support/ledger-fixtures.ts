@@ -28,10 +28,12 @@ $$;
 `;
 
 export async function createLedgerDatabase(
-  options: { testClock?: boolean; supabaseDefaultPrivileges?: boolean } = {},
+  options: { testClock?: boolean; supabaseDefaultPrivileges?: boolean; exclude?: RegExp } = {},
 ): Promise<PGlite> {
   const db = await createMigratedDatabase({
     supabaseDefaultPrivileges: options.supabaseDefaultPrivileges,
+    // Upgrade tests stop the chain before a migration and apply it later.
+    exclude: options.exclude,
   });
   if (options.testClock !== false) await db.exec(TEST_CLOCK);
   return db;

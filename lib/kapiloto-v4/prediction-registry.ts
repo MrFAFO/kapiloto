@@ -7,7 +7,6 @@ import {
   PREDICTION_SNAPSHOT_V2_CONTRACT_VERSION,
   SQUAD_STATE_CONTRACT_VERSION,
   SQUAD_STATE_INPUTS_CONTRACT_VERSION,
-  SQUAD_STATE_READ_V1_VERSION,
   SQUAD_STATE_READ_VERSIONS,
   SQUAD_TARGET_DATE_POLICY_VERSION,
   type SquadStateReadVersion,
@@ -293,10 +292,12 @@ export const LINEUP_INPUT_ROLES = {
 export type SquadStateContext = {
   subjectTeamId: string;
   /**
-   * Which database read assembled the raw squad inputs. Optional only for
-   * frozen V1 callers; canonicalization stores missing as read-v1.
+   * The database read that assembled the raw squad inputs; the registry
+   * re-runs exactly this read at commit. Always sent explicitly. A frozen
+   * payload without it means read-v1, and read-v1 stays implicit in the
+   * canonical bundle, so frozen hashes are unchanged.
    */
-  squadStateReadVersion?: SquadStateReadVersion;
+  squadStateReadVersion: SquadStateReadVersion;
   squadStateInputsContract: typeof SQUAD_STATE_INPUTS_CONTRACT_VERSION;
   squadStateContract: typeof SQUAD_STATE_CONTRACT_VERSION;
   /** builder-v1 + features-v1 (frozen 1D replay) or builder-v2 + features-v2 (membership-aware). */
@@ -348,8 +349,7 @@ export function validatePredictionSnapshotV2(input: PredictionSnapshotV2Input): 
     if (!isSupportedSquadStateBuild(input.inputs.squadStateContext.squadStateBuilderVersion, input.inputs.squadStateContext.squadFeaturesVersion)) {
       issues.push("unsupported squad-state builder/features version pair");
     }
-    if (input.inputs.squadStateContext.squadStateReadVersion !== undefined
-      && !SQUAD_STATE_READ_VERSIONS.includes(input.inputs.squadStateContext.squadStateReadVersion)) {
+    if (!SQUAD_STATE_READ_VERSIONS.includes(input.inputs.squadStateContext.squadStateReadVersion)) {
       issues.push("unsupported squad-state read version");
     }
   }
@@ -373,7 +373,7 @@ export function buildPredictionSnapshotV2Payload(input: PredictionSnapshotV2Inpu
       tenures: (tenures ?? []).map((item) => ({ tenure_id: item.tenureId.toLowerCase(), input_role: item.inputRole ?? null })),
       squad_state_context: context && {
         subject_team_id: context.subjectTeamId.toLowerCase(),
-        squad_state_read_version: context.squadStateReadVersion ?? SQUAD_STATE_READ_V1_VERSION,
+        squad_state_read_version: context.squadStateReadVersion,
         squad_state_inputs_contract: context.squadStateInputsContract,
         squad_state_contract: context.squadStateContract,
         squad_state_builder_version: context.squadStateBuilderVersion,

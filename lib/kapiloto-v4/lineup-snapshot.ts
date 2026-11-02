@@ -15,6 +15,7 @@ import {
   buildFixtureSquadStateFor,
   isSupportedSquadStateBuild,
   loadSquadStateInputsV2,
+  squadStateInputsReadVersion,
   type FixtureSquadState,
   type HistoryObservationInput,
   type HistorySelectionPolicy,
@@ -31,7 +32,6 @@ import {
   SQUAD_STATE_BUILDER_VERSION,
   SQUAD_STATE_CONTRACT_VERSION,
   SQUAD_STATE_INPUTS_CONTRACT_VERSION,
-  SQUAD_STATE_READ_V2_VERSION,
 } from "./versions";
 
 /**
@@ -42,10 +42,11 @@ import {
  */
 
 /**
- * Loads Stage 1 trust-aware 1C inputs for a lineup forecast. The history
- * window passed to the V2 as-of read is the policy's maxFixtures: the registry
- * re-runs exactly this read at commit and refuses any difference. Plain 1A/V1
- * observations without valid sealed identity attestations are never inputs.
+ * Loads 1C inputs for a lineup forecast through the Stage 1 trust-aware read
+ * (kapiloto-squad-state-read-v2). The history window passed to the read is
+ * the policy's maxFixtures; the snapshot records read-v2, and the registry
+ * re-runs exactly that read at commit and refuses any difference. Observations
+ * without currently valid sealed identity attestations are never inputs.
  */
 export function loadLineupSquadInputs(
   rpc: SquadStateRpc,
@@ -153,7 +154,9 @@ export function buildLineupForecastSnapshot(args: {
   const selected = new Set(state.history_selection.map((s) => s.observation_id));
   const context: SquadStateContext = {
     subjectTeamId: state.fixture.team_id,
-    squadStateReadVersion: SQUAD_STATE_READ_V2_VERSION,
+    // The read that actually assembled the inputs (never assumed): the
+    // registry re-runs exactly this read at commit.
+    squadStateReadVersion: squadStateInputsReadVersion(inputs),
     squadStateInputsContract: SQUAD_STATE_INPUTS_CONTRACT_VERSION,
     squadStateContract: SQUAD_STATE_CONTRACT_VERSION,
     // The versions the state itself was built with (never assumed).

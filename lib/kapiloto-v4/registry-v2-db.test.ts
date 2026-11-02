@@ -15,7 +15,7 @@ import {
   LINEUP_RECORDED,
   forecastSnapshot,
   recordPredictionV2,
-  setupLineupWorld,
+  setupReadV1LineupWorld,
   type LineupWorld,
 } from "./test-support/lineup-fixtures";
 
@@ -23,6 +23,12 @@ import {
  * Prediction Registry V2 against the real migration chain: lineup forecasts
  * freeze every 1C input family, are team-scoped, leakage-safe, idempotent
  * and fail closed on direct writes. V1 stays as it was.
+ *
+ * These run explicitly on the frozen kapiloto-squad-state-read-v1 over plain
+ * 1A history (setupReadV1LineupWorld): the registry branch every frozen
+ * snapshot replays through, including two-provider alternatives that Stage 1
+ * trust cannot produce. The trusted read-v2 path is
+ * lineup-registry-read-v2-db.test.ts.
  */
 
 type Payload = Record<string, any>;
@@ -36,7 +42,7 @@ async function homeForecast(world: LineupWorld, idempotencyKey?: string) {
 }
 
 test("a lineup forecast records through the V2 RPC with every 1C input family frozen", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, home } = world;
   const { inputs, state, output, snapshot } = await homeForecast(world, "lineup-home-1");
   assert.equal(output.status, "projected");

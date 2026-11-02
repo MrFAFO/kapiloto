@@ -7,7 +7,6 @@ import { canonicalJson, sha256Hex } from "./canonical-json";
 import { buildLineupForecast, type LineupForecastOutput } from "./lineup-model";
 import {
   lineupReplayInput,
-  loadLineupSquadInputs,
   parseSquadStateArtifact,
   squadStateArtifact,
   verifySquadStateReconstruction,
@@ -15,13 +14,18 @@ import {
 import { buildPredictionSnapshotV2Payload, type PredictionSnapshotV2Input } from "./prediction-registry";
 import type { FixtureSquadState } from "./squad-state";
 import { createFixture, realisticObservation, recordObservation } from "./test-support/ledger-fixtures";
-import { LINEUP_CUTOFF, LINEUP_POLICY, LINEUP_RECORDED, forecastSnapshot, recordPredictionV2, setupLineupWorld } from "./test-support/lineup-fixtures";
+import { LINEUP_POLICY, LINEUP_RECORDED, forecastSnapshot, loadForecastInputs, recordPredictionV2, setupReadV1LineupWorld } from "./test-support/lineup-fixtures";
 import { SQUAD_STATE_BUILDER_V2_VERSION, SQUAD_STATE_BUILDER_VERSION } from "./versions";
 
 /**
  * Prediction Registry V2 with membership-aware squad features (D-055): V1
  * and V2 lineup forecasts from the same frozen raw inputs, version-label
  * integrity, complete capture and replay after a later identity merge.
+ *
+ * Builder/features semantics need complete historical lineups, which only
+ * the plain 1A world has, so these run explicitly on the frozen
+ * kapiloto-squad-state-read-v1 (setupReadV1LineupWorld). The trusted
+ * read-v2 path is lineup-registry-read-v2-db.test.ts.
  */
 
 type Payload = Record<string, any>;
@@ -33,7 +37,7 @@ const count = async (db: PGlite, table: string) => Number((await db.query<{ n: n
 const startKnown = (state: FixtureSquadState, id: string) => state.candidates.find((c) => c.canonical_player_id === id)!.history.starts_last.last_10.available_matches;
 
 test("V1 and V2 lineup forecasts from the same frozen raw inputs both record, each with its exact artifact", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, home, signing } = world;
   const v1 = await forecastSnapshot(world, home.teamId, { idempotencyKey: "lineup-v1", builder: V1 });
   const v2 = await forecastSnapshot(world, home.teamId, { idempotencyKey: "lineup-v2", builder: V2 });
@@ -88,7 +92,7 @@ test("V1 and V2 lineup forecasts from the same frozen raw inputs both record, ea
 });
 
 test("version labels must match the frozen artifact: relabels, mixed pairs and unknown versions are refused", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, home } = world;
   const v1 = await forecastSnapshot(world, home.teamId, { builder: V1 });
   const v2 = await forecastSnapshot(world, home.teamId, { builder: V2 });
@@ -148,7 +152,7 @@ test("version labels must match the frozen artifact: relabels, mixed pairs and u
 });
 
 test("V1 and V2 snapshots both replay exactly after a later identity merge", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, seed, home } = world;
   // Before the cutoff, bench player 16 appears in one match under a duplicate record M.
   const p16 = home.playerIds[16];
@@ -167,7 +171,7 @@ test("V1 and V2 snapshots both replay exactly after a later identity merge", asy
   }
   // M is then discovered to be player 16.
   await db.query("update public.players set identity_status = 'merged', merged_into_player_id = $2 where id = $1", [m, p16]);
-  const today = await loadLineupSquadInputs(world.rpc, { fixtureId: world.target.fixtureId, teamId: home.teamId, cutoff: LINEUP_CUTOFF, policy: LINEUP_POLICY });
+  const today = await loadForecastInputs(world, home.teamId);
 
   for (const { builder, id } of recorded) {
     const frozen = (await db.query<{ t: string; sha: string; b: string }>(

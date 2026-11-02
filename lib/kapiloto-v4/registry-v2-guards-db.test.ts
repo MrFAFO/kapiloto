@@ -8,7 +8,6 @@ import { buildLineupForecast, type LineupForecastOutput } from "./lineup-model";
 import {
   buildLineupForecastSnapshot,
   lineupReplayInput,
-  loadLineupSquadInputs,
   parseSquadStateArtifact,
   squadStateArtifact,
   verifySquadStateReconstruction,
@@ -23,8 +22,9 @@ import {
   LINEUP_POLICY,
   LINEUP_RECORDED,
   forecastSnapshot,
+  loadForecastInputs,
   recordPredictionV2,
-  setupLineupWorld,
+  setupReadV1LineupWorld,
   type LineupWorld,
 } from "./test-support/lineup-fixtures";
 import { insertMembership, membershipKey } from "./test-support/roster-fixtures";
@@ -34,6 +34,12 @@ import { historySelectionPolicy } from "./squad-state";
  * Prediction Registry V2 guards: contract separation, leakage, team scope,
  * payload/context integrity, idempotency, direct-write bypass and identity
  * merges. Every refused write leaves nothing behind.
+ *
+ * These run explicitly on the frozen kapiloto-squad-state-read-v1 over plain
+ * 1A history (setupReadV1LineupWorld: withdrawals, superseded versions,
+ * two-provider alternatives, substitutions). The guards are shared by both
+ * reads; the read-v2 counterparts (untrusted rows, relabelled reads) are in
+ * lineup-registry-read-v2-db.test.ts.
  */
 
 type Payload = Record<string, any>;
@@ -70,7 +76,7 @@ async function thirdTeamMembership(world: LineupWorld) {
 }
 
 test("V1 and V2 contracts stay separate; V2 match outcomes keep the 1/X/2 rule", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, home, target } = world;
   const { snapshot } = await homeForecast(world);
   const third = await thirdTeamMembership(world);
@@ -120,7 +126,7 @@ test("V1 and V2 contracts stay separate; V2 match outcomes keep the 1/X/2 rule",
 });
 
 test("a lineup forecast refuses any input first seen after its cutoff and any post-kickoff cutoff", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, home } = world;
   const { snapshot } = await homeForecast(world);
   const base = v2Payload(snapshot);
@@ -145,7 +151,7 @@ test("a lineup forecast refuses any input first seen after its cutoff and any po
 });
 
 test("a lineup forecast is scoped to its subject team, the target fixture's claims and prior history", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, home, away } = world;
   const { snapshot } = await homeForecast(world);
   const attempt = attempter(db, v2Payload(snapshot), "scope");
@@ -190,7 +196,7 @@ test("a lineup forecast is scoped to its subject team, the target fixture's clai
 });
 
 test("the lineup payload must match its frozen squad-state context, fixture, team and identity bindings", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db } = world;
   const { snapshot, state, output, inputs } = await homeForecast(world);
   const attempt = attempter(db, v2Payload(snapshot), "integrity");
@@ -231,7 +237,7 @@ test("the lineup payload must match its frozen squad-state context, fixture, tea
 });
 
 test("an exact replay is unchanged; any material difference under the same key is refused", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db } = world;
   const { snapshot } = await homeForecast(world, "lineup-idempotent");
   const base = v2Payload(snapshot);
@@ -266,7 +272,7 @@ test("an exact replay is unchanged; any material difference under the same key i
 });
 
 test("direct writes cannot bypass the V2 RPC, and frozen V2 links are immutable", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, home } = world;
   const { snapshot } = await homeForecast(world);
   const recorded = await recordPredictionV2(db, snapshot, LINEUP_RECORDED);
@@ -347,7 +353,7 @@ test("direct writes cannot bypass the V2 RPC, and frozen V2 links are immutable"
 });
 
 test("identity merges: a lineup forecast binds active canonical ids; history keeps what the model saw", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, seed, home } = world;
   // Before the cutoff, bench player 16 appears in one match under a second
   // record M (a duplicate not yet discovered).
@@ -395,7 +401,7 @@ test("identity merges: a lineup forecast binds active canonical ids; history kee
   assert.throws(() => parseSquadStateArtifact(`${frozenContext.squad_state_canonical_json} `, frozenContext.squad_state_sha256), /does not hash/);
 
   // Today's as-of read rebuilds a different state (survivor identities) ...
-  const today = await loadLineupSquadInputs(world.rpc, { fixtureId: world.target.fixtureId, teamId: home.teamId, cutoff: LINEUP_CUTOFF, policy: LINEUP_POLICY });
+  const today = await loadForecastInputs(world, home.teamId);
   assert.equal(verifySquadStateReconstruction(today, LINEUP_POLICY, frozenContext.squad_state_sha256), false);
   // ... but the frozen state, with the immutable selected ledger rows mapped
   // through the frozen identities, replays the stored forecast exactly.
@@ -425,7 +431,7 @@ test("identity merges: a lineup forecast binds active canonical ids; history kee
 });
 
 test("squad history must be what the as-of read could return: no superseded versions, withdrawals or upcoming matches", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, seed } = world;
   // A forecast built before the corrections below.
   const { snapshot: stale } = await homeForecast(world, "lineup-stale");
@@ -476,7 +482,7 @@ test("squad history must be what the as-of read could return: no superseded vers
 });
 
 test("memberships, tenures and claim beliefs must be the versions the as-of read returns", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db, home } = world;
   const { snapshot: stale } = await homeForecast(world, "lineup-stale-versions");
   const staleClaims = v2Payload(stale).inputs.claims as Payload[];
@@ -532,7 +538,7 @@ test("memberships, tenures and claim beliefs must be the versions the as-of read
 });
 
 test("complete 1C capture: omitting one valid input row, or adding one the as-of read would not return, is refused", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db } = world;
   const { snapshot } = await homeForecast(world);
   const attempt = attempter(db, v2Payload(snapshot), "complete");
@@ -568,7 +574,7 @@ test("complete 1C capture: omitting one valid input row, or adding one the as-of
 });
 
 test("a forged squad-state artifact cannot change the snapshot it describes, its provenance or its candidates", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db } = world;
   const { snapshot, state } = await homeForecast(world);
   const attempt = attempter(db, v2Payload(snapshot), "artifact");
@@ -603,7 +609,7 @@ test("a forged squad-state artifact cannot change the snapshot it describes, its
 });
 
 test("the database refuses a stored lineup output that breaks the kapiloto-lineup-output-v1 contract", async () => {
-  const world = await setupLineupWorld();
+  const world = await setupReadV1LineupWorld();
   const { db } = world;
   const { snapshot, output } = await homeForecast(world);
   const attempt = attempter(db, v2Payload(snapshot), "contract");

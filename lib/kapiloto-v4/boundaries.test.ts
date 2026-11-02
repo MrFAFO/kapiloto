@@ -165,9 +165,9 @@ test("the 1D migration does not redefine any V1 prediction registry function", (
   assert.ok(sql.includes("create or replace function public.prediction_record_snapshot_v2("));
 });
 
-// Foundation 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A and the D-057 guard are applied;
-// their migrations must never change (line endings normalized so CRLF
-// checkouts hash the same).
+// Foundation 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A, the D-057 guard and Stage 1 M2A
+// are applied; their migrations must never change (line endings normalized so
+// CRLF checkouts hash the same). M2A is pinned at its merged bytes (5327dc3).
 test("the applied V4 migrations are byte-for-byte unchanged", () => {
   const applied: Record<string, string> = {
     "20261028010437_kapiloto_v4_entities_match_ledger.sql": "8e9ebcebe0e930c85f929a9906926f52c95c9d784edd3a70dc8d8e94b357b0a9",
@@ -177,6 +177,7 @@ test("the applied V4 migrations are byte-for-byte unchanged", () => {
     "20261029211641_kapiloto_v4_squad_state_features_v2.sql": "421b3df180e9a745d44c184111838a423e771b12bee0e74b3a35419aee51ca6b",
     "20261030101247_kapiloto_v4_provider_ingest.sql": "5ab815c4c74f08b5505c8cc850f972fd7fd9847f032dcdd97f3e5afe64379cf8",
     "20261030211645_kapiloto_v4_identity_mapping_guard.sql": "6f2e1a4b5b7a091481eca9b6c435bda47952fd4b4bace46ae3dfe4446cd207b3",
+    "20261031100000_kapiloto_v4_identity_attestations.sql": "073905d4ee69dae957e09cc9315bece980a7321fc77a8514384a886335b59759",
   };
   for (const [file, sha256] of Object.entries(applied)) {
     const text = readFileSync(join(ROOT, "supabase", "migrations", file), "utf8").replace(/\r\n/g, "\n");
@@ -270,33 +271,55 @@ test("the M2A migration is additive: no V1 redefinition, no V3 table change, V2 
   assert.doesNotMatch(code, /\bdrop\s+trigger\b|\bdisable\s+trigger\b/);
 });
 
-test("the attestation-aware read migration is additive and cannot activate ingest", () => {
+// The attestation-aware consumer reads (PR #43) add V2 reads next to the
+// frozen V1 ones and bind the registry to the read a lineup forecast used. It
+// redefines exactly the three V2 registry functions that canonicalize, record
+// and verify that binding, adds one column, never touches provider ingest
+// privileges (M2A owns them; only the M2B grant migration may change them),
+// and de-authorizes the V1 consumer reads from service_role.
+test("the attestation-aware read migration is additive, binds the registry read, and leaves ingest privileges alone", () => {
   const dir = join(ROOT, "supabase", "migrations");
   const file = readdirSync(dir).find((name) => ATTESTATION_AWARE_READS_MIGRATION.test(name))!;
   const sql = readFileSync(join(dir, file), "utf8").toLowerCase().replace(/\r\n/g, "\n");
   const code = sql.split("\n").filter((line) => !line.trimStart().startsWith("--")).join("\n");
 
-  for (const fn of [
+  const defined = [...code.matchAll(/create or replace function ([a-z_]+\.[a-z_0-9]+)\(/g)].map((m) => m[1]).sort();
+  assert.deepEqual(defined, [
+    "private.check_prediction_input_bundle",
+    "private.prediction_canonical_inputs_v2",
     "public.match_ledger_observation_as_of_v2",
-    "public.match_ledger_provider_team_matches_as_of_v2",
     "public.match_ledger_provider_player_matches_as_of_v2",
+    "public.match_ledger_provider_team_matches_as_of_v2",
+    "public.prediction_record_snapshot_v2",
     "public.squad_state_inputs_as_of_v2",
+  ]);
+  // Outside function bodies: the only DDL is the read-version column (with a
+  // default for frozen rows), and no data is written.
+  const topLevel = code.replace(/\$\$[\s\S]*?\$\$/g, "$$$$");
+  assert.deepEqual([...topLevel.matchAll(/alter table ([a-z_.]+)/g)].map((m) => m[1]), ["public.prediction_squad_state_context"]);
+  assert.match(topLevel, /add column squad_state_read_version text not null\s+default 'kapiloto-squad-state-read-v1'/);
+  assert.doesNotMatch(topLevel, /\b(insert into|update public\.|delete from|drop|truncate)\b/);
+  assert.doesNotMatch(code, /\bsecurity definer\b/);
+  // Ingest privileges: neither granted nor re-revoked here.
+  assert.doesNotMatch(code, /\b(grant|revoke)\b[^;]*\bmatch_ledger_ingest_provider_fixture(_v2)?\(/);
+  // The V2 reads go to service_role only; the V1 consumer reads lose it.
+  assert.deepEqual([...code.matchAll(/grant ([^;]+);/g)].map((m) => m[1].replace(/\s+/g, " ")).sort(), [
+    "execute on function public.match_ledger_observation_as_of_v2(uuid, text, timestamptz) to service_role",
+    "execute on function public.match_ledger_provider_player_matches_as_of_v2(text, uuid, timestamptz, integer) to service_role",
+    "execute on function public.match_ledger_provider_team_matches_as_of_v2(text, uuid, timestamptz, integer) to service_role",
+    "execute on function public.squad_state_inputs_as_of_v2(uuid, uuid, timestamptz, integer) to service_role",
+  ]);
+  for (const v1 of [
+    "public.match_ledger_observation_as_of(uuid, text, timestamptz)",
+    "public.match_ledger_provider_team_matches_as_of(text, uuid, timestamptz, integer)",
+    "public.match_ledger_provider_player_matches_as_of(text, uuid, timestamptz, integer)",
+    "public.squad_state_inputs_as_of(uuid, uuid, timestamptz, integer)",
   ]) {
-    assert.ok(code.includes(`create or replace function ${fn}(`), fn);
+    assert.ok(code.includes(`revoke all on function ${v1} from service_role;`), v1);
   }
-  for (const frozen of [
-    "public.match_ledger_observation_as_of",
-    "public.match_ledger_provider_team_matches_as_of",
-    "public.match_ledger_provider_player_matches_as_of",
-    "public.squad_state_inputs_as_of",
-  ]) {
-    assert.ok(!code.includes(`create or replace function ${frozen}(`), frozen);
-  }
-
-  assert.doesNotMatch(code, /\bgrant\b[^;]*\bmatch_ledger_ingest_provider_fixture(_v2)?\(/);
-  assert.match(code, /revoke all on function public\.match_ledger_ingest_provider_fixture_v2\(jsonb\)[\s\S]*?service_role;/);
-  assert.match(code, /private\.match_ledger_observation_attestation_issue\(/);
-  assert.doesNotMatch(code, /\b(insert into|update public\.|delete from|alter table public\.)\b/);
+  // Every V2 read applies the trust gate; the squad read names itself.
+  assert.equal([...code.matchAll(/private\.match_ledger_observation_attestation_issue\(/g)].length, 4);
+  assert.match(code, /'read_version', 'kapiloto-squad-state-read-v2'/);
 });
 
 // D-058 M2B gate: attestation-aware V2 successors now exist, but no

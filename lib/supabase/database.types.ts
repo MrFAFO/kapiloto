@@ -3739,6 +3739,7 @@ export type Database = {
           squad_state_canonical_json: string
           squad_state_contract: string
           squad_state_inputs_contract: string
+          squad_state_read_version: string
           squad_state_sha256: string
           subject_team_id: string
           target_date_policy: string
@@ -3754,6 +3755,7 @@ export type Database = {
           squad_state_canonical_json: string
           squad_state_contract: string
           squad_state_inputs_contract: string
+          squad_state_read_version?: string
           squad_state_sha256: string
           subject_team_id: string
           target_date_policy: string
@@ -3769,6 +3771,7 @@ export type Database = {
           squad_state_canonical_json?: string
           squad_state_contract?: string
           squad_state_inputs_contract?: string
+          squad_state_read_version?: string
           squad_state_sha256?: string
           subject_team_id?: string
           target_date_policy?: string

@@ -4,9 +4,10 @@ import test from "node:test";
 
 import { buildMatchLedgerObservationPayload } from "./match-ledger";
 import { buildPredictionSnapshotV2Payload } from "./prediction-registry";
+import { SQUAD_STATE_READ_V1_VERSION } from "./versions";
 import { buildProviderMatchObservationPayload } from "./provider-ingest";
 import { createIngestRun, observationFrom, seedIngestIdentities, syntheticCapture } from "./test-support/provider-ingest-fixtures";
-import { LINEUP_RECORDED, forecastSnapshot, setupLineupWorld } from "./test-support/lineup-fixtures";
+import { LINEUP_RECORDED, forecastSnapshot, setupAttestedLineupWorld } from "./test-support/lineup-fixtures";
 import {
   createFixture,
   createLedgerDatabase,
@@ -58,9 +59,6 @@ const V4_TABLES = [
 
 const V4_PUBLIC_FUNCTIONS = [
   "public.match_ledger_record_observation(jsonb)",
-  "public.match_ledger_observation_as_of(uuid, text, timestamptz)",
-  "public.match_ledger_provider_team_matches_as_of(text, uuid, timestamptz, integer)",
-  "public.match_ledger_provider_player_matches_as_of(text, uuid, timestamptz, integer)",
   "public.team_coach_tenures_as_of(uuid, timestamptz)",
   "public.player_alias_candidates(text)",
   "public.coach_alias_candidates(text)",
@@ -76,7 +74,6 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.knowledge_claim_support_as_of(uuid, timestamptz)",
   "public.knowledge_canonical_claims(uuid[])",
   "public.team_player_memberships_as_of(uuid, timestamptz, date)",
-  "public.squad_state_inputs_as_of(uuid, uuid, timestamptz, integer)",
   "public.prediction_record_snapshot_v2(jsonb)",
   "public.provider_ingest_record_failure(uuid, text, text, text, jsonb)",
   // Stage 1 (D-058).
@@ -90,6 +87,11 @@ const V4_PUBLIC_FUNCTIONS = [
   "public.provider_identity_attestation_conflicts(text)",
   "public.match_ledger_provider_ref_conflicts_v2(text)",
   "public.provider_identity_revocation_impact(text, text, text)",
+  // Attestation-aware consumer reads (PR #43).
+  "public.match_ledger_observation_as_of_v2(uuid, text, timestamptz)",
+  "public.match_ledger_provider_team_matches_as_of_v2(text, uuid, timestamptz, integer)",
+  "public.match_ledger_provider_player_matches_as_of_v2(text, uuid, timestamptz, integer)",
+  "public.squad_state_inputs_as_of_v2(uuid, uuid, timestamptz, integer)",
 ];
 
 // Historical ingest is not enabled: V1 is permanently revoked (D-057, D-058)
@@ -106,6 +108,13 @@ const V4_DEAUTHORIZED_V1_FUNCTIONS = [
   "public.match_ledger_team_match_stats_for_training(text, uuid[], timestamptz, timestamptz, text)",
   "public.match_ledger_retrospective_training_exclusions(text, uuid[], timestamptz, timestamptz, text)",
   "public.match_ledger_provider_ref_conflicts(text)",
+  // The 1A/1C consumer reads, superseded by their attestation-aware V2s. The
+  // registry's read-v1 branch therefore cannot record new forecasts as
+  // service_role; frozen snapshots replay without re-reading.
+  "public.match_ledger_observation_as_of(uuid, text, timestamptz)",
+  "public.match_ledger_provider_team_matches_as_of(text, uuid, timestamptz, integer)",
+  "public.match_ledger_provider_player_matches_as_of(text, uuid, timestamptz, integer)",
+  "public.squad_state_inputs_as_of(uuid, uuid, timestamptz, integer)",
 ];
 
 const V4_PRIVATE_HELPERS_FOR_SERVICE_ROLE = [
@@ -266,11 +275,18 @@ test("service_role can ingest through the RPC but cannot override the informatio
     "insert into public.player_aliases (player_id, alias, language_code, alias_kind) values ($1, 'שחקן בדיקה', 'he', 'canonical')",
     [seed.home.playerIds[0]],
   );
+  // The plain 1A row is stored, but no service_role read consumes it: the V1
+  // read is de-authorized and the V2 read requires Stage 1 attestations.
+  await assert.rejects(
+    db.query("select * from public.match_ledger_provider_team_matches_as_of('sportmonks', $1, now(), 5)", [seed.home.teamId]),
+    /permission denied/,
+  );
   const history = await db.query(
-    "select * from public.match_ledger_provider_team_matches_as_of('sportmonks', $1, now(), 5)",
+    "select * from public.match_ledger_provider_team_matches_as_of_v2('sportmonks', $1, now(), 5)",
     [seed.home.teamId],
   );
-  assert.equal(history.rows.length, 1);
+  assert.equal(history.rows.length, 0);
+  assert.equal(Number((await db.query<{ n: number }>("select count(*)::int as n from public.match_ledger_observations")).rows[0].n), 1);
 
   await assert.rejects(
     db.query(
@@ -283,10 +299,13 @@ test("service_role can ingest through the RPC but cannot override the informatio
   await db.close();
 });
 
-test("service_role records a lineup forecast through the V2 RPC (security invoker) and cannot rewrite it", async () => {
-  const world = await setupLineupWorld({ supabaseDefaultPrivileges: true });
+test("service_role records a trusted read-v2 lineup forecast through the V2 RPC (security invoker), cannot rewrite it, and cannot record read-v1", async () => {
+  const world = await setupAttestedLineupWorld({ supabaseDefaultPrivileges: true });
   const { db } = world;
-  const { snapshot } = await forecastSnapshot(world, world.home.teamId);
+  const { snapshot, output } = await forecastSnapshot(world, world.home.teamId);
+  assert.equal(output.status, "projected");
+  // The same forecast through the frozen V1 read (as the owner), for the refusal below.
+  const legacy = await forecastSnapshot(world, world.home.teamId, { read: SQUAD_STATE_READ_V1_VERSION, idempotencyKey: "service-role-read-v1" });
   await db.query("select set_config('kapiloto.test_clock', $1, false)", [LINEUP_RECORDED]);
   await db.exec("set role service_role");
   const result = await db.query<{ result: { status: string; snapshot_id: string } }>(
@@ -294,11 +313,26 @@ test("service_role records a lineup forecast through the V2 RPC (security invoke
     [JSON.stringify(buildPredictionSnapshotV2Payload(snapshot))],
   );
   assert.equal(result.rows[0].result.status, "recorded");
-  const context = await db.query("select squad_state_sha256 from public.prediction_squad_state_context where snapshot_id = $1", [result.rows[0].result.snapshot_id]);
-  assert.equal(context.rows.length, 1);
+  const context = await db.query<{ squad_state_read_version: string }>(
+    "select squad_state_read_version from public.prediction_squad_state_context where snapshot_id = $1",
+    [result.rows[0].result.snapshot_id],
+  );
+  assert.deepEqual(context.rows, [{ squad_state_read_version: "kapiloto-squad-state-read-v2" }]);
   await assert.rejects(db.query("delete from public.prediction_membership_inputs"), /immutable/);
   await assert.rejects(db.query("update public.prediction_squad_state_context set history_max_fixtures = 1"), /immutable/);
+  await assert.rejects(db.query("update public.prediction_squad_state_context set squad_state_read_version = 'kapiloto-squad-state-read-v1'"), /immutable/);
+  // A NEW read-v1 forecast is refused for service_role, by name, at commit.
+  await assert.rejects(
+    db.query("select public.prediction_record_snapshot_v2($1::jsonb) as result", [JSON.stringify(buildPredictionSnapshotV2Payload(legacy.snapshot))]),
+    /declares kapiloto-squad-state-read-v1, which this role may no longer record/,
+  );
+  // service_role runs the V2 reads, and none of the V1 consumer reads.
+  const target = world.target.fixtureId;
+  assert.equal((await db.query("select public.squad_state_inputs_as_of_v2($1, $2, $3, 10) as r", [target, world.home.teamId, "2026-10-30T12:00:00.000Z"])).rows.length, 1);
+  await assert.rejects(db.query("select public.squad_state_inputs_as_of($1, $2, $3, 10)", [target, world.home.teamId, "2026-10-30T12:00:00.000Z"]), /permission denied/);
+  await assert.rejects(db.query("select public.match_ledger_observation_as_of($1, 'sportmonks', $2)", [world.obs.t1.fixture_id, "2026-10-30T12:00:00.000Z"]), /permission denied/);
   await db.exec("reset role");
+  assert.equal(Number((await db.query<{ n: number }>("select count(*)::int as n from public.prediction_snapshots")).rows[0].n), 1);
   await db.close();
 });
 
@@ -314,6 +348,7 @@ test("no function defined by a V4 migration is executable by app roles or securi
     "supabase/migrations/20261030101247_kapiloto_v4_provider_ingest.sql",
     "supabase/migrations/20261030211645_kapiloto_v4_identity_mapping_guard.sql",
     "supabase/migrations/20261031100000_kapiloto_v4_identity_attestations.sql",
+    "supabase/migrations/20261102103000_kapiloto_v4_attestation_aware_consumer_reads.sql",
   ]) {
     for (const match of readFileSync(file, "utf8").matchAll(/create or replace function (?:public|private)\.([a-z_0-9]+)\(/g)) {
       names.add(match[1]);

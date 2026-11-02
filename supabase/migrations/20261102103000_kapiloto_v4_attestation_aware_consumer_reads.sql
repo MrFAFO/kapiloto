@@ -4,9 +4,19 @@
 -- provider identity attestation is absent, revoked, stale or disagrees with
 -- the current manual_override mapping.
 --
--- Important ordering rule: every V2 function first selects the latest visible
--- provider version exactly as V1 does, then applies the attestation gate.
--- An invalid latest version never resurrects an older observation.
+-- Ordering rules (identical in every V2 read):
+--   1. the latest visible provider version is selected exactly as V1 does,
+--      withdrawals included, so an invalid latest version never resurrects an
+--      older observation;
+--   2. a last-N window is the exact window V1 would select (conservative
+--      window): an untrusted fixture inside it shrinks the trusted history and
+--      is never replaced by an older fixture from outside it;
+--   3. only then is the Stage 1 trust gate applied, at current state.
+--
+-- The Prediction Registry records which squad-state read assembled a lineup
+-- forecast (kapiloto-squad-state-read-v1 for every frozen snapshot, -v2 for
+-- trusted forecasts) and re-runs exactly that read at commit. The canonical
+-- input bundle of a read-v1 snapshot is byte-identical to before.
 
 create or replace function public.match_ledger_observation_as_of_v2(
   p_fixture_id uuid,
@@ -124,7 +134,6 @@ begin
     left join public.coaches c on c.id = tr.coach_id
     where v.version_rank = 1
       and v.observation_kind = 'observation'
-      and private.match_ledger_observation_attestation_issue(o.id) is null
       and o.match_status = 'finished'
       and o.kickoff_at < p_cutoff
   )
@@ -136,7 +145,9 @@ begin
     l.lineup_status, l.substitutions_status, l.events_status,
     l.statistics_status
   from latest l
+  -- The V1 window first, then the trust gate: never reach further back.
   where l.match_rank <= least(greatest(coalesce(p_limit, 10), 0), 50)
+    and private.match_ledger_observation_attestation_issue(l.observation_id) is null
   order by l.kickoff_at desc;
 end;
 $$;
@@ -233,7 +244,6 @@ begin
       on p.observation_id = o.id and p.player_id = any (v_identities)
     where v.version_rank = 1
       and v.observation_kind = 'observation'
-      and private.match_ledger_observation_attestation_issue(o.id) is null
       and o.match_status = 'finished'
       and o.kickoff_at < p_cutoff
   )
@@ -244,7 +254,9 @@ begin
     l.position_code, l.formation_position, l.is_captain, l.minutes_played,
     l.entered_minute, l.exited_minute, l.data_completeness
   from latest l
+  -- The V1 window first, then the trust gate: never reach further back.
   where l.match_rank <= least(greatest(coalesce(p_limit, 10), 0), 50)
+    and private.match_ledger_observation_attestation_issue(l.observation_id) is null
   order by l.kickoff_at desc;
 end;
 $$;
@@ -319,9 +331,9 @@ begin
       and vi.kickoff_at < v_kickoff
   ),
   recent as (
-    -- Preserve the V1 meaning of "last N fixtures": pick the same recent
-    -- canonical fixtures first. Trust filtering may shrink the usable history;
-    -- it must not silently reach further back to replace a missing fixture.
+    -- The exact V1 window of canonical fixtures, chosen before the trust
+    -- gate: an untrusted fixture inside it shrinks the history and is never
+    -- replaced by an older fixture from outside it.
     select l.fixture_id
     from latest l
     group by l.fixture_id
@@ -441,8 +453,11 @@ begin
     into v_tenures
   from public.team_coach_tenures_as_of(p_team_id, p_cutoff) t;
 
+  -- Same kapiloto-squad-state-inputs-v1 shape as the V1 read; read_version
+  -- names the read policy that assembled it (the V1 read returns none).
   return jsonb_build_object(
     'contract_version', 'kapiloto-squad-state-inputs-v1',
+    'read_version', 'kapiloto-squad-state-read-v2',
     'fixture_id', p_fixture_id,
     'team_id', p_team_id,
     'opponent_team_id', v_opponent,
@@ -460,8 +475,12 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Security: reads are available only to service_role. V2 ingest remains
--- revoked; the separate M2B grant migration is still required.
+-- Security: the V2 reads are available only to service_role.
+--
+-- Provider ingest privileges are deliberately NOT touched here: M2A leaves
+-- both ingest RPCs revoked from service_role, and only the separate,
+-- grant-only M2B migration may change that. Re-revoking them here would
+-- silently undo an M2B grant if migrations were ever applied out of order.
 -- ---------------------------------------------------------------------------
 
 revoke all on function public.match_ledger_observation_as_of_v2(uuid, text, timestamptz)
@@ -478,33 +497,49 @@ grant execute on function public.match_ledger_provider_team_matches_as_of_v2(tex
 grant execute on function public.match_ledger_provider_player_matches_as_of_v2(text, uuid, timestamptz, integer) to service_role;
 grant execute on function public.squad_state_inputs_as_of_v2(uuid, uuid, timestamptz, integer) to service_role;
 
--- This migration must not activate provider ingest.
-revoke all on function public.match_ledger_ingest_provider_fixture_v2(jsonb)
-  from public, anon, authenticated, service_role;
-revoke all on function public.match_ledger_ingest_provider_fixture(jsonb)
-  from public, anon, authenticated, service_role;
+-- The V1 consumer reads would now mislead (they ignore Stage 1 trust), as
+-- the V1 team-stat reads did in M2A: present for contract/history inspection,
+-- not executable by service_role. No frozen path needs them as service_role:
+-- an idempotent replay of a frozen snapshot returns before any read, and
+-- offline replay uses the frozen artifact. The only SQL caller of the V1
+-- squad read is the registry's read-v1 branch, which therefore cannot be used
+-- by service_role to record NEW read-v1 lineup forecasts.
+revoke all on function public.match_ledger_observation_as_of(uuid, text, timestamptz) from service_role;
+revoke all on function public.match_ledger_provider_team_matches_as_of(text, uuid, timestamptz, integer) from service_role;
+revoke all on function public.match_ledger_provider_player_matches_as_of(text, uuid, timestamptz, integer) from service_role;
+revoke all on function public.squad_state_inputs_as_of(uuid, uuid, timestamptz, integer) from service_role;
 
 comment on function public.match_ledger_observation_as_of_v2(uuid, text, timestamptz) is
-  'Stage 1 attestation-aware successor of match_ledger_observation_as_of. Latest visible version is selected before trust filtering; invalid identity provenance returns null and never falls back to an older version.';
+  'Stage 1 attestation-aware successor of match_ledger_observation_as_of. The latest visible version is selected before the trust gate; an untrusted latest version returns null (as nothing known or a withdrawal does) and never falls back to an older version.';
 comment on function public.match_ledger_provider_team_matches_as_of_v2(text, uuid, timestamptz, integer) is
-  'Stage 1 attestation-aware successor of match_ledger_provider_team_matches_as_of. Only latest visible finished observations with currently valid sealed identity attestations are returned.';
+  'Stage 1 attestation-aware successor of match_ledger_provider_team_matches_as_of. The exact V1 window of latest visible finished observations, then only those whose sealed identity attestations are currently valid; an untrusted fixture shrinks the window and is never replaced by an older one.';
 comment on function public.match_ledger_provider_player_matches_as_of_v2(text, uuid, timestamptz, integer) is
-  'Stage 1 attestation-aware successor of match_ledger_provider_player_matches_as_of. Only latest visible finished observations with currently valid sealed identity attestations are returned.';
+  'Stage 1 attestation-aware successor of match_ledger_provider_player_matches_as_of. The exact V1 window of latest visible finished observations, then only those whose sealed identity attestations are currently valid; an untrusted fixture shrinks the window and is never replaced by an older one.';
 comment on function public.squad_state_inputs_as_of_v2(uuid, uuid, timestamptz, integer) is
-  'Stage 1 attestation-aware successor of squad_state_inputs_as_of. Membership, claims and tenure semantics are unchanged; Match Ledger history is limited to currently trusted attested observations.';
+  'Stage 1 attestation-aware successor of squad_state_inputs_as_of (read kapiloto-squad-state-read-v2). Membership, claim and tenure semantics are unchanged; Match Ledger history is the exact V1 fixture window, limited to currently trusted attested observations.';
 
 
 -- ---------------------------------------------------------------------------
 -- Prediction Registry read-version binding.
 --
--- Frozen snapshots created before this migration default to read-v1. New
--- trusted lineup forecasts explicitly persist read-v2, and the deferred
--- registry check re-runs the matching database read rather than assuming V1.
+-- squad_state_read_version names the database read that assembled a lineup
+-- forecast's raw squad inputs. It is separate from
+-- squad_state_inputs_contract (the JSON shape, shared by both reads), so no
+-- existing contract version changes meaning. Every context row written
+-- before this migration was built by the V1 read and is backfilled as
+-- read-v1; new trusted forecasts declare read-v2. The deferred registry
+-- check re-runs exactly the declared read.
+--
+-- Canonical form: read-v1 is the implicit legacy value and is OMITTED from
+-- the canonical squad-state context (explicit or absent, same bytes), so
+-- every frozen bundle hash, and every idempotent replay of a frozen payload,
+-- is unchanged. read-v2 is included, so the hash commits to it.
 -- ---------------------------------------------------------------------------
 
 alter table public.prediction_squad_state_context
-  add column if not exists squad_state_read_version text not null
+  add column squad_state_read_version text not null
     default 'kapiloto-squad-state-read-v1'
+    constraint prediction_squad_state_context_read_version_check
     check (squad_state_read_version in ('kapiloto-squad-state-read-v1', 'kapiloto-squad-state-read-v2'));
 
 create or replace function private.prediction_canonical_inputs_v2(p_inputs jsonb)
@@ -536,6 +571,14 @@ begin
       'target_date_policy', 'provider_priority', 'history_max_fixtures', 'squad_state_sha256',
       'squad_state_canonical_json'
     ], 'squad-state context');
+    -- Absent means read-v1 (every frozen payload); anything present must be a
+    -- known read, spelled as a string, never silently mapped to read-v1.
+    if v_context ? 'squad_state_read_version' and (
+      jsonb_typeof(v_context->'squad_state_read_version') <> 'string'
+      or v_context->>'squad_state_read_version' not in ('kapiloto-squad-state-read-v1', 'kapiloto-squad-state-read-v2')
+    ) then
+      raise exception 'unsupported squad-state read version %', v_context->'squad_state_read_version';
+    end if;
   end if;
 
   return private.prediction_canonical_inputs(v_inputs - array['memberships', 'tenures', 'squad_state_context'])
@@ -553,7 +596,6 @@ begin
       'squad_state_context', (
         select jsonb_build_object(
           'subject_team_id', c.subject_team_id,
-          'squad_state_read_version', coalesce(c.squad_state_read_version, 'kapiloto-squad-state-read-v1'),
           'squad_state_inputs_contract', c.squad_state_inputs_contract,
           'squad_state_contract', c.squad_state_contract,
           'squad_state_builder_version', c.squad_state_builder_version,
@@ -565,7 +607,12 @@ begin
           'history_max_fixtures', c.history_max_fixtures,
           'squad_state_sha256', c.squad_state_sha256,
           'squad_state_canonical_json', c.squad_state_canonical_json
-        )
+        ) || case
+          -- read-v1 stays implicit: frozen hashes are byte-identical.
+          when c.squad_state_read_version = 'kapiloto-squad-state-read-v2'
+            then jsonb_build_object('squad_state_read_version', c.squad_state_read_version)
+          else '{}'::jsonb
+        end
         from jsonb_to_record(v_context) as c(
           subject_team_id uuid, squad_state_read_version text, squad_state_inputs_contract text, squad_state_contract text,
           squad_state_builder_version text, squad_features_version text,
@@ -865,6 +912,8 @@ begin
         select jsonb_agg(jsonb_build_object('tenure_id', i.tenure_id, 'input_role', i.input_role))
         from public.prediction_tenure_inputs i where i.snapshot_id = new.id), '[]'::jsonb),
       'squad_state_context', (
+        -- Hashed through prediction_canonical_inputs_v2, the single owner of
+        -- the canonical form: read-v1 (every frozen row) stays implicit.
         select to_jsonb(c) - 'snapshot_id'
         from public.prediction_squad_state_context c where c.snapshot_id = new.id)
     );
@@ -876,16 +925,24 @@ begin
         raise exception 'lineup forecast % has no squad-state context', new.id;
       end if;
 
-      -- Complete 1C capture: the frozen links are exactly what the 1C as-of
-      -- read returns for this fixture, team, cutoff and history window - no
-      -- omitted provider alternative, membership, tenure, claim or
-      -- resolution, and nothing it would not return.
+      -- Complete 1C capture: the frozen links are exactly what the DECLARED
+      -- squad-state read returns for this fixture, team, cutoff and history
+      -- window - no omitted provider alternative, membership, tenure, claim
+      -- or resolution, and nothing it would not return. A read-v2 forecast
+      -- that froze an untrusted observation is therefore refused here.
       if v_context.squad_state_read_version = 'kapiloto-squad-state-read-v2' then
         v_expected := public.squad_state_inputs_as_of_v2(
           new.fixture_id, new.subject_team_id, new.research_cutoff_at, v_context.history_max_fixtures::integer);
-      else
+      elsif v_context.squad_state_read_version = 'kapiloto-squad-state-read-v1' then
+        -- The frozen V1 read ignores Stage 1 trust. service_role may no
+        -- longer execute it, so it cannot record new read-v1 forecasts.
+        if not has_function_privilege('public.squad_state_inputs_as_of(uuid, uuid, timestamptz, integer)', 'execute') then
+          raise exception 'lineup forecast % declares kapiloto-squad-state-read-v1, which this role may no longer record; new lineup forecasts use kapiloto-squad-state-read-v2', new.id;
+        end if;
         v_expected := public.squad_state_inputs_as_of(
           new.fixture_id, new.subject_team_id, new.research_cutoff_at, v_context.history_max_fixtures::integer);
+      else
+        raise exception 'lineup forecast % has unsupported squad-state read version %', new.id, v_context.squad_state_read_version;
       end if;
       if array(select h->>'observation_id' from jsonb_array_elements(v_expected->'history') h order by 1)
         is distinct from array(select i.ledger_observation_id::text from public.prediction_ledger_inputs i
@@ -978,4 +1035,4 @@ end;
 $$;
 
 comment on column public.prediction_squad_state_context.squad_state_read_version is
-  'Exact database squad-state read policy used to build the frozen inputs. Missing legacy payloads canonicalize to read-v1; new trusted lineup forecasts use read-v2.';
+  'Database read that assembled the frozen squad inputs and that the registry re-runs at commit: kapiloto-squad-state-read-v1 (squad_state_inputs_as_of; every pre-existing row, implicit in the canonical bundle) or kapiloto-squad-state-read-v2 (squad_state_inputs_as_of_v2; Stage 1 trusted history, hashed).';

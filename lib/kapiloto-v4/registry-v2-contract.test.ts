@@ -19,6 +19,7 @@ const STATE_TEXT = canonicalJson({ fixture: { fixture_id: FIXTURE } });
 
 const context: SquadStateContext = {
   subjectTeamId: TEAM,
+  squadStateReadVersion: "kapiloto-squad-state-read-v2",
   squadStateInputsContract: "kapiloto-squad-state-inputs-v1",
   squadStateContract: "kapiloto-squad-state-v1",
   squadStateBuilderVersion: "kapiloto-squad-state-builder-v1",
@@ -67,6 +68,8 @@ test("the V2 payload is the V1 payload plus kind, subject team and the 1C famili
   assert.deepEqual(payload.inputs.tenures, [{ tenure_id: "c0000000-0000-4000-8000-000000000001", input_role: null }]);
   assert.deepEqual(payload.inputs.squad_state_context, {
     subject_team_id: TEAM.toLowerCase(),
+    // The read that assembled the inputs is always sent explicitly.
+    squad_state_read_version: "kapiloto-squad-state-read-v2",
     squad_state_inputs_contract: "kapiloto-squad-state-inputs-v1",
     squad_state_contract: "kapiloto-squad-state-v1",
     squad_state_builder_version: "kapiloto-squad-state-builder-v1",
@@ -100,6 +103,10 @@ test("V2 validation: kind-specific rules", () => {
   assert.deepEqual(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, squadStateBuilderVersion: "kapiloto-squad-state-builder-v2", squadFeaturesVersion: "kapiloto-squad-features-v2" } } })), []);
   assert.ok(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, squadStateBuilderVersion: "kapiloto-squad-state-builder-v2" } } })).includes("unsupported squad-state builder/features version pair"));
   assert.ok(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, squadFeaturesVersion: "kapiloto-squad-features-v3" as never } } })).includes("unsupported squad-state builder/features version pair"));
+  // The squad-state read is one of the two named reads.
+  assert.deepEqual(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, squadStateReadVersion: "kapiloto-squad-state-read-v1" } } })), []);
+  assert.ok(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, squadStateReadVersion: "kapiloto-squad-state-read-v3" as never } } })).includes("unsupported squad-state read version"));
+  assert.ok(validatePredictionSnapshotV2(lineup({ inputs: { squadStateContext: { ...context, squadStateReadVersion: undefined as never } } })).includes("unsupported squad-state read version"));
 
   const outcome = lineup({ predictionKind: "match_outcome", subjectTeamId: null, probabilities: { p1Bp: 4600, pXBp: 2800, p2Bp: 2600 }, payload: {}, inputs: {} });
   assert.deepEqual(validatePredictionSnapshotV2(outcome), []);
