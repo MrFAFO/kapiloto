@@ -888,7 +888,7 @@ same statement.
   on any of these:
   - an ingest RPC owner other than `postgres` or `supabase_admin`;
   - EXECUTE for any non-operator role, including through membership or PUBLIC;
-  - a SECURITY DEFINER function or pg_cron job calling ingest;
+  - any wrapper function that references ingest, or a pg_cron job calling it;
   - a held Sportmonks provider-identity `ShareLock` or an ingest call still in
     flight.
 
