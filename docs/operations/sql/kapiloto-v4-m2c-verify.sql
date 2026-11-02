@@ -3,19 +3,17 @@
 -- Run AFTER the M2C revoke has committed, as its own execution. It reads
 -- catalogs only and raises an exception listing every violation, so the
 -- operator sees PASS only when ingest is paused for every application path:
---   1. no role other than the function owner and the Supabase operator roles
---      (postgres, supabase_admin) holds EXECUTE on either provider ingest RPC
---      (explicit grants, PUBLIC, or the default ACL). Operator roles may hold
---      it through default privileges when another role owns the function;
---      production ingest never runs under them;
---   2. service_role, anon, authenticated and authenticator cannot execute
---      them, including through role membership;
---   3. neither RPC is owned by an application role;
+--   1. each ingest RPC is owned only by a reviewed Supabase operator role
+--      (postgres or supabase_admin);
+--   2. no other role can execute either RPC, including through role
+--      membership, explicit grants, PUBLIC, or the default ACL;
 --   4. no SECURITY DEFINER function and no pg_cron job calls them (both run
 --      as their owner and would bypass the revoke);
---   5. no other backend is still executing an ingest call. A call that
+--   4. no other backend is still executing an ingest call. The V2 ingest's
+--      shared provider-identity advisory lock is the authoritative drain
+--      signal; pg_stat_activity is an additional diagnostic. A call that
 --      passed its EXECUTE check before the revoke committed runs to the end
---      and may commit; re-run this check until it passes (the drain).
+--      and may commit; re-run this check until it passes.
 -- Not a migration; never place it under supabase/migrations.
 
 do $m2c_verify$
@@ -46,20 +44,20 @@ begin
     select f.fn, ro.rolname
     from unnest(v_ingest) as f(fn)
     cross join pg_catalog.pg_roles ro
-    where ro.rolname in ('service_role', 'anon', 'authenticated', 'authenticator')
+    where ro.rolname not in ('postgres', 'supabase_admin')
       and pg_catalog.has_function_privilege(ro.oid, f.fn, 'execute')
     order by 1, 2
   loop
-    v_problems := v_problems || format('%s: executable by %s', r.fn, r.rolname);
+    v_problems := v_problems || format('%s: executable by non-operator role %s', r.fn, r.rolname);
   end loop;
 
   for r in
     select p.oid::regprocedure as fn, pg_catalog.pg_get_userbyid(p.proowner) as owner
     from pg_catalog.pg_proc p
     where p.oid = any(v_ingest::oid[])
-      and pg_catalog.pg_get_userbyid(p.proowner) in ('service_role', 'anon', 'authenticated', 'authenticator')
+      and pg_catalog.pg_get_userbyid(p.proowner) not in ('postgres', 'supabase_admin')
   loop
-    v_problems := v_problems || format('%s: owned by application role %s', r.fn, r.owner);
+    v_problems := v_problems || format('%s: owned by non-operator role %s', r.fn, r.owner);
   end loop;
 
   for r in
@@ -84,6 +82,23 @@ begin
   end if;
 
   for r in
+    select l.pid, l.mode
+    from pg_catalog.pg_locks l
+    where l.locktype = 'advisory'
+      and l.granted
+      and l.objsubid = 1
+      and ((l.classid::bigint << 32) | l.objid::bigint)
+          = pg_catalog.hashtextextended('kapiloto_v4_provider_identity:sportmonks', 0)
+      and l.mode = 'ShareLock'
+    order by l.pid
+  loop
+    v_problems := v_problems || format(
+      'backend %s still holds the Sportmonks provider-identity ShareLock; a V2 ingest call is still in flight',
+      r.pid
+    );
+  end loop;
+
+  for r in
     select a.pid, a.state, a.xact_start
     from pg_catalog.pg_stat_activity a
     where a.pid <> pg_catalog.pg_backend_pid()
@@ -98,6 +113,6 @@ begin
   if cardinality(v_problems) > 0 then
     raise exception 'M2C verification FAILED: %', array_to_string(v_problems, '; ');
   end if;
-  raise notice 'M2C verification PASSED: provider ingest is paused for every non-owner role and no ingest call is in flight';
+  raise notice 'M2C verification PASSED: ingest RPC ownership is operator-only, no non-operator role can execute, and no V2 ingest call is in flight';
 end;
 $m2c_verify$;
