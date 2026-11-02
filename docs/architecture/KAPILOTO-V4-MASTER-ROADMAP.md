@@ -764,15 +764,16 @@ What still blocks M2B after PR #43:
   Sevilla reconciliation and the full 20/20 R7 (separate blocker);
 - entity/reconciliation reports clean for the pilot scope;
 - A2-B (PR #19) amended and re-run;
-- the recovery runbook rehearsed, and the M2C pause SQL body reviewed (fresh
-  timestamp at application). **Rehearsal implemented in PR #47 (D-061),
-  pending merge and independent review:**
-  - the hardened M2C body (both ingest RPCs, every non-owner role) with a
+- DONE: the recovery runbook is implemented, independently reviewed by Claude and Fable, and merged in PR #47 (`7d41c43045ced8f582393e831e176eba2757cbeb`):
+  - the hardened M2C body (both ingest RPCs, every non-operator role) with a
     read-only verification;
   - reviewed operator SQL templates;
   - minted fixtures corrected in place;
   - synthetic rehearsal of the team and competition incidents, out-of-order
     failure and resume, and frozen-forecast reporting;
+- before the tiny M2B pilot: one two-session rehearsal on real PostgreSQL
+  outside production must prove the in-flight V2 ingest/revoke behavior that
+  single-backend PGlite cannot demonstrate;
 - the reviewed immutable run allowlist fixed;
 - the separate grant-only M2B migration itself, reviewed.
 
