@@ -24,8 +24,9 @@
 -- V2 ingest lock order (provider-fixture advisory lock, then the team-pair
 -- advisory locks in sorted order, then the fixture row) and refuses unless:
 -- the row still has the reviewed old identity (compare-and-set); it was minted
--- by this provider fixture id; nothing but this provider fixture's mapping and
--- the V4 ledger references it; every ledger chain on it is withdrawn; and no
+-- by this provider fixture id; nothing but this provider fixture's mapping,
+-- its same-provider-fixture immutable ingest audit, and the V4 ledger
+-- references it; every ledger chain on it is withdrawn; and no
 -- other canonical fixture already represents the corrected match. Idempotent:
 -- a row that already has the corrected identity is reported and left unchanged.
 
@@ -92,6 +93,29 @@ begin
     where m.fixture_id = v_fixture and not (m.provider = 'sportmonks' and m.provider_fixture_id = v_pfid)
   ) then
     raise exception 'fixture % carries another provider fixture mapping, so it is not private to the V4 ledger', v_fixture;
+  end if;
+  if exists (
+    select 1
+    from public.provider_ingest_items i
+    where i.fixture_id = v_fixture
+      and (
+        i.provider <> 'sportmonks'
+        or i.provider_fixture_id <> v_pfid
+        or (
+          i.observation_id is not null
+          and not exists (
+            select 1
+            from public.match_ledger_observations o
+            where o.id = i.observation_id
+              and o.fixture_id = v_fixture
+              and o.provider = 'sportmonks'
+              and o.provider_fixture_id = v_pfid
+          )
+        )
+      )
+  ) then
+    raise exception 'fixture % has an ingest audit reference outside sportmonks fixture %; it is not private to this recovery chain',
+      v_fixture, v_pfid;
   end if;
   select m.fixture_id into v_mapped
   from public.provider_fixture_mappings m
