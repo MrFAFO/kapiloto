@@ -24,7 +24,6 @@ import {
 
 const BASE = "https://api.sportmonks.com/v3/football";
 const ENTITLEMENT_PAGE_CAP = 100;
-const FIXTURE_PAGE_CAP = 100;
 const PER_PAGE = 50;
 
 type Envelope<T> = {
@@ -137,7 +136,46 @@ function dateValue(value: unknown): string | null {
 function finishedState(row: Record<string, unknown>): boolean {
   const state = asRecord(row.state);
   const value = state?.developer_name;
-  return value === "FT" || value === "AET" || value === "FT_PEN";
+  if (value === "FT" || value === "AET" || value === "FT_PEN") return true;
+
+  const stateId =
+    typeof row.state_id === "number"
+      ? row.state_id
+      : typeof row.state_id === "string"
+        ? Number(row.state_id)
+        : Number.NaN;
+  return stateId === 5 || stateId === 7 || stateId === 8;
+}
+
+function scheduleFixtures(stages: unknown[]): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = [];
+
+  const addFixtures = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    for (const fixtureValue of value) {
+      const fixture = asRecord(fixtureValue);
+      if (fixture) rows.push(fixture);
+    }
+  };
+
+  for (const stageValue of stages) {
+    const stage = asRecord(stageValue);
+    if (!stage) continue;
+
+    addFixtures(stage.fixtures);
+
+    if (!Array.isArray(stage.rounds)) continue;
+    for (const roundValue of stage.rounds) {
+      const round = asRecord(roundValue);
+      if (round) addFixtures(round.fixtures);
+    }
+  }
+
+  return [
+    ...new Map(
+      rows.map((row) => [asProviderId(row.id) ?? JSON.stringify(row), row] as const),
+    ).values(),
+  ];
 }
 
 function kickoffMs(row: Record<string, unknown>): number {
@@ -326,47 +364,25 @@ async function loadFinishedFixturesForSeason(
   fixtures: Record<string, unknown>[];
   pageHashes: string[];
 }> {
-  const rows: Record<string, unknown>[] = [];
-  const pageHashes: string[] = [];
+  const response = await requestRaw<Array<Record<string, unknown>>>(
+    token,
+    rawDir,
+    `/schedules/seasons/${season.id}`,
+  );
 
-  for (let page = 1; page <= FIXTURE_PAGE_CAP; page += 1) {
-    const response = await requestRaw<Array<Record<string, unknown>>>(
-      token,
-      rawDir,
-      `/fixtures/seasons/${season.id}`,
-      {
-        include: "state;participants;scores",
-        page,
-        per_page: PER_PAGE,
-      },
-    );
-    pageHashes.push(response.hash);
-
-    for (const row of response.body.data ?? []) {
-      if (
-        String(row.league_id) === target.providerLeagueId &&
-        String(row.season_id) === season.id &&
-        finishedState(row)
-      ) {
-        rows.push(row);
-      }
-    }
-
-    const hasMore = response.body.pagination?.has_more === true;
-    if (!hasMore) break;
-    if (page === FIXTURE_PAGE_CAP) {
-      throw new Error(
-        `Fixture pagination exceeded hard cap ${FIXTURE_PAGE_CAP} for league ${target.providerLeagueId} season ${season.id}.`,
-      );
-    }
-  }
+  const rows = scheduleFixtures(response.body.data ?? []).filter(
+    (row) =>
+      String(row.league_id) === target.providerLeagueId &&
+      String(row.season_id) === season.id &&
+      finishedState(row),
+  );
 
   return {
     fixtures: rows
       .filter((row) => Number.isFinite(kickoffMs(row)))
       .sort((a, b) => kickoffMs(b) - kickoffMs(a))
       .slice(0, limit),
-    pageHashes,
+    pageHashes: [response.hash],
   };
 }
 
@@ -666,7 +682,6 @@ async function main(): Promise<void> {
       seasonsPerLeague: args.seasonsPerLeague,
       fixturesPerSeason: args.fixturesPerSeason,
       entitlementPageCap: ENTITLEMENT_PAGE_CAP,
-      fixturePageCap: FIXTURE_PAGE_CAP,
       perPage: PER_PAGE,
     },
     entitlementSnapshotSha256: entitlementSha256,
