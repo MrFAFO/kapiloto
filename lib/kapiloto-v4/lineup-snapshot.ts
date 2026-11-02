@@ -14,7 +14,8 @@ import {
 import {
   buildFixtureSquadStateFor,
   isSupportedSquadStateBuild,
-  loadSquadStateInputs,
+  loadSquadStateInputsV2,
+  squadStateInputsReadVersion,
   type FixtureSquadState,
   type HistoryObservationInput,
   type HistorySelectionPolicy,
@@ -41,15 +42,17 @@ import {
  */
 
 /**
- * Loads 1C inputs for a lineup forecast. The history window passed to the
- * as-of read is the policy's maxFixtures: the registry re-runs exactly this
- * read at commit and refuses any difference.
+ * Loads 1C inputs for a lineup forecast through the Stage 1 trust-aware read
+ * (kapiloto-squad-state-read-v2). The history window passed to the read is
+ * the policy's maxFixtures; the snapshot records read-v2, and the registry
+ * re-runs exactly that read at commit and refuses any difference. Observations
+ * without currently valid sealed identity attestations are never inputs.
  */
 export function loadLineupSquadInputs(
   rpc: SquadStateRpc,
   params: { fixtureId: string; teamId: string; cutoff: string; policy: HistorySelectionPolicy },
 ): Promise<SquadStateInputs> {
-  return loadSquadStateInputs(rpc, { fixtureId: params.fixtureId, teamId: params.teamId, cutoff: params.cutoff, historyFixtureLimit: params.policy.maxFixtures });
+  return loadSquadStateInputsV2(rpc, { fixtureId: params.fixtureId, teamId: params.teamId, cutoff: params.cutoff, historyFixtureLimit: params.policy.maxFixtures });
 }
 
 /** The exact state bytes a forecast consumes, and their SHA-256. */
@@ -151,6 +154,9 @@ export function buildLineupForecastSnapshot(args: {
   const selected = new Set(state.history_selection.map((s) => s.observation_id));
   const context: SquadStateContext = {
     subjectTeamId: state.fixture.team_id,
+    // The read that actually assembled the inputs (never assumed): the
+    // registry re-runs exactly this read at commit.
+    squadStateReadVersion: squadStateInputsReadVersion(inputs),
     squadStateInputsContract: SQUAD_STATE_INPUTS_CONTRACT_VERSION,
     squadStateContract: SQUAD_STATE_CONTRACT_VERSION,
     // The versions the state itself was built with (never assumed).

@@ -3739,6 +3739,7 @@ export type Database = {
           squad_state_canonical_json: string
           squad_state_contract: string
           squad_state_inputs_contract: string
+          squad_state_read_version: string
           squad_state_sha256: string
           subject_team_id: string
           target_date_policy: string
@@ -3754,6 +3755,7 @@ export type Database = {
           squad_state_canonical_json: string
           squad_state_contract: string
           squad_state_inputs_contract: string
+          squad_state_read_version?: string
           squad_state_sha256: string
           subject_team_id: string
           target_date_policy: string
@@ -3769,6 +3771,7 @@ export type Database = {
           squad_state_canonical_json?: string
           squad_state_contract?: string
           squad_state_inputs_contract?: string
+          squad_state_read_version?: string
           squad_state_sha256?: string
           subject_team_id?: string
           target_date_policy?: string
@@ -5020,6 +5023,10 @@ export type Database = {
         Args: { p_cutoff: string; p_fixture_id: string; p_provider: string }
         Returns: string
       }
+      match_ledger_observation_as_of_v2: {
+        Args: { p_cutoff: string; p_fixture_id: string; p_provider: string }
+        Returns: string
+      }
       match_ledger_provider_player_matches_as_of: {
         Args: {
           p_cutoff: string
@@ -5048,7 +5055,63 @@ export type Database = {
           team_id: string
         }[]
       }
+      match_ledger_provider_player_matches_as_of_v2: {
+        Args: {
+          p_cutoff: string
+          p_limit?: number
+          p_player_id: string
+          p_provider: string
+        }
+        Returns: {
+          appeared: boolean | null
+          canonical_player_id: string
+          data_completeness: string
+          entered_minute: number | null
+          exited_minute: number | null
+          first_seen_at: string
+          fixture_id: string
+          formation_position: number | null
+          is_captain: boolean | null
+          kickoff_at: string
+          lineup_role: string
+          minutes_played: number | null
+          observation_id: string
+          observation_version: number
+          observed_player_id: string
+          position_code: string | null
+          provider: string
+          team_id: string
+        }[]
+      }
       match_ledger_provider_team_matches_as_of: {
+        Args: {
+          p_cutoff: string
+          p_limit?: number
+          p_provider: string
+          p_team_id: string
+        }
+        Returns: {
+          canonical_coach_id: string | null
+          events_status: string
+          first_seen_at: string
+          fixture_id: string
+          formation_nominal: string | null
+          goals_against_90: number | null
+          goals_for_90: number | null
+          kickoff_at: string
+          lineup_status: string
+          neutral_venue: boolean | null
+          observation_id: string
+          observation_version: number
+          observed_coach_id: string | null
+          opponent_team_id: string
+          provider: string
+          side: string
+          statistics_status: string
+          substitutions_status: string
+        }[]
+      }
+      match_ledger_provider_team_matches_as_of_v2: {
         Args: {
           p_cutoff: string
           p_limit?: number
@@ -5262,6 +5325,15 @@ export type Database = {
         }[]
       }
       squad_state_inputs_as_of: {
+        Args: {
+          p_cutoff: string
+          p_fixture_id: string
+          p_history_fixture_limit?: number
+          p_team_id: string
+        }
+        Returns: Json
+      }
+      squad_state_inputs_as_of_v2: {
         Args: {
           p_cutoff: string
           p_fixture_id: string

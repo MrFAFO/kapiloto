@@ -533,13 +533,31 @@ its real `first_seen_at`: availability policy V1 backdates version 1 only.
 `match_ledger_provider_ref_conflicts`. `match_ledger_mapping_conflicts` is
 unchanged.
 
-**Reads not covered by Stage 1 (M2B gate).** `squad_state_inputs_as_of`,
+**Reads not covered by M2A (M2B gate) and their V2 successors (PR #43,
+D-060).** M2A left `squad_state_inputs_as_of`,
 `match_ledger_observation_as_of`, `match_ledger_provider_team_matches_as_of`,
 `match_ledger_provider_player_matches_as_of` and the lineup/squad-state
-snapshot paths that depend on them are unchanged and not attestation-aware. A
-boundary test proves no production app, script or cron path calls them (or
-any V4 ingest/read RPC). M2B stays NO-GO until they are versioned or kept
-disabled under that gate.
+snapshot paths unchanged and not attestation-aware. PR #43 (migration
+`20261102103000_kapiloto_v4_attestation_aware_consumer_reads.sql`, **not
+merged, not applied**) adds `*_as_of_v2` successors with the same row
+shapes. Each V2 read:
+
+- selects the latest visible version first (an untrusted latest version
+  hides the fixture; nothing older is resurrected);
+- applies the V1 last-N window next (an untrusted fixture shrinks the window
+  and is never replaced by an older one);
+- applies the per-observation Stage 1 trust gate last, at current state.
+
+The lineup path now reads through `squad_state_inputs_as_of_v2`, and the
+Prediction Registry records and re-runs the squad-state read per forecast
+(`squad_state_read_version`). Frozen snapshots stay read-v1 with unchanged
+hashes. The four V1 reads join the de-authorized V1 contracts above. They
+are not executable by `service_role`, so `service_role` cannot record a new
+read-v1 lineup forecast. The migration neither grants nor re-revokes ingest.
+Until PR #43 is merged and applied, the boundary test still proves that no
+production app, script or cron path calls any V4 ingest/read RPC. Details:
+`KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md` §14.7.1 and
+`KAPILOTO-V4-SQUAD-STATE.md`.
 
 **Recovery.** Revoke (V2 reads are safe at once), read the impact report,
 withdraw affected chains through the 1A withdrawal, delete or re-point the

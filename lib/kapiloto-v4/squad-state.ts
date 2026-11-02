@@ -11,7 +11,10 @@ import {
   SQUAD_STATE_BUILDER_VERSION,
   SQUAD_STATE_CONTRACT_VERSION,
   SQUAD_STATE_INPUTS_CONTRACT_VERSION,
+  SQUAD_STATE_READ_V1_VERSION,
+  SQUAD_STATE_READ_V2_VERSION,
   SQUAD_TARGET_DATE_POLICY_VERSION,
+  type SquadStateReadVersion,
 } from "./versions";
 
 /**
@@ -116,6 +119,12 @@ export type SquadTenureInput = {
 
 export type SquadStateInputs = {
   contract_version: typeof SQUAD_STATE_INPUTS_CONTRACT_VERSION;
+  /**
+   * The read that assembled these inputs, as the database states it:
+   * squad_state_inputs_as_of_v2 returns kapiloto-squad-state-read-v2; the
+   * frozen V1 read returns none (read-v1). Never part of the derived state.
+   */
+  read_version?: typeof SQUAD_STATE_READ_V2_VERSION;
   fixture_id: string;
   team_id: string;
   opponent_team_id: string;
@@ -1024,22 +1033,54 @@ export function buildCoachState(inputs: Pick<SquadStateInputs, "tenures" | "targ
 
 /** Minimal RPC caller (supabase-js .rpc, or a pg/PGlite wrapper in tests). */
 export type SquadStateRpc = (
-  fn: "squad_state_inputs_as_of",
+  fn: "squad_state_inputs_as_of" | "squad_state_inputs_as_of_v2",
   args: { p_fixture_id: string; p_team_id: string; p_cutoff: string; p_history_fixture_limit?: number },
 ) => Promise<unknown>;
 
-/** Loads raw, cutoff-filtered inputs; all leakage filtering happens in the database. */
-export async function loadSquadStateInputs(
+type SquadStateLoadParams = { fixtureId: string; teamId: string; cutoff: string; historyFixtureLimit?: number };
+
+const SQUAD_STATE_READ_FUNCTIONS = {
+  [SQUAD_STATE_READ_V1_VERSION]: "squad_state_inputs_as_of",
+  [SQUAD_STATE_READ_V2_VERSION]: "squad_state_inputs_as_of_v2",
+} as const satisfies Record<SquadStateReadVersion, Parameters<SquadStateRpc>[0]>;
+
+async function loadSquadStateInputsFrom(
   rpc: SquadStateRpc,
-  params: { fixtureId: string; teamId: string; cutoff: string; historyFixtureLimit?: number },
+  read: SquadStateReadVersion,
+  params: SquadStateLoadParams,
 ): Promise<SquadStateInputs> {
-  const value = await rpc("squad_state_inputs_as_of", {
+  const value = await rpc(SQUAD_STATE_READ_FUNCTIONS[read], {
     p_fixture_id: params.fixtureId,
     p_team_id: params.teamId,
     p_cutoff: params.cutoff,
     ...(params.historyFixtureLimit === undefined ? {} : { p_history_fixture_limit: params.historyFixtureLimit }),
   });
-  return parseSquadStateInputs(value);
+  const inputs = parseSquadStateInputs(value);
+  if (squadStateInputsReadVersion(inputs) !== read) throw new Error(`squad-state inputs were not assembled by ${read}`);
+  return inputs;
+}
+
+/**
+ * Frozen 1C read (kapiloto-squad-state-read-v1). It ignores Stage 1 identity
+ * trust, so it is not executable by service_role: kept for frozen-snapshot
+ * contract tests and offline replay only. Forecasts use loadSquadStateInputsV2.
+ */
+export function loadSquadStateInputs(rpc: SquadStateRpc, params: SquadStateLoadParams): Promise<SquadStateInputs> {
+  return loadSquadStateInputsFrom(rpc, SQUAD_STATE_READ_V1_VERSION, params);
+}
+
+/**
+ * Stage 1 trust-aware read (kapiloto-squad-state-read-v2): the V1 history
+ * window, limited to observations whose sealed identity attestations are
+ * currently valid.
+ */
+export function loadSquadStateInputsV2(rpc: SquadStateRpc, params: SquadStateLoadParams): Promise<SquadStateInputs> {
+  return loadSquadStateInputsFrom(rpc, SQUAD_STATE_READ_V2_VERSION, params);
+}
+
+/** The read that assembled these inputs (absent marker = the frozen V1 read). */
+export function squadStateInputsReadVersion(inputs: Pick<SquadStateInputs, "read_version">): SquadStateReadVersion {
+  return inputs.read_version ?? SQUAD_STATE_READ_V1_VERSION;
 }
 
 /** Structural check of the RPC result before it reaches the pure builder. */
@@ -1047,6 +1088,9 @@ export function parseSquadStateInputs(value: unknown): SquadStateInputs {
   if (typeof value !== "object" || value === null) throw new Error("squad-state inputs must be an object");
   const candidate = value as { [key: string]: unknown };
   if (candidate.contract_version !== SQUAD_STATE_INPUTS_CONTRACT_VERSION) throw new Error("unsupported squad-state inputs contract");
+  if (candidate.read_version !== undefined && candidate.read_version !== SQUAD_STATE_READ_V2_VERSION) {
+    throw new Error("unsupported squad-state read version");
+  }
   if (candidate.target_date_policy !== SQUAD_TARGET_DATE_POLICY_VERSION) throw new Error("unsupported squad-state target date policy");
   for (const key of ["fixture_id", "team_id", "opponent_team_id", "side", "kickoff_at", "cutoff", "target_date"]) {
     if (typeof candidate[key] !== "string") throw new Error(`squad-state inputs field ${key} must be a string`);

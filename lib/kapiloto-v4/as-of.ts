@@ -28,12 +28,34 @@ import type { MatchLedgerObservation, TeamSide } from "./match-ledger";
  * both the observed and the canonical coach. Exact historical model inputs
  * are preserved by the prediction registry, not by replaying the identity
  * graph.
+ *
+ * Trust contract (Stage 1, D-058): the V2 reads apply steps 1-3 and the V1
+ * last-N window exactly as V1 does, and only then drop observations whose
+ * sealed league/home/away identity attestations are not currently valid
+ * (missing, revoked, stale generation, mapping missing, demoted or
+ * repointed). An untrusted latest version hides its fixture (never an older
+ * version), and an untrusted fixture inside the window shrinks the history
+ * (never an older fixture from outside it). Trust is read at current state,
+ * like identity; frozen registry artifacts remain the replay record.
  */
 
+/**
+ * Frozen 1A/1C reads. They ignore Stage 1 trust, so they are NOT executable
+ * by service_role (contract/history inspection only). Use the V2 names.
+ */
 export const MATCH_LEDGER_AS_OF_FUNCTIONS = {
   observation: "match_ledger_observation_as_of",
   providerTeamMatches: "match_ledger_provider_team_matches_as_of",
   providerPlayerMatches: "match_ledger_provider_player_matches_as_of",
+  coachTenures: "team_coach_tenures_as_of",
+} as const;
+
+/** Model-facing Stage 1 trust-aware reads (same row shapes as V1). */
+export const MATCH_LEDGER_AS_OF_V2_FUNCTIONS = {
+  observation: "match_ledger_observation_as_of_v2",
+  providerTeamMatches: "match_ledger_provider_team_matches_as_of_v2",
+  providerPlayerMatches: "match_ledger_provider_player_matches_as_of_v2",
+  squadStateInputs: "squad_state_inputs_as_of_v2",
   coachTenures: "team_coach_tenures_as_of",
 } as const;
 

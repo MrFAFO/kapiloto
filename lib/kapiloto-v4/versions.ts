@@ -52,6 +52,21 @@ export const TEAM_PLAYER_MEMBERSHIP_CONTRACT_VERSION = "kapiloto-team-player-mem
 /** JSON returned by public.squad_state_inputs_as_of. */
 export const SQUAD_STATE_INPUTS_CONTRACT_VERSION = "kapiloto-squad-state-inputs-v1";
 
+/**
+ * Database read that assembled a squad-state input bundle, frozen per lineup
+ * forecast in prediction_squad_state_context.squad_state_read_version and
+ * re-run by the registry at commit. Both return the
+ * kapiloto-squad-state-inputs-v1 shape. read-v1 is the frozen 1C read
+ * (squad_state_inputs_as_of; every snapshot before the read-version column,
+ * implicit in their canonical bundle). read-v2 (squad_state_inputs_as_of_v2)
+ * takes the same history window, then keeps only observations whose sealed
+ * Stage 1 identity attestations are currently valid.
+ */
+export const SQUAD_STATE_READ_V1_VERSION = "kapiloto-squad-state-read-v1";
+export const SQUAD_STATE_READ_V2_VERSION = "kapiloto-squad-state-read-v2";
+export const SQUAD_STATE_READ_VERSIONS = [SQUAD_STATE_READ_V1_VERSION, SQUAD_STATE_READ_V2_VERSION] as const;
+export type SquadStateReadVersion = (typeof SQUAD_STATE_READ_VERSIONS)[number];
+
 /** Derived, in-memory squad state built by buildFixtureSquadState. */
 export const SQUAD_STATE_CONTRACT_VERSION = "kapiloto-squad-state-v1";
 

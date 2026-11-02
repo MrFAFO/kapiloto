@@ -702,6 +702,41 @@ Therefore **M2B is blocked** until one of these is true:
 
 In-place changes are forbidden where frozen prediction/commit-time equality contracts depend on the current function semantics.
 
+#### 14.7.1 Attestation-aware successors (PR #43, D-060)
+
+Option 1 is implemented by the additive migration
+`20261102103000_kapiloto_v4_attestation_aware_consumer_reads.sql` (PR #43;
+**not merged, not applied to production**). The V1 functions above are not
+redefined.
+
+| Frozen V1 read | V2 successor |
+|---|---|
+| `match_ledger_observation_as_of` | `match_ledger_observation_as_of_v2` |
+| `match_ledger_provider_team_matches_as_of` | `match_ledger_provider_team_matches_as_of_v2` |
+| `match_ledger_provider_player_matches_as_of` | `match_ledger_provider_player_matches_as_of_v2` |
+| `squad_state_inputs_as_of` (`kapiloto-squad-state-read-v1`) | `squad_state_inputs_as_of_v2` (`kapiloto-squad-state-read-v2`) |
+
+Ordering, identical in every V2 read:
+
+1. the latest visible version per (fixture, provider) is selected exactly as V1 selects it, withdrawals included. An untrusted latest version therefore hides its fixture; it never resurrects an older trusted version (plain 1A correction, V1-ingest correction and withdrawal all tested);
+2. a last-N window is exactly the window V1 would select (**conservative window**). An untrusted fixture inside it shrinks the trusted history and is never replaced by an older fixture from outside the window;
+3. only then the per-observation trust gate (`private.match_ledger_observation_attestation_issue`) is applied, at current state.
+
+Trust semantics, at read time against current state (like D-050 identity):
+
+- competition, home and away sealed attestations are each required;
+- a revoked or stale generation, or a missing, demoted or disagreeing (re-pointed) mapping, fails closed;
+- a V3-style `confirmed/0.9` re-insert after a mapping delete stays untrusted (§8);
+- re-attestation opens a new generation and never rehabilitates sealed observations. Only a new V2 ingest under the new generation is trusted;
+- an operator restoring the exact agreeing `manual_override` mapping, under a generation that was never revoked, makes the sealed observations trusted again. This is the D-058 current-state rule, not a rehabilitation;
+- Stage 1 attests Sportmonks only, so API-Football history is never trusted by V2 (a multi-provider fixture contributes only its attested Sportmonks observation).
+
+Prediction Registry binding: `prediction_squad_state_context.squad_state_read_version` records which squad-state read assembled a lineup forecast. The deferred registry check re-runs exactly that read. Frozen snapshots stay `kapiloto-squad-state-read-v1` and keep byte-identical bundle hashes. Details are in `KAPILOTO-V4-SQUAD-STATE.md`.
+
+The V1 consumer reads are de-authorized from `service_role`, as the V1 team-stat reads were in M2A. No frozen path needs them: an exact snapshot replay returns before any read, and offline replay uses the frozen artifact. The registry's read-v1 branch therefore cannot record new read-v1 forecasts as `service_role`, and refuses them by name.
+
+The migration neither grants nor re-revokes provider ingest. M2A's revocations stand, and only the separate M2B grant migration may change them.
+
 ---
 
 ## 15. Security
@@ -790,7 +825,7 @@ Emergency path:
 
 If the tiny pilot fails any integrity gate, M2C is applied before further investigation. If the pilot passes, activation for the next staged scope still requires a separately reviewed run allowlist.
 
-M2B remains NO-GO while any uncovered model-facing Match Ledger consumer in §14.7 could be activated against pilot observations.
+M2B remains NO-GO while any uncovered model-facing Match Ledger consumer in §14.7 could be activated against pilot observations. PR #43 (§14.7.1) supplies the V2 successors. This gate closes only once PR #43 is merged and its migration is applied to production after review; until then the boundary test still proves that no production path calls any V4 consumer.
 
 ---
 
@@ -971,7 +1006,7 @@ All M2A architecture acceptance criteria are now satisfied:
 
 Therefore **M2A architecture is ready for implementation**.
 
-Historical provider ingest remains paused. M2B remains NO-GO until §14.7's uncovered readers are gated/versioned and every readiness condition in §16 passes.
+Historical provider ingest remains paused. M2B remains NO-GO until §14.7's uncovered readers are gated/versioned and every readiness condition in §16 passes. The readers are versioned by PR #43 (§14.7.1), which is pending merge and production application. The other §16 conditions are unchanged.
 
 ---
 
