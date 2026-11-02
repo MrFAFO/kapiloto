@@ -17,10 +17,14 @@ wired into V3, and not a joint XI model.
 Each layer is separate and testable on its own:
 
 1. **Load** raw, cutoff-filtered inputs: `loadLineupSquadInputs` →
-   `public.squad_state_inputs_as_of(fixture, team, cutoff, history_max_fixtures)`
-   (1C; all leakage filtering happens in the database). The history window
-   passed to the read is the policy's `maxFixtures`, the same value the
-   registry re-runs the read with at commit.
+   `public.squad_state_inputs_as_of_v2(fixture, team, cutoff, history_max_fixtures)`
+   (`kapiloto-squad-state-read-v2`, D-060: the 1C read limited to Stage 1
+   trusted history; all leakage and trust filtering happens in the
+   database). The history window passed to the read is the policy's
+   `maxFixtures`, the same value the registry re-runs the same read with at
+   commit. Frozen pre-D-060 snapshots were loaded through the V1
+   `squad_state_inputs_as_of` (`kapiloto-squad-state-read-v1`); the context
+   records which read a snapshot used.
 2. **State**: the pure `buildFixtureSquadStateV2(inputs, policy)` for new
    forecasts (membership-aware features, D-055), or `buildFixtureSquadState`
    (builder V1) to replay frozen V1 snapshots. The lineup model reads the same
@@ -84,7 +88,7 @@ For a lineup forecast, the existing families are constrained too (trigger
   `squad_history_alternative` (considered but not selected), must have a team
   record for the subject team, and may never be the target fixture's own
   ledger data (not even a pre-kickoff lineup capture). Each must be what
-  `squad_state_inputs_as_of` could return at the cutoff: a finished
+  the declared squad-state read could return at the cutoff: a finished
   observation (not a withdrawal, not an upcoming match), kicking off before
   the target, and the latest version of its (fixture, provider) first seen at
   or before the cutoff;
@@ -111,13 +115,17 @@ state artifact and the bindings.
 
 Individually valid links are not enough: a caller could omit an inconvenient
 row and still get a valid hash for the smaller bundle. So at commit, for every
-lineup forecast, the database re-runs
+lineup forecast, the database re-runs the squad-state read the context
+declares (`squad_state_read_version`, D-060)
 
 ```
-public.squad_state_inputs_as_of(fixture_id, subject_team_id, research_cutoff_at, history_max_fixtures)
+public.squad_state_inputs_as_of_v2(fixture_id, subject_team_id, research_cutoff_at, history_max_fixtures)  -- read-v2
+public.squad_state_inputs_as_of(fixture_id, subject_team_id, research_cutoff_at, history_max_fixtures)     -- read-v1 (frozen)
 ```
 
-and requires the frozen link sets to equal what it returns, exactly:
+and requires the frozen link sets to equal what it returns, exactly (a
+read-v2 forecast that froze an untrusted observation, or whose declared read
+does not match its links, is refused):
 
 * history observation ids = all ledger links (selected and alternatives);
 * membership ids = membership links;
@@ -283,9 +291,11 @@ The three new tables have RLS enabled, no policies, and no
 `anon`/`authenticated`/`PUBLIC` grants. Every new function is revoked from
 app roles. Only `prediction_record_snapshot_v2`, the two V2 canonical
 helpers and the two output-contract helpers (called by name from the invoker
-RPC and check, which also calls `squad_state_inputs_as_of`) are granted to
+RPC and check, which also calls the declared squad-state read) are granted to
 `service_role`. Nothing is `SECURITY DEFINER`. Tests: `security.test.ts`,
-including an end-to-end V2 recording as `service_role`.
+including an end-to-end read-v2 recording as `service_role`. Since D-060 the
+V1 `squad_state_inputs_as_of` is not executable by `service_role`, so it
+cannot record new read-v1 forecasts (refused by name).
 
 ## Lineup model (`kapiloto-lineup-model-v1`)
 

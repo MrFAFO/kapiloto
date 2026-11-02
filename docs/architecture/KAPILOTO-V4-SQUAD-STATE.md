@@ -105,6 +105,55 @@ the same raw inputs, which carries:
   membership ids, canonical and member claim ids, resolution ids, tenure ids,
   and canonical player and coach ids.
 
+## Squad-state reads: read-v1 and read-v2 (D-060)
+
+Two database reads return the same `kapiloto-squad-state-inputs-v1` shape.
+The read is named separately from the shape, so no contract version changes
+meaning:
+
+| Read | Function | History | Use |
+| --- | --- | --- | --- |
+| `kapiloto-squad-state-read-v1` | `squad_state_inputs_as_of` | as above, regardless of provider identity trust | frozen 1C read; every snapshot recorded before D-060; not executable by `service_role` |
+| `kapiloto-squad-state-read-v2` | `squad_state_inputs_as_of_v2` | the same window, then only observations whose sealed Stage 1 identity attestations are currently valid (D-058) | every new lineup forecast (`loadLineupSquadInputs`) |
+
+Memberships, claims, tenures, the target date and every error are identical
+in both reads. The V2 result carries `read_version:
+"kapiloto-squad-state-read-v2"`; the V1 result carries none.
+`loadSquadStateInputs` / `loadSquadStateInputsV2` verify which read answered,
+and `buildLineupForecastSnapshot` records that read; it never assumes one.
+`read_version` is never part of the derived state.
+
+**Trust semantics (read-v2).** The latest visible version per (fixture,
+provider) is selected first, exactly as in read-v1, withdrawals included.
+If that latest version is untrusted, the pair contributes nothing: an older
+trusted version is never resurrected. Competition, home and away sealed
+attestations are each required. A revoked or stale generation, or a missing,
+demoted or re-pointed mapping, fails closed. Trust is read at current state
+(like identity, D-050): revoking an attestation removes history from every
+later read immediately. Stage 1 attests Sportmonks only, so API-Football
+history is never returned by read-v2.
+
+**Conservative window.** `history_fixture_limit` selects exactly the
+canonical fixtures read-v1 would select (latest N by kickoff), and only then
+drops untrusted observations. An untrusted fixture inside the window
+**shrinks** the trusted history; read-v2 never reaches further back to
+replace it with an older fixture. A forecast can therefore see fewer than N
+fixtures, or none: empty trusted history is valid input, and every feature's
+knownness reports it. This keeps "the last N matches" meaning the same
+calendar window under both reads.
+
+**Registry binding and frozen replay.** `prediction_squad_state_context`
+freezes `squad_state_read_version`, and at commit the registry re-runs
+exactly that read (see the registry gate below). Rows written before D-060
+are `read-v1`. read-v1 stays implicit in the canonical input bundle, so
+their hashes and idempotent replays are byte-identical; read-v2 is part of
+the hash. A frozen snapshot is the replay record. It is never reinterpreted
+with today's read or today's trust state. An exact replay returns
+`unchanged` without re-reading, and the frozen state artifact plus the
+immutable ledger rows (read by id) reproduce the stored output. Re-stating
+an old forecast as a new snapshot is checked against the read at today's
+state, and is refused if trust has since changed what that read returns.
+
 ## History selection (`kapiloto-history-selection-v1`)
 
 1A history is provider-scoped; 1C fuses it so a fixture is never counted
@@ -424,10 +473,14 @@ resolution (`squad_availability_claim` / `squad_lineup_claim`), tenures
 1C versions, the explicit provider priority, the history window and
 the exact canonical JSON bytes of the state with
 `squad_state_sha256 = SHA-256(those bytes)`. At commit the registry re-runs
-`squad_state_inputs_as_of` and refuses any frozen set that differs from it. The V1
-contract and its hashes are unchanged. See
-`docs/architecture/KAPILOTO-V4-LINEUP-MODEL.md`. Since D-055 the context may
-freeze either builder-v1/features-v1 or builder-v2/features-v2.
+the squad-state read the context declares (`squad_state_read_version`:
+`squad_state_inputs_as_of` for read-v1, `squad_state_inputs_as_of_v2` for
+read-v2, D-060) and refuses any frozen set that differs from it. A read-v2
+forecast that froze an untrusted observation, or a forecast whose declared
+read does not match its links, is refused. The V1 contract and its hashes
+are unchanged. See `docs/architecture/KAPILOTO-V4-LINEUP-MODEL.md`. Since
+D-055 the context may freeze either builder-v1/features-v1 or
+builder-v2/features-v2.
 
 ## Not in Foundation 1C
 

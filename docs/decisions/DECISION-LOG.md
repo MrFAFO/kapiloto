@@ -490,3 +490,27 @@ inside a clearly defined scope while keeping identity, data quality and
 historical model inputs controllable. New leagues can be added incrementally
 after the same onboarding gates pass.
 
+## D-060 — Attestation-aware V4 consumer reads and squad-state read versions (PR #43)
+Decision:
+- **V2 consumer reads.** `match_ledger_observation_as_of_v2`, `match_ledger_provider_team_matches_as_of_v2`, `match_ledger_provider_player_matches_as_of_v2` and `squad_state_inputs_as_of_v2` are the attestation-aware successors that D-058 requires before M2B. They have the same row/JSON shapes as V1. The V1 functions are not redefined.
+- **Ordering.** Each V2 read applies three steps in order:
+  1. the latest visible version per (fixture, provider), exactly as V1 selects it, withdrawals included;
+  2. the exact V1 last-N window;
+  3. only then the per-observation Stage 1 trust gate, at current state.
+  An untrusted latest version hides its fixture and never resurrects an older one. An untrusted fixture inside the window shrinks the trusted history and is never replaced by an older fixture (conservative window).
+- **Trust semantics.** Competition, home and away sealed attestations are each required. A revoked or stale generation, or a missing, demoted or re-pointed mapping, fails closed. A V3-style `confirmed` re-insert is never trusted. Re-attestation opens a new generation and never rehabilitates sealed observations. Restoring the exact agreeing `manual_override` mapping under a never-revoked generation is the D-058 current-state rule. Stage 1 attests Sportmonks only, so API-Football history never reaches V2.
+- **Squad-state read version.** `prediction_squad_state_context.squad_state_read_version` (`kapiloto-squad-state-read-v1` | `kapiloto-squad-state-read-v2`) names the read that assembled a lineup forecast's raw inputs. It is separate from `squad_state_inputs_contract`, which still names the unchanged JSON shape, so no existing version string changes meaning. Pre-existing rows are backfilled read-v1. The deferred registry check re-runs exactly the declared read.
+- **Hash compatibility.** read-v1 stays implicit in the canonical input bundle (explicit or absent, same bytes), so every frozen bundle hash and idempotent replay is unchanged (golden and upgrade tested). read-v2 is part of the hash. Unknown or malformed values are refused, never mapped to read-v1.
+- **TypeScript.** `squad_state_inputs_as_of_v2` returns `read_version`. The loaders verify which read answered, and `buildLineupForecastSnapshot` records it. The production loader `loadLineupSquadInputs` uses read-v2.
+- **Frozen replay.** Frozen artifacts are authoritative and are never reinterpreted with today's read or trust state. An exact replay returns `unchanged` without re-reading. Offline replay uses the frozen state artifact plus immutable rows read by id.
+- **De-authorization.** The V1 consumer reads are no longer executable by `service_role`, as M2A did for the V1 team-stat reads. The registry's read-v1 branch therefore refuses new read-v1 forecasts from `service_role` by name. Owner/offline replay environments keep it.
+- **Ingest untouched.** The migration neither grants nor re-revokes ingest; re-revoking would silently undo an M2B grant if migrations were ever applied out of order. M2A's revocations stand.
+
+Implementation status: PR #43 on `feat/v4-attestation-aware-consumer-reads`. Not merged; migration `20261102103000_kapiloto_v4_attestation_aware_consumer_reads.sql` not applied to production.
+
+Remaining M2B blockers: PR #43 merge plus reviewed production application; Winner round 264301 settlement, then Bournemouth 52 / Sevilla 676 reconciliation and full 20/20 R7; clean pilot-scope reports; A2-B amended/re-run; recovery runbook rehearsal and reviewed M2C SQL; the reviewed run allowlist; the grant-only M2B migration itself. Follow-up, not a blocker introduced here: the revocation impact report does not list Prediction Registry snapshots that used revoked history.
+
+Details: `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md` §14.7.1, `docs/architecture/KAPILOTO-V4-SQUAD-STATE.md`.
+
+Reason: D-058 made historical trust revocable at read time. The model-facing reads must honour it without reinterpreting frozen predictions. A forecast must record which read produced it so the commit-time completeness check verifies the same read. "Last N matches" must keep one meaning under both reads.
+

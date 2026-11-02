@@ -492,7 +492,12 @@ Getafe-Sevilla. Adding the two mappings can legitimately trigger V3 current-
 round fixture mapping writes. The reviewed default is to finish R4 only after
 round 264301 settles, then run full 20/20 R7.
 
-M2B remains NO-GO.
+M2B remains NO-GO. PR #43 (D-060) closes the "uncovered Match Ledger reads"
+gate in code once merged and applied: attestation-aware V2 consumer reads, a
+conservative history window, and a Prediction Registry bound to the
+squad-state read each lineup forecast used. It does not change the identity
+blocker above. Winner round 264301 reconciliation (Bournemouth 52, Sevilla
+676, full 20/20 R7) remains a separate M2B blocker.
 
 ### Previously treated as trusted under A2-A columns: 5/20
 
@@ -731,6 +736,45 @@ observation/team/player as-of reads and the lineup/squad-state snapshot paths)
 are not attestation-aware and could be activated; a boundary test now proves
 no production app/script/cron path calls them.
 
+**PR #43 — attestation-aware consumer reads (D-060; not merged, not
+applied).** What it solves:
+
+- V2 successors `match_ledger_observation_as_of_v2`,
+  `match_ledger_provider_team_matches_as_of_v2`,
+  `match_ledger_provider_player_matches_as_of_v2` and
+  `squad_state_inputs_as_of_v2`. Each selects the latest visible version
+  first (no resurrection) and the V1 last-N window next (conservative: an
+  untrusted fixture shrinks history, nothing older replaces it). Only then
+  does it keep observations whose sealed league/home/away attestations are
+  currently valid. Trust is evaluated at current state.
+- Registry read binding: `prediction_squad_state_context.squad_state_read_version`.
+  Frozen snapshots are read-v1 with byte-identical bundle hashes (golden and
+  upgrade tested). New lineup forecasts are read-v2. The commit check
+  re-runs exactly the declared read.
+- The V1 consumer reads are de-authorized from `service_role`, which cannot
+  record new read-v1 forecasts. Ingest privileges are untouched (M2A
+  revocations stand).
+
+What still blocks M2B after PR #43:
+
+- PR #43 merged, then its migration reviewed and applied to production, with
+  post-checks: grants, `private` not exposed, column backfilled read-v1,
+  0 snapshots changed;
+- Winner round 264301 settles, then Sportmonks 52 Bournemouth and 676
+  Sevilla reconciliation and the full 20/20 R7 (separate blocker);
+- entity/reconciliation reports clean for the pilot scope;
+- A2-B (PR #19) amended and re-run;
+- the recovery runbook rehearsed, and the M2C pause SQL body reviewed (fresh
+  timestamp at application);
+- the reviewed immutable run allowlist fixed;
+- the separate grant-only M2B migration itself, reviewed.
+
+Known follow-up (not an M2B blocker introduced by PR #43): the revocation
+impact report does not yet list Prediction Registry snapshots whose frozen
+inputs used revoked history (`prediction_ledger_inputs`). Those snapshots
+remain valid frozen records; the operator view of "which forecasts used
+revoked history" is future work.
+
 Minimum expectations:
 
 - one existing-mapping fixture plus one safe mint-path fixture;
@@ -899,6 +943,10 @@ As of the snapshot date:
   and 5/5 competitions are attested, while Sportmonks 52 Bournemouth and 676
   Sevilla are intentionally deferred until round 264301 settles;
 - PR #19 is not merged;
+- PR #43 (D-060, attestation-aware consumer reads and the squad-state read
+  binding) is not merged and its migration is not applied; until then the
+  1A/1C reads remain the only consumer reads in production, and no
+  production path calls them;
 - V4 Match Ledger is not silently feeding V3 research/probabilities;
 - the V4 lineup baseline is not established as a production-quality lineup predictor;
 - player-impact/replacement/tactical match-engine layers are not production-complete merely because the foundation anticipates them;
@@ -989,7 +1037,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Match Ledger still has 0 observations and V1/V2 ingest remains disabled. Ligat Ha'al is identity-complete 14/14. Bundesliga is identity-complete 18/18. Premier League remains 16/20, La Liga 14/20 and Serie A 19/20 from frozen current-season Sportmonks roster captures. All 92 launch-universe clubs now exist canonically. Round 264301 remains under_review, so the only remaining identity work is the 11 deferred Class-B mappings/attestations: Liverpool 8, Arsenal 19, Bournemouth 52, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Sevilla 676, Elche 1099, Athletic Club 13258 and Juventus 625. Once round 264301 settles, finish those 11 identities and rerun the full five-league/pilot readiness audit. After identity readiness, validate provider-family/history gates, amend/re-run A2-B and close the remaining M2B gates before the first real Match Ledger ingest.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Match Ledger still has 0 observations and V1/V2 ingest remains disabled. Ligat Ha'al is identity-complete 14/14. Bundesliga is identity-complete 18/18. Premier League remains 16/20, La Liga 14/20 and Serie A 19/20 from frozen current-season Sportmonks roster captures. All 92 launch-universe clubs now exist canonically. Round 264301 remains under_review, so the only remaining identity work is the 11 deferred Class-B mappings/attestations: Liverpool 8, Arsenal 19, Bournemouth 52, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Sevilla 676, Elche 1099, Athletic Club 13258 and Juventus 625. Once round 264301 settles, finish those 11 identities and rerun the full five-league/pilot readiness audit. After identity readiness, validate provider-family/history gates, amend/re-run A2-B and close the remaining M2B gates before the first real Match Ledger ingest. PR #43 (D-060) adds the attestation-aware consumer reads and binds lineup snapshots to their squad-state read; it is not merged or applied, and it does not lift any other M2B gate.
 
 ## 15. Updating this file
 
