@@ -1024,22 +1024,37 @@ export function buildCoachState(inputs: Pick<SquadStateInputs, "tenures" | "targ
 
 /** Minimal RPC caller (supabase-js .rpc, or a pg/PGlite wrapper in tests). */
 export type SquadStateRpc = (
-  fn: "squad_state_inputs_as_of",
+  fn: "squad_state_inputs_as_of" | "squad_state_inputs_as_of_v2",
   args: { p_fixture_id: string; p_team_id: string; p_cutoff: string; p_history_fixture_limit?: number },
 ) => Promise<unknown>;
 
-/** Loads raw, cutoff-filtered inputs; all leakage filtering happens in the database. */
-export async function loadSquadStateInputs(
+type SquadStateLoadParams = { fixtureId: string; teamId: string; cutoff: string; historyFixtureLimit?: number };
+
+async function loadSquadStateInputsFrom(
   rpc: SquadStateRpc,
-  params: { fixtureId: string; teamId: string; cutoff: string; historyFixtureLimit?: number },
+  fn: "squad_state_inputs_as_of" | "squad_state_inputs_as_of_v2",
+  params: SquadStateLoadParams,
 ): Promise<SquadStateInputs> {
-  const value = await rpc("squad_state_inputs_as_of", {
+  const value = await rpc(fn, {
     p_fixture_id: params.fixtureId,
     p_team_id: params.teamId,
     p_cutoff: params.cutoff,
     ...(params.historyFixtureLimit === undefined ? {} : { p_history_fixture_limit: params.historyFixtureLimit }),
   });
   return parseSquadStateInputs(value);
+}
+
+/**
+ * Frozen 1C read. Kept for historical contract tests/replay; new model-facing
+ * forecasts must use loadSquadStateInputsV2.
+ */
+export function loadSquadStateInputs(rpc: SquadStateRpc, params: SquadStateLoadParams): Promise<SquadStateInputs> {
+  return loadSquadStateInputsFrom(rpc, "squad_state_inputs_as_of", params);
+}
+
+/** Stage 1 trust-aware read: Match Ledger history must have valid sealed attestations. */
+export function loadSquadStateInputsV2(rpc: SquadStateRpc, params: SquadStateLoadParams): Promise<SquadStateInputs> {
+  return loadSquadStateInputsFrom(rpc, "squad_state_inputs_as_of_v2", params);
 }
 
 /** Structural check of the RPC result before it reaches the pure builder. */
