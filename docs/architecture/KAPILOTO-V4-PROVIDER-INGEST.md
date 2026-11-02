@@ -81,6 +81,38 @@ Family statuses are stored per observation version in the sealed sidecar
 `match_ledger_observation_family_fetches` (`fetched` / `not_requested` only),
 so the read reproduces the statuses exactly. Missing is never zero.
 
+## A2-B family/history readiness evidence — 2026-11-02
+
+The read-only operator workflow sampled the five launch competitions across
+three seasons each and two finished fixtures per season (**30 fixtures**).
+Run `41421166450` on `main` commit
+`2b2aa7cc9bab39582b0137eb3fadc5eba0d1e1ab` completed with:
+
+- 30/30 parser passes;
+- zero semantic failures;
+- zero blocking errors;
+- `sample_clean` for all 15 sampled competition-seasons;
+- full V4 regression success.
+
+Observed family coverage:
+
+| Competition | Lineups | Formations | Statistics | xG |
+| --- | ---: | ---: | ---: | ---: |
+| Premier League | 100% | 100% | 100% | 100% |
+| Bundesliga | 100% | 100% | 100% | 100% |
+| La Liga | 100% | 100% | 100% | 100% |
+| Serie A | 100% | 100% | 100% | 100% |
+| Ligat ha'Al | 100% | 100% | 100% | **0%** |
+
+This evidence is deliberately per competition. In particular, the Ligat ha'Al
+sample proves usable lineups/formations/conventional statistics while showing
+no xG rows across six sampled fixtures and three seasons. That is explicit
+missingness, not a zero-valued xG observation and not a reason to reject the
+otherwise usable match.
+
+The workflow is read-only: these results are readiness evidence and do not
+constitute a historical Match Ledger backfill or a production ingest grant.
+
 ## Parser rules (`kapiloto-sportmonks-ledger-mapping-v1`)
 
 The mapping version is also the ledger `ingest_version`.
@@ -109,6 +141,10 @@ The mapping version is also the ledger `ingest_version`.
   - A shirt number or grid slot duplicated within a team is dropped, never
     guessed.
   - A duplicate player, or more than 11 starters, is a parse error.
+  - A bench row whose `player_id` is null/absent is skipped rather than
+    promoted into a canonical player observation. This tolerance is limited to
+    type-12 bench rows; starters and unknown-role rows still require a valid
+    positive provider player id.
   - Starters have `appeared = true`; others `null`. Minutes and substitution
     minutes are `null`, and completeness is `partial`.
   - `lineup_status` is `complete` only with exactly 11 starters.

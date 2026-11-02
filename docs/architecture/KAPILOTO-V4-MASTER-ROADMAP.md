@@ -1,6 +1,6 @@
 # Kapiloto V4 — Master Roadmap and Handoff
 
-Last verified operational snapshot: 2026-10-31
+Last verified operational snapshot: 2026-11-02
 
 This document is the fastest entry point for a new ChatGPT conversation, coding agent, reviewer, or human contributor. It does **not** replace the detailed architecture documents or the code. Its job is to explain the system, the current state, the dependency order, the next gates, and where the authoritative details live.
 
@@ -353,6 +353,58 @@ This is under independent review. Do not conflate:
 4. backfill acceptance/coverage.
 
 Missing optional xG must remain missing; it is not a reason to invent zero.
+
+### 2026-11-02 per-league family/history readiness
+
+The operator-dispatched workflow
+`Kapiloto V4 Sportmonks Family/History Readiness` was rerun on `main`
+commit `2b2aa7cc9bab39582b0137eb3fadc5eba0d1e1ab` after fixing season
+fixture discovery and one real Sportmonks edge case: a bench row with
+`player_id = null`. The parser remains strict for starters; an unidentified
+bench row is not promoted into a canonical player observation.
+
+Run:
+`41421166450`
+
+Configuration:
+- 5 target competitions;
+- 3 seasons per competition;
+- 2 finished fixtures per season;
+- **30 fixtures total**.
+
+Result:
+- **30/30 parse passes**;
+- **0 semantic failures**;
+- **0 blocking errors**;
+- every sampled season reported `sample_clean`;
+- the workflow's full V4 regression suite also passed.
+
+Observed family coverage in the sample:
+
+| Competition | Seasons | Fixtures | Lineups | Formations | Statistics | xG |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Premier League | 3 | 6 | 100% | 100% | 100% | 100% |
+| Bundesliga | 3 | 6 | 100% | 100% | 100% | 100% |
+| La Liga | 3 | 6 | 100% | 100% | 100% | 100% |
+| Serie A | 3 | 6 | 100% | 100% | 100% | 100% |
+| Ligat ha'Al | 3 | 6 | 100% | 100% | 100% | **0%** |
+
+Interpretation:
+- the four sampled top-European competitions are ready, at this pilot depth,
+  for historical lineups, formations, conventional statistics and the
+  allow-listed xG family;
+- Ligat ha'Al is ready for historical lineups, formations and conventional
+  statistics at this pilot depth, but **xG is not an available capability in
+  the sampled three-season history**;
+- xG availability is therefore a per-competition/per-fixture capability, not
+  a provider-global invariant;
+- the Ligat ha'Al xG absence is explicit missingness and must never be
+  converted to zero or treated as an ingest failure.
+
+This closes the family/history-readiness evidence gate. It does **not** make
+M2B a GO by itself: the remaining production blocker is the deferred identity
+reconciliation for Sportmonks 52 AFC Bournemouth and 676 Sevilla, followed by
+the full 20/20 R7 checks after Winner round 264301 settles.
 
 ### Operational competition promotion already performed
 
