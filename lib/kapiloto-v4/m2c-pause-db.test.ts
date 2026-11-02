@@ -127,12 +127,12 @@ test("the M2C verification fails on every other path that could still execute in
       /owned by non-operator role synthetic_ingest_owner/,
     ],
     [
-      "create function public.synthetic_ingest_wrapper(p jsonb) returns jsonb language sql security definer set search_path = '' as $ select public.match_ledger_ingest_provider_fixture_v2(p) $",
+      "create function public.synthetic_ingest_wrapper(p jsonb) returns jsonb language sql security definer set search_path = '' as 'select public.match_ledger_ingest_provider_fixture_v2(p)'",
       "drop function public.synthetic_ingest_wrapper(jsonb)",
       /SECURITY DEFINER function synthetic_ingest_wrapper\(jsonb\) owned by postgres references a provider ingest RPC/,
     ],
     [
-      "create function public.synthetic_ingest_invoker_wrapper(p jsonb) returns jsonb language sql security invoker set search_path = '' as $ select public.match_ledger_ingest_provider_fixture_v2(p) $",
+      "create function public.synthetic_ingest_invoker_wrapper(p jsonb) returns jsonb language sql set search_path = '' as 'select public.match_ledger_ingest_provider_fixture_v2(p)'",
       "drop function public.synthetic_ingest_invoker_wrapper(jsonb)",
       /SECURITY INVOKER function synthetic_ingest_invoker_wrapper\(jsonb\) owned by postgres references a provider ingest RPC/,
     ],
