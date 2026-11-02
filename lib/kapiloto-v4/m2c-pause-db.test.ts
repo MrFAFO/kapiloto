@@ -66,7 +66,7 @@ test("the reviewed M2C body is revoke-only and pauses a simulated M2B grant with
   assert.equal(ingested.status, "recorded");
 
   // Before M2C the verification fails and names the open path.
-  await assert.rejects(verifyM2c(db), /M2C verification FAILED.*EXECUTE granted to service_role.*executable by service_role/);
+  await assert.rejects(verifyM2c(db), /M2C verification FAILED.*EXECUTE granted to service_role.*executable by non-operator role service_role/);
 
   const before = await recoveryDataDigest(db);
   await db.exec(body);
@@ -107,7 +107,7 @@ test("the M2C verification fails on every other path that could still execute in
   await verifyM2c(db);
 
   const openPaths: Array<[string, string, RegExp]> = [
-    [`grant execute on function ${V2} to authenticated`, `revoke execute on function ${V2} from authenticated`, /EXECUTE granted to authenticated.*executable by authenticated/],
+    [`grant execute on function ${V2} to authenticated`, `revoke execute on function ${V2} from authenticated`, /EXECUTE granted to authenticated.*executable by non-operator role authenticated/],
     [`grant execute on function ${V2} to public`, `revoke execute on function ${V2} from public`, /match_ledger_ingest_provider_fixture_v2\(jsonb\): EXECUTE granted to PUBLIC/],
     [`grant execute on function ${V1} to service_role`, `revoke execute on function ${V1} from service_role`, /match_ledger_ingest_provider_fixture\(jsonb\): EXECUTE granted to service_role/],
     // Any other role is caught, not only the known application roles.
@@ -115,6 +115,16 @@ test("the M2C verification fails on every other path that could still execute in
       `create role synthetic_ingest_worker; grant execute on function ${V2} to synthetic_ingest_worker`,
       `revoke execute on function ${V2} from synthetic_ingest_worker; drop role synthetic_ingest_worker`,
       /EXECUTE granted to synthetic_ingest_worker/,
+    ],
+    [
+      `create role synthetic_ingest_parent; create role synthetic_ingest_member; grant execute on function ${V2} to synthetic_ingest_parent; grant synthetic_ingest_parent to synthetic_ingest_member`,
+      `revoke synthetic_ingest_parent from synthetic_ingest_member; revoke execute on function ${V2} from synthetic_ingest_parent; drop role synthetic_ingest_member; drop role synthetic_ingest_parent`,
+      /executable by non-operator role synthetic_ingest_member/,
+    ],
+    [
+      `create role synthetic_ingest_owner; alter function ${V2} owner to synthetic_ingest_owner`,
+      `alter function ${V2} owner to postgres; drop role synthetic_ingest_owner`,
+      /owned by non-operator role synthetic_ingest_owner/,
     ],
     [
       "create function public.synthetic_ingest_wrapper(p jsonb) returns jsonb language sql security definer set search_path = '' as $$ select public.match_ledger_ingest_provider_fixture_v2(p) $$",
@@ -171,6 +181,11 @@ test("an ingest call that already executed when M2C lands completes and commits;
   assert.deepEqual(await advisoryLockModes(db, "kapiloto_v4_provider_identity:sportmonks"), ["ShareLock"]);
   await db.exec("reset role");
   await db.exec(runbookSql("m2cRevoke"));
+  await assert.rejects(
+    verifyM2c(db),
+    /still holds the Sportmonks provider-identity ShareLock/,
+    "the drain check must use the ingest advisory lock, not only query text",
+  );
   await db.exec("set role service_role");
   await db.exec("savepoint after_m2c");
   await assert.rejects(db.query("select public.match_ledger_ingest_provider_fixture_v2($1::jsonb)", [payload]), /permission denied/);
