@@ -706,7 +706,7 @@ In-place changes are forbidden where frozen prediction/commit-time equality cont
 
 Option 1 is implemented by the additive migration
 `20261102103000_kapiloto_v4_attestation_aware_consumer_reads.sql` (PR #43;
-**not merged, not applied to production**). The V1 functions above are not
+**merged as `a531187794681469d203ade3e1a01b78b92625cc`, not applied to production**). The V1 functions above are not
 redefined.
 
 | Frozen V1 read | V2 successor |
@@ -825,7 +825,7 @@ Emergency path:
 
 If the tiny pilot fails any integrity gate, M2C is applied before further investigation. If the pilot passes, activation for the next staged scope still requires a separately reviewed run allowlist.
 
-M2B remains NO-GO while any uncovered model-facing Match Ledger consumer in §14.7 could be activated against pilot observations. PR #43 (§14.7.1) supplies the V2 successors. This gate closes only once PR #43 is merged and its migration is applied to production after review; until then the boundary test still proves that no production path calls any V4 consumer.
+M2B remains NO-GO while any uncovered model-facing Match Ledger consumer in §14.7 could be activated against pilot observations. PR #43 (§14.7.1) is merged and supplies the V2 successors in code. The production-side gate closes only once its migration is reviewed and applied to production; until then the boundary test still proves that no production path calls any V4 consumer.
 
 ---
 
@@ -1006,7 +1006,7 @@ All M2A architecture acceptance criteria are now satisfied:
 
 Therefore **M2A architecture is ready for implementation**.
 
-Historical provider ingest remains paused. M2B remains NO-GO until §14.7's uncovered readers are gated/versioned and every readiness condition in §16 passes. The readers are versioned by PR #43 (§14.7.1), which is pending merge and production application. The other §16 conditions are unchanged.
+Historical provider ingest remains paused. M2B remains NO-GO until §14.7's uncovered readers are gated/versioned in production and every readiness condition in §16 passes. The readers are versioned by merged PR #43 (§14.7.1); its migration is still pending reviewed production application. The other §16 conditions are unchanged.
 
 ---
 
