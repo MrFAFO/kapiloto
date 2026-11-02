@@ -52,6 +52,16 @@ export const TEAM_PLAYER_MEMBERSHIP_CONTRACT_VERSION = "kapiloto-team-player-mem
 /** JSON returned by public.squad_state_inputs_as_of. */
 export const SQUAD_STATE_INPUTS_CONTRACT_VERSION = "kapiloto-squad-state-inputs-v1";
 
+/**
+ * Database read policy used to assemble a squad-state input bundle.
+ * V1 is the frozen 1C read. V2 keeps the same JSON shape but requires current
+ * Stage 1 identity attestations for Match Ledger history.
+ */
+export const SQUAD_STATE_READ_V1_VERSION = "kapiloto-squad-state-read-v1";
+export const SQUAD_STATE_READ_V2_VERSION = "kapiloto-squad-state-read-v2";
+export const SQUAD_STATE_READ_VERSIONS = [SQUAD_STATE_READ_V1_VERSION, SQUAD_STATE_READ_V2_VERSION] as const;
+export type SquadStateReadVersion = (typeof SQUAD_STATE_READ_VERSIONS)[number];
+
 /** Derived, in-memory squad state built by buildFixtureSquadState. */
 export const SQUAD_STATE_CONTRACT_VERSION = "kapiloto-squad-state-v1";
 
