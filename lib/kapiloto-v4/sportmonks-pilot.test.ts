@@ -162,7 +162,7 @@ test("strong fixture audit passes coherent full-family evidence", () => {
 
 test("explicit-zero observation is diagnostic and never an acceptance requirement", () => {
   const noZero = fixture();
-  noZero.statistics = (noZero.statistics as Array<Record<string, unknown>>).map((row) => {
+  noZero.statistics = noZero.statistics.map((row) => {
     if (row.type_id === 34 && row.participant_id === 100) {
       return { ...row, data: { value: 2 } };
     }
