@@ -514,3 +514,60 @@ Details: `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md` §14.7.1, 
 
 Reason: D-058 made historical trust revocable at read time. The model-facing reads must honour it without reinterpreting frozen predictions. A forecast must record which read produced it so the commit-time completeness check verifies the same read. "Last N matches" must keep one meaning under both reads.
 
+
+## D-061 — V4 M2C pause and rehearsed identity recovery (PR #47)
+Decision:
+- **M2C body.** The reviewed pause revokes EXECUTE on both provider ingest RPCs (V2 and the frozen V1) from `public, anon, authenticated, service_role`.
+  - It is still revoke-only. In the expected state only service_role's V2 grant exists; the other revokes close an accidental grant in the same statement.
+  - It runs alone: a later error in the same execution would roll it back.
+  - A separate read-only verification must pass: each ingest RPC is owned by `postgres` or `supabase_admin`; no non-operator role can execute it (including through membership or PUBLIC); no wrapper function or pg_cron caller references ingest; and no Sportmonks provider-identity `ShareLock` or ingest call remains in flight.
+  - There is no database kill switch. It would require redefining the applied V2 ingest, and the identity revoke already gives a strict barrier.
+- **In-flight semantics.** PostgreSQL checks EXECUTE once per call, so a call already running when M2C commits completes and may commit; every later call is refused, prepared statements included. The attestation revoke takes the provider identity lock exclusive and waits for every in-flight V2 ingest, so the impact report re-run after the revoke is the authoritative scope.
+- **Bookkeeping.** M2C executes first and is then recorded with a fresh timestamp, as applied in production, before any later grant migration. Re-activation is always a new grant-only migration, never the removal of the M2C migration.
+- **Recovery order.** M2C pause, then the steps below, each in its own execution where an identity RPC requires it:
+  1. scope;
+  2. revoke (the barrier);
+  3. authoritative impact report;
+  4. withdraw every chain under the revoked generation;
+  5. fixture repair;
+  6. mapping correction;
+  7. re-attest (a new generation);
+  8. a fresh immutable recovery run (`purpose = backfill`, exact allowlist, `scope.recovery` incident metadata, no mint bound);
+  9. operator (owner) re-ingest while service_role stays paused;
+  10. per-fixture verification and clean current-version reports.
+- **Revoke only a wrong attestation.** Revocation invalidates every observation of the generation permanently; re-attesting the same canonical id still requires withdrawal and re-ingest. A provider-data error with correct identity is withdrawn without a revoke.
+- **Minted fixtures are corrected in place.** A fixture V2 minted under a wrong identity has its competition/home/away corrected (side-preserving), and its mapping and mint row are kept. This supersedes the D-058 clarification that recovery attaches to an operator-created canonical fixture:
+  - that parallel fixture leaves a phantom finished match in V3's `fixtures`;
+  - for a competition correction it blocks every re-ingest (`fixture_competition_conflict`).
+
+  Only a fixture referenced by this provider's mapping, same-provider-fixture immutable ingest audit, and the V4 ledger is corrected in place; foreign-key references and the soft `provider_ingest_items.fixture_id` audit reference are both checked. A pure home/away swap is refused because provider-side scores and side semantics cannot be safely reinterpreted. When another canonical fixture already represents the real match, team incidents unmap and attach (a recorded `mint_without_mapping` orphan) and competition incidents stop for a separately reviewed canonical merge.
+- **Reviewed operator SQL, not RPCs.** Each operator write is a template in `docs/operations/sql/`:
+  - withdraw chain;
+  - correct minted fixture;
+  - unmap provider fixture;
+  - correct identity mapping.
+
+  There are also read-only chain-verification and affected-forecast reports.
+
+  Templates take V2 ingest's lock order, compare-and-set the reviewed state, refuse out-of-order use and are idempotent. The rehearsal executes them verbatim.
+
+  No recovery RPC or migration is added: a service_role-callable recovery RPC would widen application capabilities, and the hard invariants are already database-enforced:
+  - one live chain per provider fixture id;
+  - final mints;
+  - immutable runs, events and sidecars;
+  - sealed trust.
+- **Frozen forecasts.** The affected-forecasts report lists Prediction Registry snapshots whose `prediction_ledger_inputs` used observations in the revocation impact report. Snapshots remain valid frozen records; the report supports annotating or excluding their evaluation. This closes the D-060 follow-up for operators. It is not an M2B blocker for the shadow-only tiny pilot, but it must be run in every incident.
+
+Implementation status: PR #47 (`feat/v4-m2c-recovery-runbook`) adds the hardened M2C body, its verification, the recovery templates, the runbook rewrite and synthetic rehearsal (`m2c-pause-db.test.ts`, `recovery-runbook-db.test.ts`), plus a boundary test that only the reviewed migrations touch ingest privileges and that V2 is never granted. Nothing is applied to production.
+
+Remaining M2B blockers (unchanged apart from the rehearsal):
+- Winner round 264301 settlement, then Bournemouth 52 / Sevilla 676 reconciliation and full 20/20 R7;
+- clean pilot-scope reports;
+- A2-B amended and re-run;
+- the reviewed run allowlist;
+- independent review of this runbook, the M2C body and its verification;
+- the grant-only M2B migration itself.
+
+Details: `docs/operations/2026-11-02-v4-m2b-m2c-recovery-runbook.md`, `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md` §14.5.1 and M2C.
+
+Reason: An emergency stop must be one obviously safe statement, and its effect must be verifiable. Recovery must be possible for every identity mistake V2 can make, without deleting evidence, and must fail closed when executed out of order. The previous procedure would have left the competition case permanently stuck and the team case with phantom fixtures.
