@@ -31,13 +31,13 @@ jobs:
           node-version: 22
 
       - name: Syntax-check capture script
-        run: node --check scripts/kapiloto-v4-sportmonks-season-roster.mjs
+        run: node --check tools/kapiloto-v4-sportmonks-season-roster.mjs
 
       - name: Capture current-season roster from Sportmonks
         env:
           SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
         run: >
-          node scripts/kapiloto-v4-sportmonks-season-roster.mjs
+          node tools/kapiloto-v4-sportmonks-season-roster.mjs
           --league-id "${{ inputs.league_id }}"
           --expected-team-count "${{ inputs.expected_team_count }}"
           --out artifacts/kapiloto-v4-season-roster
