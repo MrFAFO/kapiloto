@@ -554,7 +554,7 @@ Prediction Registry records and re-runs the squad-state read per forecast
 hashes. The four V1 reads join the de-authorized V1 contracts above. They
 are not executable by `service_role`, so `service_role` cannot record a new
 read-v1 lineup forecast. The migration neither grants nor re-revokes ingest.
-Until PR #43 is merged and applied, the boundary test still proves that no
+PR #43 is merged. Until its migration is applied to production, the boundary test still proves that no
 production app, script or cron path calls any V4 ingest/read RPC. Details:
 `KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md` §14.7.1 and
 `KAPILOTO-V4-SQUAD-STATE.md`.
