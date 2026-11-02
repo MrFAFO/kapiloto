@@ -230,6 +230,12 @@ test("lineup rows: roles, positions, slots, and ambiguity handling", () => {
   assert.equal(parseError(mutate((c) => (c.families.lineups.rows[12].type_id = 11))), "lineup_too_many_starters");
   assert.equal(parseError(mutate((c) => (c.families.lineups.rows[0].team_id = 777))), "lineup_team_unknown");
   assert.equal(parseError(mutate((c) => (c.families.lineups.rows[0].player_id = "abc"))), "lineup_row_invalid");
+  assert.equal(parseError(mutate((c) => (c.families.lineups.rows[0].player_id = null))), "lineup_row_invalid");
+
+  const unidentifiedBench = parse(mutate((c) => (c.families.lineups.rows[12].player_id = null)));
+  assert.equal(unidentifiedBench.observation.players.length, 27);
+  assert.equal(unidentifiedBench.observation.teams[0].lineupStatus, "complete");
+  assert.equal(unidentifiedBench.observation.players.some((p) => p.providerPlayerName === "Synthetic Home 13"), false);
 
   const jerseys = parse(mutate((c) => (c.families.lineups.rows[1].jersey_number = 1)));
   assert.ok(jerseys.flags.includes("duplicate_shirt_number"));
