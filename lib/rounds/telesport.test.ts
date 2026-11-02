@@ -130,9 +130,9 @@ test("parses live and final Winner 16 state without settling unfinished games", 
   }
 
   const rows = [
-    stateRow(1, "37'", "בית 1", "1 - 0", "חוץ 1", "1"),
+    stateRow(1, "37'", "בית 1", "0 - 1", "חוץ 1", "1"),
     stateRow(2, "מחצית", "בית 2", "0 - 0", "חוץ 2", "X"),
-    stateRow(3, "הסתיים", "בית 3", "2 - 1", "חוץ 3", "1"),
+    stateRow(3, "הסתיים", "בית 3", "1 - 2", "חוץ 3", "1"),
     stateRow(4, "נדחה", "בית 4", "-", "חוץ 4"),
     ...Array.from({ length: 12 }, (_, index) =>
       stateRow(index + 5, "24/10 19:00", `בית ${index + 5}`, "-", `חוץ ${index + 5}`),
@@ -163,7 +163,7 @@ test("treats unknown scored Telesport states as under review", () => {
   const rows = Array.from({ length: 16 }, (_, index) => {
     const number = index + 1;
     const status = number === 1 ? "החלטה" : "24/10 19:00";
-    const score = number === 1 ? "3 : 0" : "-";
+    const score = number === 1 ? "0 : 3" : "-";
     const outcome = number === 1 ? "1" : "";
     return `
       <tr>
@@ -256,7 +256,7 @@ test("parses modern live, finished and upcoming Winner 16 state", () => {
     "1",
     "37'",
     "בית מודרני 1",
-    "1 - 0",
+    "0 - 1",
     "חוץ מודרני 1",
     "1",
   );
@@ -268,7 +268,7 @@ test("parses modern live, finished and upcoming Winner 16 state", () => {
     "2",
     "הסתיים",
     "בית מודרני 2",
-    "1 - 2",
+    "2 - 1",
     "חוץ מודרני 2",
     "2",
   );
@@ -286,6 +286,43 @@ test("parses modern live, finished and upcoming Winner 16 state", () => {
   assert.equal(parsed.games[1].outcome, "2");
   assert.equal(parsed.games[2].status, "upcoming");
   assert.equal(parsed.games[2].homeScore, null);
+});
+
+test("maps real round 264301 RTL score text back to home-away orientation", () => {
+  const lines = modernRoundLines();
+
+  const firstGame = lines.indexOf("1");
+  lines.splice(
+    firstGame,
+    6,
+    "1",
+    "הסתיים",
+    "הפועל תל אביב",
+    "1 - 2",
+    "מכבי חיפה",
+    "1",
+  );
+
+  const seventhGame = lines.indexOf("7", firstGame + 1);
+  lines.splice(
+    seventhGame,
+    6,
+    "7",
+    "הסתיים",
+    "ליברפול",
+    "1 - 0",
+    "ארסנל",
+    "2",
+  );
+
+  const parsed = parseTelesportWinner16StateHtml(modernDocument(lines));
+
+  assert.equal(parsed.games[0].homeScore, 2);
+  assert.equal(parsed.games[0].awayScore, 1);
+  assert.equal(parsed.games[0].outcome, "1");
+  assert.equal(parsed.games[6].homeScore, 0);
+  assert.equal(parsed.games[6].awayScore, 1);
+  assert.equal(parsed.games[6].outcome, "2");
 });
 
 test("default Telesport provider fetches the current winner-16 endpoint", async () => {
