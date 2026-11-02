@@ -195,14 +195,14 @@ export function auditSportmonksLeagueIdentity(
               detail: `Expected country ${target.expectedCountry}; observed ${actualCountry ?? "none"}.`,
             },
       type:
-        type === "league" && (subType === "domestic" || subType === null)
+        type === "league" && subType === "domestic"
           ? {
               status: "pass",
-              detail: `Competition type is league${subType ? `/${subType}` : ""}.`,
+              detail: "Competition type is league/domestic.",
             }
           : {
               status: "fail",
-              detail: `Expected domestic league; observed type=${type ?? "none"}, sub_type=${subType ?? "none"}.`,
+              detail: `Expected league/domestic; observed type=${type ?? "none"}, sub_type=${subType ?? "none"}.`,
             },
       currentSeason:
         currentSeasonId &&
