@@ -7,6 +7,7 @@ Read these before changing code:
 4. `docs/architecture/ROUND-LIFECYCLE.md`
 5. `docs/ai/CONSENSUS-ALGORITHM.md`
 6. `docs/ai/KAPILOTO-RESEARCH-PROTOCOL.md`
+7. `docs/ai/CLAUDE-COLLABORATION-WORKFLOW.md`
 
 ## Working rules
 - Keep tasks narrow. Do not redesign unrelated areas.
@@ -19,6 +20,7 @@ Read these before changing code:
 - Consensus v1 must remain deterministic and explainable.
 - Kapiloto research must be source-backed, timestamped and cached/versioned.
 - Update docs when a product or architecture decision changes.
+- For substantial work, explicitly consider Claude both during planning/review and during implementation; follow `docs/ai/CLAUDE-COLLABORATION-WORKFLOW.md`. The user should not need to remind the agent.
 
 ## Quality gate
 Before proposing a merge:
