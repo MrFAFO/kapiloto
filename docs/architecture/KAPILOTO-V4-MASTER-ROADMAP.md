@@ -765,7 +765,14 @@ What still blocks M2B after PR #43:
 - entity/reconciliation reports clean for the pilot scope;
 - A2-B (PR #19) amended and re-run;
 - the recovery runbook rehearsed, and the M2C pause SQL body reviewed (fresh
-  timestamp at application);
+  timestamp at application). **Rehearsal implemented in PR #47 (D-061),
+  pending merge and independent review:**
+  - the hardened M2C body (both ingest RPCs, every non-owner role) with a
+    read-only verification;
+  - reviewed operator SQL templates;
+  - minted fixtures corrected in place;
+  - synthetic rehearsal of the team and competition incidents, out-of-order
+    failure and resume, and frozen-forecast reporting;
 - the reviewed immutable run allowlist fixed;
 - the separate grant-only M2B migration itself, reviewed.
 
@@ -773,7 +780,9 @@ Known follow-up (not an M2B blocker introduced by PR #43): the revocation
 impact report does not yet list Prediction Registry snapshots whose frozen
 inputs used revoked history (`prediction_ledger_inputs`). Those snapshots
 remain valid frozen records; the operator view of "which forecasts used
-revoked history" is future work.
+revoked history" is future work. **Addressed by PR #47:**
+`docs/operations/sql/kapiloto-v4-recovery-affected-forecasts.sql` (read-only)
+lists them and is a mandatory step of every incident.
 
 Minimum expectations:
 

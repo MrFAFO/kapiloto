@@ -575,6 +575,21 @@ The wrongly minted fixture remains a historical orphan with a withdrawn chain
 and no provider mapping; the readiness report lists it as
 `mint_without_mapping` until an operator decision about the orphan row.
 
+**Superseded by D-061** (runbook `docs/operations/2026-11-02-v4-m2b-m2c-recovery-runbook.md`).
+
+- **Default: correct in place.** A wrongly minted fixture is corrected in place
+  (competition/home/away only), and its mapping and mint row are kept. The
+  re-ingest then validates it as the unique candidate (`existing_mapping`).
+- **Why not a parallel fixture.** A parallel operator-created fixture would
+  leave a phantom finished match. For a competition correction it would block
+  every re-ingest (`fixture_competition_conflict`).
+- **Exception.** Unmap and attach is only for team incidents where another
+  canonical fixture already represents the real match.
+- **Operator SQL.** Every recovery write is a reviewed template in
+  `docs/operations/sql/`. Each template compare-and-sets the reviewed state,
+  refuses out-of-order use and is idempotent; the synthetic rehearsal runs the
+  same text.
+
 ### Canonical identity rules
 
 - **Competitions and teams are never created** by A2-A code. Operators

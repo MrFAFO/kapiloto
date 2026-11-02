@@ -668,6 +668,53 @@ Revocation provides immediate safety because V2 readers exclude the revoked gene
 
 Wrong minted canonical fixtures may remain as historical orphan rows if immutable ledger history references them; recovery correctness comes from withdrawal, mapping repair, new canonical attachment and V2 read exclusion, not rewriting old ledger rows.
 
+#### 14.5.1 Rehearsed recovery model (D-061)
+
+The rehearsal (PR #47) keeps the order above, with these refinements.
+
+**Scope.**
+
+- The impact report re-run **after** the revoke is authoritative. The revoke
+  takes the provider identity lock exclusive, so it waits for every in-flight
+  V2 ingest.
+- Every chain sealed under the revoked generation is withdrawn and
+  re-ingested, not only the one that triggered the incident.
+
+**Minted fixtures.** A fixture that V2 minted under a wrong identity is
+corrected **in place** (competition/home/away only, side-preserving), and its
+provider mapping is kept.
+
+- A hand-made parallel canonical fixture is not allowed.
+- For a competition correction, the orphan (same teams and kickoff, other
+  competition) blocks every re-ingest as `fixture_competition_conflict`.
+- For a team correction, it would leave a phantom finished match in V3's
+  `fixtures`.
+- Only a fixture private to the V4 ledger is corrected in place (no other
+  provider mapping, no other foreign-key reference).
+- When another canonical fixture already represents the real match:
+  - team incidents unmap and attach, leaving a recorded `mint_without_mapping`
+    orphan;
+  - competition incidents stop for a separately reviewed canonical merge.
+
+**Operator steps.**
+
+- Every operator write is a reviewed SQL template in `docs/operations/sql/`.
+  The rehearsal executes the same text.
+- Each template uses V2 ingest's lock order, re-checks the reviewed state
+  (compare-and-set), refuses out-of-order use and is idempotent.
+- There is no recovery RPC and no migration. Recovery stays operator-only, and
+  service_role's capabilities are unchanged.
+- The hard invariants (one live chain per provider fixture id, final mints,
+  sealed trust) are database-enforced already.
+
+**Re-ingest under M2C.** The recovery re-ingest runs as the owner while
+service_role stays paused. Resuming service_role ingest is a separately
+reviewed grant.
+
+**Frozen forecasts.** A read-only report lists Prediction Registry snapshots
+whose `prediction_ledger_inputs` used affected observations. The snapshots
+stay valid frozen records.
+
 ### 14.6 Trust-aware retrospective exclusions
 
 Add:
@@ -822,6 +869,36 @@ Emergency path:
 1. immediately execute the reviewed operator statement `REVOKE EXECUTE ON FUNCTION public.match_ledger_ingest_provider_fixture_v2(jsonb) FROM service_role`;
 2. create the matching migration file with a **fresh timestamp at application time**, avoiding Supabase CLI out-of-order migration rejection;
 3. commit/merge that migration immediately after the emergency revoke.
+
+Rehearsed refinement (D-061, `docs/operations/2026-11-02-v4-m2b-m2c-recovery-runbook.md` §A/§K).
+
+**The body.** The reviewed body
+(`docs/operations/sql/kapiloto-v4-m2c-revoke-body.sql`) revokes both provider
+ingest RPCs (V2 and the frozen V1) from `public, anon, authenticated,
+service_role`. It is still revoke-only. In the expected state every revoke but
+service_role's on V2 is a no-op; the others close an accidental grant in the
+same statement.
+
+**Execution and verification.**
+
+- It runs alone, because a later error in the same execution would roll it
+  back.
+- A separate read-only verification
+  (`docs/operations/sql/kapiloto-v4-m2c-verify.sql`) must then pass. It fails
+  on any of these:
+  - EXECUTE for any role but the owner and the Supabase operator roles
+    (PUBLIC included);
+  - application-role executability, including through membership;
+  - a SECURITY DEFINER function or pg_cron job calling ingest;
+  - an ingest call still in flight.
+
+**In-flight calls.** PostgreSQL checks EXECUTE once per call, so a call
+already running completes and may commit. The identity revoke (an exclusive
+provider identity lock) is the barrier for the bad generation.
+
+**Bookkeeping.** The version must be recorded as applied in production (the
+Supabase migration tool, or `migration repair`) before any later grant
+migration. Re-activation is always a new grant-only migration.
 
 If the tiny pilot fails any integrity gate, M2C is applied before further investigation. If the pilot passes, activation for the next staged scope still requires a separately reviewed run allowlist.
 
@@ -1074,3 +1151,9 @@ details; they do not change the architecture above.
   re-ingest attaches to it (tested end to end). The orphaned mint stays
   reported as `mint_without_mapping` until an operator decision about the
   orphan row. The runbook rehearsal before M2B covers this path.
+  **Superseded by D-061 (§14.5.1).** A hand-made parallel fixture leaves a
+  phantom finished match. For a competition correction it also blocks the
+  re-ingest permanently (`fixture_competition_conflict`), so the minted
+  fixture is corrected in place instead and keeps its mapping. Unmap and
+  attach (with a recorded orphan) is only for team incidents where another
+  canonical fixture already represents the real match.
