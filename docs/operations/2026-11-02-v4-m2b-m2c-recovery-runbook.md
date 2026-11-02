@@ -51,9 +51,13 @@ M2C itself never mutates identity, mapping, fixture or Match Ledger data.
   with a mapping correction.
 - **Who runs ingest.**
   - Production ingest runs only as `service_role` through the PostgREST RPC.
-  - It never runs as the owner. The owner keeps EXECUTE whatever M2C does.
+  - `postgres` and `supabase_admin` are human/migration operator roles only:
+    no cron, wrapper, script or direct-DSN automation may run provider ingest
+    as either role.
+  - Normal ingest never runs as the owner. The owner keeps EXECUTE whatever
+    M2C does.
   - The recovery re-ingest (§I) is the one owner-run ingest, and it is
-    deliberate.
+    deliberate, logged and single-fixture.
 - **Why no recovery RPC.** Recovery deliberately adds no RPC or migration:
   - A service_role-callable recovery RPC would let application code unmap or
     relabel fixtures.
@@ -111,8 +115,9 @@ M2C itself never mutates identity, mapping, fixture or Match Ledger data.
      operator roles (`postgres` or `supabase_admin`);
    - any non-operator role can execute either RPC, including through role
      membership, PUBLIC or an explicit/default grant;
-   - a SECURITY DEFINER function or a pg_cron job calls either RPC (both run
-     as their owner and would bypass the revoke);
+   - any wrapper function (SECURITY DEFINER or INVOKER) references either
+     ingest RPC, or a pg_cron job calls ingest; operator-owned automation would
+     bypass the application-role revoke;
    - the Sportmonks provider-identity `ShareLock` is still held by any backend
      (the authoritative V2-ingest drain signal), or pg_stat_activity still
      shows an ingest call.
@@ -225,6 +230,8 @@ report). This is the default.
 - Run `docs/operations/sql/kapiloto-v4-recovery-correct-minted-fixture.sql`.
   It changes only that row's competition/home/away to the reviewed identity.
   - The new values are side-preserving: the provider home side stays home.
+    A pure home/away swap is refused because provider-side scores and side
+    semantics cannot be reinterpreted safely.
   - Kickoff, status and provider-side scores stay as minted.
   - The provider fixture mapping and the mint row stay. The re-ingest then
     validates the mapping as the unique candidate (`existing_mapping`).
