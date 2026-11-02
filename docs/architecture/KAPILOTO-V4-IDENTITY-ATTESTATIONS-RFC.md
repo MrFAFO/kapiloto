@@ -886,11 +886,11 @@ same statement.
 - A separate read-only verification
   (`docs/operations/sql/kapiloto-v4-m2c-verify.sql`) must then pass. It fails
   on any of these:
-  - EXECUTE for any role but the owner and the Supabase operator roles
-    (PUBLIC included);
-  - application-role executability, including through membership;
+  - an ingest RPC owner other than `postgres` or `supabase_admin`;
+  - EXECUTE for any non-operator role, including through membership or PUBLIC;
   - a SECURITY DEFINER function or pg_cron job calling ingest;
-  - an ingest call still in flight.
+  - a held Sportmonks provider-identity `ShareLock` or an ingest call still in
+    flight.
 
 **In-flight calls.** PostgreSQL checks EXECUTE once per call, so a call
 already running completes and may commit. The identity revoke (an exclusive
