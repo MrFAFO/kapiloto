@@ -21,6 +21,7 @@ Read these before changing code:
 - Kapiloto research must be source-backed, timestamped and cached/versioned.
 - Update docs when a product or architecture decision changes.
 - For substantial work, explicitly consider Claude both during planning/review and during implementation; follow `docs/ai/CLAUDE-COLLABORATION-WORKFLOW.md`. The user should not need to remind the agent.
+- This Claude decision is a preflight gate: make it before the first substantial code/SQL/architecture edit. Sensitive work (trust, recovery, permissions, migrations, production activation, identity/replay) normally requires Claude involvement before implementation unless the change is a narrow mechanical fix proven by direct evidence.
 
 ## Quality gate
 Before proposing a merge:

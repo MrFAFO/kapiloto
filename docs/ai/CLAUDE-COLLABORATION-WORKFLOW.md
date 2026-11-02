@@ -4,6 +4,34 @@ This document defines when and how Kapiloto work should use Claude as a second
 engineering agent. It is a standing project rule: the user should not need to
 remind the primary assistant in a later conversation.
 
+## Mandatory preflight before substantial work
+
+Before the first code, SQL, migration, workflow or architecture edit on any
+substantial or sensitive Kapiloto task, the primary assistant must explicitly
+decide whether Claude should participate in:
+
+1. planning / architecture / red-team;
+2. implementation / debugging / refactoring / test repair;
+3. both.
+
+This decision happens **before implementation starts**, not after a PR or
+solution already exists.
+
+If the task is high-risk — especially trust boundaries, recovery/emergency
+paths, production activation, identity reconciliation, permissions, migrations,
+historical replay, settlement or irreversible data behavior — Claude should
+normally be involved before the first implementation edit unless direct runtime
+evidence proves the task is a narrow mechanical fix.
+
+If Claude is selected for planning or execution and no direct Claude tool is
+available, stop before implementing and give the user the recommended model,
+effort and a complete copy-paste prompt. Do not first implement the task alone
+and then ask Claude to review it.
+
+For a narrow mechanical correction with direct evidence (for example one
+hard-coded filename exposed by CI), direct implementation is allowed, but the
+reason Claude is unnecessary should be clear from the evidence.
+
 ## Principle
 
 Claude is not only a reviewer. At every substantial Kapiloto task, consider
