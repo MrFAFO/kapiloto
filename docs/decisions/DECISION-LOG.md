@@ -506,9 +506,9 @@ Decision:
 - **De-authorization.** The V1 consumer reads are no longer executable by `service_role`, as M2A did for the V1 team-stat reads. The registry's read-v1 branch therefore refuses new read-v1 forecasts from `service_role` by name. Owner/offline replay environments keep it.
 - **Ingest untouched.** The migration neither grants nor re-revokes ingest; re-revoking would silently undo an M2B grant if migrations were ever applied out of order. M2A's revocations stand.
 
-Implementation status: PR #43 on `feat/v4-attestation-aware-consumer-reads`. Not merged; migration `20261102103000_kapiloto_v4_attestation_aware_consumer_reads.sql` not applied to production.
+Implementation status: PR #43 merged as `a531187794681469d203ade3e1a01b78b92625cc`; migration `20261102103000_kapiloto_v4_attestation_aware_consumer_reads.sql` is not applied to production.
 
-Remaining M2B blockers: PR #43 merge plus reviewed production application; Winner round 264301 settlement, then Bournemouth 52 / Sevilla 676 reconciliation and full 20/20 R7; clean pilot-scope reports; A2-B amended/re-run; recovery runbook rehearsal and reviewed M2C SQL; the reviewed run allowlist; the grant-only M2B migration itself. Follow-up, not a blocker introduced here: the revocation impact report does not list Prediction Registry snapshots that used revoked history.
+Remaining M2B blockers: reviewed production application of the PR #43 migration; Winner round 264301 settlement, then Bournemouth 52 / Sevilla 676 reconciliation and full 20/20 R7; clean pilot-scope reports; A2-B amended/re-run; recovery runbook rehearsal and reviewed M2C SQL; the reviewed run allowlist; the grant-only M2B migration itself. Follow-up, not a blocker introduced here: the revocation impact report does not list Prediction Registry snapshots that used revoked history.
 
 Details: `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md` §14.7.1, `docs/architecture/KAPILOTO-V4-SQUAD-STATE.md`.
 
