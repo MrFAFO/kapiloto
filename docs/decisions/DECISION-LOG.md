@@ -520,7 +520,7 @@ Decision:
 - **M2C body.** The reviewed pause revokes EXECUTE on both provider ingest RPCs (V2 and the frozen V1) from `public, anon, authenticated, service_role`.
   - It is still revoke-only. In the expected state only service_role's V2 grant exists; the other revokes close an accidental grant in the same statement.
   - It runs alone: a later error in the same execution would roll it back.
-  - A separate read-only verification must pass: each ingest RPC is owned by `postgres` or `supabase_admin`; no non-operator role can execute it (including through membership or PUBLIC); no SECURITY DEFINER or pg_cron caller exists; and no Sportmonks provider-identity `ShareLock` or ingest call remains in flight.
+  - A separate read-only verification must pass: each ingest RPC is owned by `postgres` or `supabase_admin`; no non-operator role can execute it (including through membership or PUBLIC); no wrapper function or pg_cron caller references ingest; and no Sportmonks provider-identity `ShareLock` or ingest call remains in flight.
   - There is no database kill switch. It would require redefining the applied V2 ingest, and the identity revoke already gives a strict barrier.
 - **In-flight semantics.** PostgreSQL checks EXECUTE once per call, so a call already running when M2C commits completes and may commit; every later call is refused, prepared statements included. The attestation revoke takes the provider identity lock exclusive and waits for every in-flight V2 ingest, so the impact report re-run after the revoke is the authoritative scope.
 - **Bookkeeping.** M2C executes first and is then recorded with a fresh timestamp, as applied in production, before any later grant migration. Re-activation is always a new grant-only migration, never the removal of the M2C migration.
@@ -540,7 +540,7 @@ Decision:
   - that parallel fixture leaves a phantom finished match in V3's `fixtures`;
   - for a competition correction it blocks every re-ingest (`fixture_competition_conflict`).
 
-  Only a fixture referenced by this provider's mapping, same-provider-fixture immutable ingest audit, and the V4 ledger is corrected in place; foreign-key references and the soft `provider_ingest_items.fixture_id` audit reference are both checked. When another canonical fixture already represents the real match, team incidents unmap and attach (a recorded `mint_without_mapping` orphan) and competition incidents stop for a separately reviewed canonical merge.
+  Only a fixture referenced by this provider's mapping, same-provider-fixture immutable ingest audit, and the V4 ledger is corrected in place; foreign-key references and the soft `provider_ingest_items.fixture_id` audit reference are both checked. A pure home/away swap is refused because provider-side scores and side semantics cannot be safely reinterpreted. When another canonical fixture already represents the real match, team incidents unmap and attach (a recorded `mint_without_mapping` orphan) and competition incidents stop for a separately reviewed canonical merge.
 - **Reviewed operator SQL, not RPCs.** Each operator write is a template in `docs/operations/sql/`:
   - withdraw chain;
   - correct minted fixture;
