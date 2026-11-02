@@ -7,8 +7,9 @@
 --      (postgres or supabase_admin);
 --   2. no other role can execute either RPC, including through role
 --      membership, explicit grants, PUBLIC, or the default ACL;
---   4. no SECURITY DEFINER function and no pg_cron job calls them (both run
---      as their owner and would bypass the revoke);
+--   3. no wrapper function and no pg_cron job calls either ingest RPC. Any
+--      operator-owned wrapper/automation would bypass the application-role
+--      revoke even when it is SECURITY INVOKER;
 --   4. no other backend is still executing an ingest call. The V2 ingest's
 --      shared provider-identity advisory lock is the authoritative drain
 --      signal; pg_stat_activity is an additional diagnostic. A call that
@@ -61,13 +62,18 @@ begin
   end loop;
 
   for r in
-    select p.oid::regprocedure as fn
+    select p.oid::regprocedure as fn,
+           case when p.prosecdef then 'SECURITY DEFINER' else 'SECURITY INVOKER' end as security_mode,
+           pg_catalog.pg_get_userbyid(p.proowner) as owner
     from pg_catalog.pg_proc p
-    where p.prosecdef
+    where p.oid <> all(v_ingest::oid[])
       and p.prosrc ilike '%match_ledger_ingest_provider_fixture%'
     order by 1
   loop
-    v_problems := v_problems || format('SECURITY DEFINER function %s references a provider ingest RPC', r.fn);
+    v_problems := v_problems || format(
+      '%s function %s owned by %s references a provider ingest RPC',
+      r.security_mode, r.fn, r.owner
+    );
   end loop;
 
   if exists (
