@@ -14,8 +14,10 @@ const V4_MIGRATIONS = [
   /_kapiloto_v4_provider_ingest\.sql$/,
   /_kapiloto_v4_identity_mapping_guard\.sql$/,
   /_kapiloto_v4_identity_attestations\.sql$/,
+  /_kapiloto_v4_attestation_aware_consumer_reads\.sql$/,
 ];
 const IDENTITY_ATTESTATIONS_MIGRATION = /_kapiloto_v4_identity_attestations\.sql$/;
+const ATTESTATION_AWARE_READS_MIGRATION = /_kapiloto_v4_attestation_aware_consumer_reads\.sql$/;
 // The one deliberate exception to "no trigger on a V3 table" (D-057): a
 // row-level BEFORE UPDATE guard on the three V3 identity mapping tables.
 const IDENTITY_GUARD_MIGRATION = /_kapiloto_v4_identity_mapping_guard\.sql$/;
@@ -103,7 +105,8 @@ test("the V4 migrations are the latest, in order, and strictly additive", () => 
     assert.equal(matches.length, 1, String(pattern));
     return matches[0];
   });
-  // 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A, the D-057 guard, Stage 1 M2A in order, and nothing after them.
+  // 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A, D-057, Stage 1 M2A and
+  // the attestation-aware consumer reads in order, with nothing after them.
   assert.deepEqual(files.slice(-v4.length), v4);
   for (const file of v4) {
     const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
@@ -267,10 +270,39 @@ test("the M2A migration is additive: no V1 redefinition, no V3 table change, V2 
   assert.doesNotMatch(code, /\bdrop\s+trigger\b|\bdisable\s+trigger\b/);
 });
 
-// D-058 M2B gate: the 1A/1C Match Ledger reads are not attestation-aware, so
-// no production path may activate them (or any V4 consumer) until
-// attestation-aware successors exist. This guard keeps that true.
-test("no production app/script/cron path calls the uncovered Match Ledger consumers or any V4 ingest/read RPC", () => {
+test("the attestation-aware read migration is additive and cannot activate ingest", () => {
+  const dir = join(ROOT, "supabase", "migrations");
+  const file = readdirSync(dir).find((name) => ATTESTATION_AWARE_READS_MIGRATION.test(name))!;
+  const sql = readFileSync(join(dir, file), "utf8").toLowerCase().replace(/\r\n/g, "\n");
+  const code = sql.split("\n").filter((line) => !line.trimStart().startsWith("--")).join("\n");
+
+  for (const fn of [
+    "public.match_ledger_observation_as_of_v2",
+    "public.match_ledger_provider_team_matches_as_of_v2",
+    "public.match_ledger_provider_player_matches_as_of_v2",
+    "public.squad_state_inputs_as_of_v2",
+  ]) {
+    assert.ok(code.includes(`create or replace function ${fn}(`), fn);
+  }
+  for (const frozen of [
+    "public.match_ledger_observation_as_of",
+    "public.match_ledger_provider_team_matches_as_of",
+    "public.match_ledger_provider_player_matches_as_of",
+    "public.squad_state_inputs_as_of",
+  ]) {
+    assert.ok(!code.includes(`create or replace function ${frozen}(`), frozen);
+  }
+
+  assert.doesNotMatch(code, /\bgrant\b[^;]*\bmatch_ledger_ingest_provider_fixture(_v2)?\(/);
+  assert.match(code, /revoke all on function public\.match_ledger_ingest_provider_fixture_v2\(jsonb\)[\s\S]*?service_role;/);
+  assert.match(code, /private\.match_ledger_observation_attestation_issue\(/);
+  assert.doesNotMatch(code, /\b(insert into|update public\.|delete from|alter table public\.)\b/);
+});
+
+// D-058 M2B gate: attestation-aware V2 successors now exist, but no
+// production app/script/cron path may activate V4 ingest/consumers before the
+// separately reviewed M2B activation and tiny-ingest gate.
+test("no production app/script/cron path calls V4 ingest/read consumers before M2B activation", () => {
   const consumers = /squad_state_inputs_as_of|match_ledger_observation_as_of|match_ledger_provider_(team|player)_matches_as_of|prediction_record_snapshot(_v2)?|match_ledger_ingest_provider_fixture(_v2)?|match_ledger_team_match_stats|provider_identity_(attest|revoke)|kapiloto-v4/;
   const productionFiles = ["app", "components", "scripts", "lib"]
     .flatMap((dir) => sourceFiles(join(ROOT, dir)))
