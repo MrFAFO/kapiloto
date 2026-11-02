@@ -380,6 +380,29 @@ test("competition identity incident: correcting the minted fixture in place reco
   );
   await blockedDb.close();
 
+  // provider_ingest_items.fixture_id is deliberately a soft reference (no FK).
+  // A foreign audit row must still stop in-place mutation even though a generic
+  // FK scan cannot see it.
+  const softRefDb = await createLedgerDatabase();
+  const s = await wrongCompetitionMint(softRefDb);
+  await softRefDb.query(
+    `insert into public.provider_ingest_items
+      (run_id, provider, provider_fixture_id, attempt_no, status, reason_code, observation_id, fixture_id, detail)
+     values ($1, 'api_football', 'foreign-soft-ref', 1, 'quarantined', 'synthetic_foreign_ref', null, $2, '{}'::jsonb)`,
+    [s.w.runId, s.x.fixtureId],
+  );
+  await assert.rejects(
+    correctMintedFixture(
+      softRefDb,
+      s.w.providerFixtureId,
+      s.x.fixtureId,
+      { competition: s.w.seed.competitionId, home: s.w.seed.homeTeamId, away: s.w.seed.awayTeamId },
+      { competition: s.right, home: s.w.seed.homeTeamId, away: s.w.seed.awayTeamId },
+    ),
+    /ingest audit reference outside sportmonks fixture/,
+  );
+  await softRefDb.close();
+
   // The reviewed procedure: correct the minted fixture's competition in
   // place; its mapping stays and the re-ingest validates it as the unique
   // candidate.
