@@ -335,13 +335,20 @@ export function parseSportmonksLedgerCapture(
     for (const row of families.lineups.rows) {
       if (!isRecord(row)) fail("lineup_row_invalid", "lineup row must be an object");
       const record = row as Record<string, unknown>;
-      const providerPlayerId = providerRef(record.player_id, "lineup_row_invalid", "lineup player_id");
       const teamId = providerRef(record.team_id, "lineup_row_invalid", "lineup team_id");
       const side = sideByTeam.get(teamId) ?? fail("lineup_team_unknown", `lineup team ${teamId} is not a participant`);
-      if (seen.has(providerPlayerId)) fail("lineup_duplicate_player", `player ${providerPlayerId} appears more than once`);
-      seen.add(providerPlayerId);
       const lineupRole: LineupRole =
         record.type_id === SPORTMONKS_LINEUP_STARTER ? "starter" : record.type_id === SPORTMONKS_LINEUP_BENCH ? "bench" : "unknown";
+
+      // Sportmonks can expose an otherwise valid bench row before the player
+      // receives a provider identity. Such a row cannot become a canonical
+      // player observation, but it must not invalidate an otherwise complete
+      // starting XI. Starters and unknown-role rows remain strict.
+      if (lineupRole === "bench" && (record.player_id === null || record.player_id === undefined)) continue;
+
+      const providerPlayerId = providerRef(record.player_id, "lineup_row_invalid", "lineup player_id");
+      if (seen.has(providerPlayerId)) fail("lineup_duplicate_player", `player ${providerPlayerId} appears more than once`);
+      seen.add(providerPlayerId);
       if (lineupRole === "unknown") flags.add("lineup_role_unknown");
       const position = typeof record.position_id === "number" ? SPORTMONKS_POSITIONS[record.position_id] ?? null : null;
       const formationPosition =
