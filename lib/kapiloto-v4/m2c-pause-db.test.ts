@@ -181,11 +181,13 @@ test("an ingest call that already executed when M2C lands completes and commits;
   assert.deepEqual(await advisoryLockModes(db, "kapiloto_v4_provider_identity:sportmonks"), ["ShareLock"]);
   await db.exec("reset role");
   await db.exec(runbookSql("m2cRevoke"));
+  await db.exec("savepoint drain_check");
   await assert.rejects(
-    verifyM2c(db),
+    db.exec(runbookSql("m2cVerify")),
     /still holds the Sportmonks provider-identity ShareLock/,
     "the drain check must use the ingest advisory lock, not only query text",
   );
+  await db.exec("rollback to savepoint drain_check");
   await db.exec("set role service_role");
   await db.exec("savepoint after_m2c");
   await assert.rejects(db.query("select public.match_ledger_ingest_provider_fixture_v2($1::jsonb)", [payload]), /permission denied/);
