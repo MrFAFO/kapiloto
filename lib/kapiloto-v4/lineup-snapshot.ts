@@ -14,7 +14,7 @@ import {
 import {
   buildFixtureSquadStateFor,
   isSupportedSquadStateBuild,
-  loadSquadStateInputs,
+  loadSquadStateInputsV2,
   type FixtureSquadState,
   type HistoryObservationInput,
   type HistorySelectionPolicy,
@@ -41,15 +41,16 @@ import {
  */
 
 /**
- * Loads 1C inputs for a lineup forecast. The history window passed to the
- * as-of read is the policy's maxFixtures: the registry re-runs exactly this
- * read at commit and refuses any difference.
+ * Loads Stage 1 trust-aware 1C inputs for a lineup forecast. The history
+ * window passed to the V2 as-of read is the policy's maxFixtures: the registry
+ * re-runs exactly this read at commit and refuses any difference. Plain 1A/V1
+ * observations without valid sealed identity attestations are never inputs.
  */
 export function loadLineupSquadInputs(
   rpc: SquadStateRpc,
   params: { fixtureId: string; teamId: string; cutoff: string; policy: HistorySelectionPolicy },
 ): Promise<SquadStateInputs> {
-  return loadSquadStateInputs(rpc, { fixtureId: params.fixtureId, teamId: params.teamId, cutoff: params.cutoff, historyFixtureLimit: params.policy.maxFixtures });
+  return loadSquadStateInputsV2(rpc, { fixtureId: params.fixtureId, teamId: params.teamId, cutoff: params.cutoff, historyFixtureLimit: params.policy.maxFixtures });
 }
 
 /** The exact state bytes a forecast consumes, and their SHA-256. */
