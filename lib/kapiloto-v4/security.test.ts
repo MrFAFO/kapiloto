@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 
 import { buildMatchLedgerObservationPayload } from "./match-ledger";
@@ -339,6 +339,9 @@ test("service_role records a trusted read-v2 lineup forecast through the V2 RPC 
 test("no function defined by a V4 migration is executable by app roles or security definer", async () => {
   const db = await createLedgerDatabase({ supabaseDefaultPrivileges: true, testClock: false });
   const names = new Set<string>();
+  const attestationAwareReadMigration = readdirSync("supabase/migrations")
+    .find((name) => /_kapiloto_v4_attestation_aware_consumer_reads\.sql$/.test(name));
+  assert.ok(attestationAwareReadMigration, "attestation-aware consumer read migration is missing");
   for (const file of [
     "supabase/migrations/20261028010437_kapiloto_v4_entities_match_ledger.sql",
     "supabase/migrations/20261028132857_kapiloto_v4_knowledge_prediction_registry.sql",
@@ -348,7 +351,7 @@ test("no function defined by a V4 migration is executable by app roles or securi
     "supabase/migrations/20261030101247_kapiloto_v4_provider_ingest.sql",
     "supabase/migrations/20261030211645_kapiloto_v4_identity_mapping_guard.sql",
     "supabase/migrations/20261031100000_kapiloto_v4_identity_attestations.sql",
-    "supabase/migrations/20261102103000_kapiloto_v4_attestation_aware_consumer_reads.sql",
+    `supabase/migrations/${attestationAwareReadMigration}`,
   ]) {
     for (const match of readFileSync(file, "utf8").matchAll(/create or replace function (?:public|private)\.([a-z_0-9]+)\(/g)) {
       names.add(match[1]);
