@@ -24,7 +24,7 @@
     "test:kapiloto-v4": "tsx --test lib/kapiloto-v4/*.test.ts",
     "eval:shadow": "tsx scripts/evaluation-shadow.ts",
     "round:discover": "tsx scripts/discover-toto-round.ts",
-    "pilot:sportmonks-a2b": "tsx scripts/kapiloto-v4-sportmonks-pilot.ts"
+    "pilot:sportmonks-a2b": "tsx tools/kapiloto-v4-sportmonks-pilot.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
