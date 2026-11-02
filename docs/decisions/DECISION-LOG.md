@@ -558,14 +558,14 @@ Decision:
   - sealed trust.
 - **Frozen forecasts.** The affected-forecasts report lists Prediction Registry snapshots whose `prediction_ledger_inputs` used observations in the revocation impact report. Snapshots remain valid frozen records; the report supports annotating or excluding their evaluation. This closes the D-060 follow-up for operators. It is not an M2B blocker for the shadow-only tiny pilot, but it must be run in every incident.
 
-Implementation status: PR #47 (`feat/v4-m2c-recovery-runbook`) adds the hardened M2C body, its verification, the recovery templates, the runbook rewrite and synthetic rehearsal (`m2c-pause-db.test.ts`, `recovery-runbook-db.test.ts`), plus a boundary test that only the reviewed migrations touch ingest privileges and that V2 is never granted. Nothing is applied to production.
+Implementation status: PR #47 merged as `7d41c43045ced8f582393e831e176eba2757cbeb`. It adds the hardened M2C body, its verification, the recovery templates, the runbook rewrite and synthetic rehearsal (`m2c-pause-db.test.ts`, `recovery-runbook-db.test.ts`), plus a boundary test that only the reviewed migrations touch ingest privileges and that V2 is never granted. Nothing from PR #47 is applied to production.
 
 Remaining M2B blockers (unchanged apart from the rehearsal):
 - Winner round 264301 settlement, then Bournemouth 52 / Sevilla 676 reconciliation and full 20/20 R7;
 - clean pilot-scope reports;
 - A2-B amended and re-run;
 - the reviewed run allowlist;
-- independent review of this runbook, the M2C body and its verification;
+- a two-session rehearsal on real PostgreSQL (non-production) proving in-flight V2 ingest drain/revoke semantics;
 - the grant-only M2B migration itself.
 
 Details: `docs/operations/2026-11-02-v4-m2b-m2c-recovery-runbook.md`, `docs/architecture/KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md` §14.5.1 and M2C.
