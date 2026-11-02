@@ -1,0 +1,84 @@
+name: Kapiloto V4 Sportmonks Family/History Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      seasons_per_league:
+        description: "How many most-recent accessible seasons to sample per supported league"
+        required: true
+        default: "3"
+      fixtures_per_season:
+        description: "How many finished fixtures to sample per season"
+        required: true
+        default: "2"
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Focused A2-B readiness tests
+        run: npx tsx --test lib/kapiloto-v4/sportmonks-ledger.test.ts lib/kapiloto-v4/sportmonks-pilot.test.ts
+
+      - name: Run read-only Sportmonks family/history readiness pilot
+        env:
+          SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
+        run: >
+          npm run pilot:sportmonks-a2b --
+          --out artifacts/kapiloto-v4-a2b-readiness
+          --seasons-per-league ${{ inputs.seasons_per_league }}
+          --fixtures-per-season ${{ inputs.fixtures_per_season }}
+
+      - name: Print readiness report
+        if: always()
+        run: |
+          if [ -f artifacts/kapiloto-v4-a2b-readiness/pilot-report.json ]; then
+            cat artifacts/kapiloto-v4-a2b-readiness/pilot-report.json
+          fi
+
+      - name: Upload readiness artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kapiloto-v4-sportmonks-family-history-readiness
+          path: artifacts/kapiloto-v4-a2b-readiness
+          if-no-files-found: warn
+          retention-days: 14
+
+  v4-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Full V4 regression suite
+        run: npm run test:kapiloto-v4

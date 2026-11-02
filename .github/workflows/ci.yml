@@ -48,6 +48,9 @@ jobs:
       - name: Kapiloto core tests
         run: npm run test:kapiloto
 
+      - name: Kapiloto V4 tests
+        run: npm run test:kapiloto-v4
+
       - name: Auth tests
         run: npm run test:auth
 
