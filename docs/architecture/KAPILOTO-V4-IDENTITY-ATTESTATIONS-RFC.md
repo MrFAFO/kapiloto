@@ -705,8 +705,8 @@ In-place changes are forbidden where frozen prediction/commit-time equality cont
 #### 14.7.1 Attestation-aware successors (PR #43, D-060)
 
 Option 1 is implemented by the additive migration
-`20261102103000_kapiloto_v4_attestation_aware_consumer_reads.sql` (PR #43;
-**merged as `a531187794681469d203ade3e1a01b78b92625cc`, not applied to production**). The V1 functions above are not
+`20261102193946_kapiloto_v4_attestation_aware_consumer_reads.sql` (PR #43;
+**merged as `a531187794681469d203ade3e1a01b78b92625cc` and applied to production on 2026-11-02**). The V1 functions above are not
 redefined.
 
 | Frozen V1 read | V2 successor |
@@ -825,7 +825,7 @@ Emergency path:
 
 If the tiny pilot fails any integrity gate, M2C is applied before further investigation. If the pilot passes, activation for the next staged scope still requires a separately reviewed run allowlist.
 
-M2B remains NO-GO while any uncovered model-facing Match Ledger consumer in §14.7 could be activated against pilot observations. PR #43 (§14.7.1) is merged and supplies the V2 successors in code. The production-side gate closes only once its migration is reviewed and applied to production; until then the boundary test still proves that no production path calls any V4 consumer.
+The uncovered-consumer production gate in §14.7 is now closed: PR #43 (§14.7.1) is merged and its V2-read migration is applied to production. M2B still remains NO-GO because the separate readiness/identity/recovery/activation gates in §16 remain open.
 
 ---
 
@@ -1006,7 +1006,7 @@ All M2A architecture acceptance criteria are now satisfied:
 
 Therefore **M2A architecture is ready for implementation**.
 
-Historical provider ingest remains paused. M2B remains NO-GO until §14.7's uncovered readers are gated/versioned in production and every readiness condition in §16 passes. The readers are versioned by merged PR #43 (§14.7.1); its migration is still pending reviewed production application. The other §16 conditions are unchanged.
+Historical provider ingest remains paused. The §14.7 uncovered-read gate is closed in production by merged/applied PR #43 (§14.7.1). M2B remains NO-GO until every remaining readiness condition in §16 passes.
 
 ---
 

@@ -538,8 +538,8 @@ D-060).** M2A left `squad_state_inputs_as_of`,
 `match_ledger_observation_as_of`, `match_ledger_provider_team_matches_as_of`,
 `match_ledger_provider_player_matches_as_of` and the lineup/squad-state
 snapshot paths unchanged and not attestation-aware. PR #43 (migration
-`20261102103000_kapiloto_v4_attestation_aware_consumer_reads.sql`, **not
-merged, not applied**) adds `*_as_of_v2` successors with the same row
+`20261102193946_kapiloto_v4_attestation_aware_consumer_reads.sql`, **merged
+and applied to production on 2026-11-02**) adds `*_as_of_v2` successors with the same row
 shapes. Each V2 read:
 
 - selects the latest visible version first (an untrusted latest version
@@ -554,8 +554,8 @@ Prediction Registry records and re-runs the squad-state read per forecast
 hashes. The four V1 reads join the de-authorized V1 contracts above. They
 are not executable by `service_role`, so `service_role` cannot record a new
 read-v1 lineup forecast. The migration neither grants nor re-revokes ingest.
-PR #43 is merged. Until its migration is applied to production, the boundary test still proves that no
-production app, script or cron path calls any V4 ingest/read RPC. Details:
+PR #43 is merged and its migration is applied to production. The boundary test continues to prove that no
+production app, script or cron path calls V4 ingest before M2B activation. Details:
 `KAPILOTO-V4-IDENTITY-ATTESTATIONS-RFC.md` §14.7.1 and
 `KAPILOTO-V4-SQUAD-STATE.md`.
 
