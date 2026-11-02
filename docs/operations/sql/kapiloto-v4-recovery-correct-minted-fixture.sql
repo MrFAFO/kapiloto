@@ -53,6 +53,9 @@ begin
   if v_home = v_away then
     raise exception 'the corrected home and away teams must differ';
   end if;
+  if v_home = v_old_away and v_away = v_old_home then
+    raise exception 'pure home/away orientation swap is not a valid fixture identity correction; provider-side scores and sides would be reinterpreted';
+  end if;
   perform private.kapiloto_require_read_committed('recovery fixture correction');
 
   perform pg_advisory_xact_lock(hashtextextended('kapiloto_match_ledger_provider_fixture:sportmonks:' || v_pfid, 0));
