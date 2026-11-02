@@ -403,6 +403,22 @@ test("competition identity incident: correcting the minted fixture in place reco
   );
   await softRefDb.close();
 
+  // Pure orientation swaps are never a valid identity correction because the
+  // provider-side score and side semantics would be reinterpreted.
+  const swapDb = await createLedgerDatabase();
+  const sw = await wrongCompetitionMint(swapDb);
+  await assert.rejects(
+    correctMintedFixture(
+      swapDb,
+      sw.w.providerFixtureId,
+      sw.x.fixtureId,
+      { competition: sw.w.seed.competitionId, home: sw.w.seed.homeTeamId, away: sw.w.seed.awayTeamId },
+      { competition: sw.right, home: sw.w.seed.awayTeamId, away: sw.w.seed.homeTeamId },
+    ),
+    /pure home\/away orientation swap/,
+  );
+  await swapDb.close();
+
   // The reviewed procedure: correct the minted fixture's competition in
   // place; its mapping stays and the re-ingest validates it as the unique
   // candidate.
