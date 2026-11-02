@@ -4,6 +4,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import test from "node:test";
 
+import { RUNBOOK_SQL } from "./test-support/recovery-runbook";
+
 const ROOT = process.cwd();
 const V4_MIGRATIONS = [
   /_kapiloto_v4_entities_match_ledger\.sql$/,
@@ -342,5 +344,51 @@ test("no production app/script/cron path calls V4 ingest/read consumers before M
     for (const match of readFileSync(join(dir, file), "utf8").matchAll(/cron\.schedule\(([\s\S]*?)\);/g)) {
       assert.doesNotMatch(match[1], consumers, file);
     }
+  }
+});
+
+// M2C and the recovery steps are reviewed operator SQL (docs/operations/sql),
+// never migrations: a normal `db push` must not pause ingest or rewrite
+// identity. Until the separately reviewed M2B grant (and a recorded M2C)
+// exist, only these migrations may touch provider ingest privileges: the one
+// grant ever made is A2-A's V1 grant, revoked again by D-057 and M2A, and V2
+// is never granted.
+test("provider ingest privileges change only in reviewed migrations, and the M2C/recovery SQL stays out of supabase/migrations", () => {
+  const dir = join(ROOT, "supabase", "migrations");
+  const ingestPrivilege = /\b(grant|revoke)\b[^;]*\bmatch_ledger_ingest_provider_fixture(_v2)?\(jsonb\)[^;]*;/gi;
+  const sqlCode = (name: string) => readFileSync(join(dir, name), "utf8").replace(/--[^\n]*/g, "");
+  const touching = readdirSync(dir)
+    .filter((name) => name.endsWith(".sql"))
+    .filter((name) => [...sqlCode(name).matchAll(ingestPrivilege)].length > 0)
+    .map((name) => name.replace(/^\d+_/, ""));
+  assert.deepEqual(touching, [
+    "kapiloto_v4_provider_ingest.sql",
+    "kapiloto_v4_identity_mapping_guard.sql",
+    "kapiloto_v4_identity_attestations.sql",
+  ]);
+  const grants: string[] = [];
+  for (const name of readdirSync(dir).filter((file) => file.endsWith(".sql"))) {
+    const code = sqlCode(name);
+    for (const [statement, verb] of code.matchAll(ingestPrivilege)) {
+      if (verb.toLowerCase() === "grant") grants.push(`${name.replace(/^\d+_/, "")}: ${statement.replace(/\s+/g, " ")}`);
+    }
+    assert.doesNotMatch(code, /kapiloto_recovery\.|M2C verification/, name);
+  }
+  assert.deepEqual(grants, [
+    "kapiloto_v4_provider_ingest.sql: grant execute on function public.match_ledger_ingest_provider_fixture(jsonb) to service_role;",
+  ]);
+
+  const operatorSql = join(ROOT, "docs", "operations", "sql");
+  const strip = (sql: string) => sql.split("\n").filter((line) => !line.trimStart().startsWith("--")).join("\n");
+  for (const file of Object.values(RUNBOOK_SQL)) {
+    assert.ok(readdirSync(operatorSql).includes(file), file);
+    assert.ok(!readdirSync(dir).includes(file), file);
+    const code = strip(readFileSync(join(operatorSql, file), "utf8"));
+    // The M2C body's exact text is pinned by m2c-pause-db.test.ts.
+    if (file === RUNBOOK_SQL.m2cRevoke) continue;
+    // Templates and reports are DML/reads in one DO block or query: no DDL
+    // (so no function, let alone a SECURITY DEFINER one), no privilege change.
+    // Messages in string literals are not statements.
+    assert.doesNotMatch(code.replace(/'(?:[^']|'')*'/g, "''"), /\b(create|alter|drop|grant|revoke|truncate|comment\s+on)\b/i, file);
   }
 });
