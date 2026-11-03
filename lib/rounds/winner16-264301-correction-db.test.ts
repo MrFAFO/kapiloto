@@ -80,6 +80,45 @@ test("a game outside the reviewed states aborts the whole correction with no eff
   }
 });
 
+test("NULL field scores abort the whole correction instead of passing three-valued SQL logic", async () => {
+  const db = await createMigratedDatabase();
+  try {
+    await seedStoredRound264301(db);
+    await db.query(
+      "update public.round_games set field_home_score = null, field_away_score = null where id = $1",
+      [roundGameId(7)],
+    );
+    const before = await readGames264301(db);
+
+    await assert.rejects(db.exec(CORRECTION_SQL), /w16_264301_unexpected_state: game 7/);
+    assert.deepEqual(await readGames264301(db), before);
+    assert.equal(await readRoundStatus264301(db), "under_review");
+  } finally {
+    await db.close();
+  }
+});
+
+test("a non-under-review round aborts any attempted correction and rolls back every game write", async () => {
+  const db = await createMigratedDatabase();
+  try {
+    await seedStoredRound264301(db);
+    await db.query(
+      "update public.rounds set status = 'finished' where id = $1",
+      [ROUND_ID],
+    );
+    const before = await readGames264301(db);
+
+    await assert.rejects(
+      db.exec(CORRECTION_SQL),
+      /w16_264301_unexpected_round_status: finished/,
+    );
+    assert.deepEqual(await readGames264301(db), before);
+    assert.equal(await readRoundStatus264301(db), "finished");
+  } finally {
+    await db.close();
+  }
+});
+
 test("a team identity that differs from the evidence aborts the correction", async () => {
   const db = await createMigratedDatabase();
   try {

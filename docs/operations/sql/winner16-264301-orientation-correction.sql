@@ -1,11 +1,9 @@
 -- Winner 16 round 264301: guarded correction of the swapped field scores (D-062).
 --
--- CONTINGENCY ONLY, NOT APPLIED. The normal repair is the fixed live sync:
--- deploy, then run /api/internal/cron/round-sync while Telesport's current
--- Winner 16 page still shows round 264301. Use this block only when that is no
--- longer possible (Telesport has moved to the next round, or a newer round is
--- open in Kapiloto so live sync no longer selects 264301), and only after a
--- separate review and an explicit operator decision. See
+-- GUARDED PRODUCTION RECOVERY, NOT APPLIED. Telesport has already moved to
+-- round 264401 and Kapiloto has that round open, so the normal live-sync path
+-- can no longer repair 264301. Use this block only after a separate review,
+-- a fresh read-only preflight and an explicit operator decision. See
 -- docs/operations/2026-11-03-winner16-264301-settlement-orientation.md.
 --
 -- Evidence, one row per game, reviewed on 2026-11-03:
@@ -39,10 +37,11 @@ declare
   v_game record;
   v_applied integer := 0;
   v_skipped integer := 0;
+  v_round_initial_status text;
   v_round_status text;
 begin
-  select r.id
-    into v_round_id
+  select r.id, r.status
+    into v_round_id, v_round_initial_status
   from public.rounds r
   where r.source = 'telesport-winner16'
     and r.external_round_number = '264301'
@@ -117,11 +116,12 @@ begin
     if v_game.status <> 'finished'
        or v_game.settlement_status <> 'under_review'
        or v_game.pool_settlement_outcome is not null
-       or not (
+       or not coalesce(
          (v_game.field_home_score = v_evidence.stored_home
           and v_game.field_away_score = v_evidence.stored_away)
          or (v_game.field_home_score = v_evidence.home_score
-          and v_game.field_away_score = v_evidence.away_score)
+          and v_game.field_away_score = v_evidence.away_score),
+         false
        ) then
       raise exception 'w16_264301_unexpected_state: game %', v_evidence.game_number;
     end if;
@@ -140,6 +140,10 @@ begin
     ));
     v_applied := v_applied + 1;
   end loop;
+
+  if v_applied > 0 and v_round_initial_status <> 'under_review' then
+    raise exception 'w16_264301_unexpected_round_status: %', v_round_initial_status;
+  end if;
 
   select r.status
     into v_round_status
