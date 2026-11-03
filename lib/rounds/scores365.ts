@@ -198,12 +198,43 @@ export function parseScores365FinalResults(
   return results;
 }
 
+/**
+ * Reviewed 365Scores spellings of Kapiloto (Telesport) team names, used only
+ * by this settlement cross-check (D-062). Each pair was verified on one exact
+ * 365Scores event with the same Israel date, kickoff, competition, opponent
+ * and home/away side. They stay here rather than in `team_aliases`, because
+ * every provider's name bootstrap reads that table regardless of `source`.
+ * Both names are compared after normalizeTeamName, so differences in
+ * punctuation alone (מ.ס / מ.ס.) need no entry.
+ */
+export const SCORES365_REVIEWED_TEAM_ALIASES: ReadonlyArray<{
+  kapilotoName: string;
+  scores365Name: string;
+}> = [
+  // Winner 16 round 264301 game 4, 365Scores event 4739296.
+  { kapilotoName: "הפועל פתח תקווה", scores365Name: "הפועל פתח תקוה" },
+  // Round 264301 game 5, event 4739086.
+  { kapilotoName: "בני יהודה", scores365Name: 'בני יהודה ת"א' },
+  // Round 264301 game 6, event 4739083.
+  { kapilotoName: "מכבי יפו", scores365Name: "מכבי קביליו יפו" },
+  // Round 264301 game 11, event 4750803.
+  { kapilotoName: "ראיו ואייקאנו", scores365Name: "ראיו ואיקנו" },
+];
+
 function normalizedNames(values: string[]): Set<string> {
-  return new Set(
+  const names = new Set(
     values
       .map((value) => normalizeTeamName(value))
       .filter(Boolean),
   );
+
+  for (const alias of SCORES365_REVIEWED_TEAM_ALIASES) {
+    if (names.has(normalizeTeamName(alias.kapilotoName))) {
+      names.add(normalizeTeamName(alias.scores365Name));
+    }
+  }
+
+  return names;
 }
 
 export function matchScores365FinalResult(
