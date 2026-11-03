@@ -77,29 +77,35 @@ The Supabase Edge Function `kapiloto-live-sync` (pg_cron every 2 minutes) fetche
 
 ## Remediation after merge and deploy (operator)
 
-A normal sync repairs the round with no SQL, provided all of these hold:
-- Telesport's current Winner 16 page still shows round 264301. Check with a read-only fetch first.
-- No newer round is `open` or `upcoming` in Kapiloto. `chooseCurrentRound` prefers those over an `under_review` round.
+### Current production situation
 
-Deploying the fix is effectively the repair. Two paths run the same live sync:
-- the round page (`components/current-round-ticket.tsx`) calls `POST /api/v1/rounds/{roundId}/live-sync` for any signed-in user;
-- the daily cron runs `round-sync`.
+A read-only verification on 2026-11-03 after this branch was prepared confirmed that the normal re-sync path is **no longer available for round 264301**:
 
-So the first page view after deploy may already settle the 13 games.
+- Telesport's current Winner 16 page now shows round **264401**.
+- Kapiloto production already has round **264401** in status `open`.
+- Round **264301** remains `under_review` with 16/16 games finished, 3 settled and 13 under review.
 
-Steps:
-1. Before deploying, run the read-only state query below and keep its output.
-2. Merge and deploy to Vercel. No migration is needed.
-3. If no page view has synced the round yet, invoke `/api/internal/cron/round-sync` once (Bearer `CRON_SECRET`). Expect `liveSync.value` to be `{status: "synced", settledGames: 13, underReviewGames: 0}`.
-4. Run the query again. Every game should match the table below, and the round should be `settled`.
-5. A later sync returns `round_settled` and writes nothing.
+Therefore `chooseCurrentRound` and the live-sync round-number gate will not repair 264301 through an ordinary page view or `round-sync`. A normal sync would target the newer round or return `source_round_mismatch` for 264301.
 
-If 365Scores is unavailable for a date, the affected games stay `under_review`. Retry later; never settle them by hand.
+The code fix still must be merged and deployed so future modern Telesport rounds use the correct orientation contract. Repairing the already-corrupted 264301 data is now a separate guarded operator action.
 
-**Contingency.** If Telesport has already moved to the next round, or a newer round is open, the normal sync can no longer reach 264301.
-- `docs/operations/sql/winner16-264301-orientation-correction.sql` is the reviewed guarded correction. It holds frozen evidence per game and applies the normal rule to it (Telesport score = 365Scores score, marker = outcome).
-- Per game it compares and sets: correct and settled is skipped; the stored swapped or already-corrected score under review is settled through `toto_apply_game_state_v1`; any other state aborts with no effect.
-- It is tested on the real migration chain. It is **not applied** and needs a separate review and explicit approval.
+### Required 264301 recovery path
+
+1. Before any write, run the read-only state query below and retain its output.
+2. Confirm the state still matches the guarded SQL preconditions:
+   - round 264301 is `under_review`;
+   - games 2, 3 and 9 are already correctly settled draws;
+   - the other 13 games are `finished`, `under_review`, have no pool outcome, and hold either the reviewed swapped score or the already-corrected score.
+3. Confirm there are still zero `kapiloto_eval_scores` rows for 264301 fixtures. A 2026-11-03 production check found zero.
+4. Merge and deploy the parser/matcher fix to Vercel. No database migration is needed.
+5. Separately review and explicitly approve `docs/operations/sql/winner16-264301-orientation-correction.sql`.
+6. Execute that SQL alone, as one transaction. It uses frozen per-game evidence and the normal `toto_apply_game_state_v1` path; any unexpected identity/state aborts the statement.
+7. Re-run the read-only state query. Require all 16 games and the round to be `settled`, with the scores/outcomes in the table below.
+8. If any precondition or postcondition differs, stop. Do not manually force-settle individual rows.
+
+The guarded correction holds frozen evidence per game and requires Telesport score = 365Scores score and marker = outcome. Per game, a correct already-settled row is skipped; an expected under-review row is corrected and settled through `toto_apply_game_state_v1`; any other state aborts with no effect.
+
+The SQL has been tested on the real migration chain but is **not applied**. It requires a separate production-write approval even after this code PR is merged.
 
 ### Expected result per game
 
