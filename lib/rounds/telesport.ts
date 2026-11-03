@@ -31,6 +31,8 @@ export type TelesportGameState = {
   outcome: "1" | "X" | "2" | null;
   rawStatus: string;
   rawScore: string;
+  // Set when a finished row is withheld for review instead of trusted.
+  reviewReason?: "score_unreadable" | "score_outcome_conflict";
 };
 
 export type TelesportWinner16State = {
@@ -230,17 +232,86 @@ function parseKickoff(
   });
 }
 
+// The two Telesport Winner 16 layouts write the score in opposite logical
+// order. Both were verified against Telesport's own components and the
+// server-rendered round 264301 page (2026-11-03, D-062). In both, name_1 /
+// score_1 is the home side and the 1/X/2 marker is relative to it.
+// - Classic table (`td.scoreCol`): `<span>{score_1}</span> - <span>{score_2}</span>`,
+//   home first. The legacy section parser reads this layout.
+// - Modern rows (`span.tt-score`): `${score_2} - ${score_1}`, away first. The
+//   span is `direction: ltr` between team1 (right) and team2 (left) of an RTL
+//   row, so each number is drawn next to its own team. This applies to every
+//   status that shows a score, live included.
+type TelesportScoreOrder = "home_away" | "away_home";
+
 function parseTelesportScore(
   rawScore: string,
+  order: TelesportScoreOrder,
 ): { home: number; away: number } | null {
   const match = rawScore.match(/^(\d+)\s*[-:]\s*(\d+)$/);
   if (!match) return null;
 
-  const home = Number(match[1]);
-  const away = Number(match[2]);
-  if (!Number.isInteger(home) || !Number.isInteger(away)) return null;
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  if (!Number.isInteger(first) || !Number.isInteger(second)) return null;
 
-  return { home, away };
+  return order === "home_away"
+    ? { home: first, away: second }
+    : { home: second, away: first };
+}
+
+function outcomeOfScore(score: { home: number; away: number }): "1" | "X" | "2" {
+  if (score.home === score.away) return "X";
+  return score.home > score.away ? "1" : "2";
+}
+
+function telesportGameState(
+  row: {
+    gameNumber: number;
+    rawStatus: string;
+    rawScore: string;
+    outcome: "1" | "X" | "2" | null;
+  },
+  order: TelesportScoreOrder,
+): TelesportGameState {
+  const score = parseTelesportScore(row.rawScore, order);
+  const status = canonicalTelesportGameStatus(row.rawStatus, score != null);
+
+  // A finished row is trusted only when its score is readable and agrees
+  // with Telesport's own 1/X/2 marker. Otherwise its orientation cannot be
+  // reconciled, so no field score or outcome is passed on and the game goes
+  // to review. Live rows have no final marker to check against.
+  if (status === "finished") {
+    const reviewReason =
+      score == null
+        ? "score_unreadable"
+        : row.outcome != null && outcomeOfScore(score) !== row.outcome
+          ? "score_outcome_conflict"
+          : null;
+
+    if (reviewReason) {
+      return {
+        gameNumber: row.gameNumber,
+        status: "under_review",
+        homeScore: null,
+        awayScore: null,
+        outcome: null,
+        rawStatus: row.rawStatus,
+        rawScore: row.rawScore,
+        reviewReason,
+      };
+    }
+  }
+
+  return {
+    gameNumber: row.gameNumber,
+    status,
+    homeScore: score?.home ?? null,
+    awayScore: score?.away ?? null,
+    outcome: row.outcome,
+    rawStatus: row.rawStatus,
+    rawScore: row.rawScore,
+  };
 }
 
 function canonicalTelesportGameStatus(
@@ -416,18 +487,7 @@ function parseModernTelesportWinner16StateHtml(
 
   return {
     externalRoundNumber: parsed.externalRoundNumber,
-    games: parsed.rows.map((row) => {
-      const score = parseTelesportScore(row.rawScore);
-      return {
-        gameNumber: row.gameNumber,
-        status: canonicalTelesportGameStatus(row.rawStatus, score != null),
-        homeScore: score?.home ?? null,
-        awayScore: score?.away ?? null,
-        outcome: row.outcome,
-        rawStatus: row.rawStatus,
-        rawScore: row.rawScore,
-      };
-    }),
+    games: parsed.rows.map((row) => telesportGameState(row, "away_home")),
   };
 }
 
@@ -494,7 +554,6 @@ export function parseTelesportWinner16StateHtml(
 
       const rawStatus = cells[1] ?? "";
       const rawScore = cells[3] ?? "";
-      const score = parseTelesportScore(rawScore);
       const outcomeText = [...cells.slice(5)]
         .reverse()
         .find((value) => /^(1|X|2)$/.test(value.trim()));
@@ -503,15 +562,12 @@ export function parseTelesportWinner16StateHtml(
           ? outcomeText
           : null;
 
-      games.push({
-        gameNumber,
-        status: canonicalTelesportGameStatus(rawStatus, score != null),
-        homeScore: score?.home ?? null,
-        awayScore: score?.away ?? null,
-        outcome,
-        rawStatus,
-        rawScore,
-      });
+      games.push(
+        telesportGameState(
+          { gameNumber, rawStatus, rawScore, outcome },
+          "home_away",
+        ),
+      );
     }
   }
 

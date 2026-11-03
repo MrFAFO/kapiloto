@@ -1,0 +1,429 @@
+{
+  "_provenance": "Subset of https://webws.365scores.com/web/games/ (langId=2, Asia/Jerusalem), fetched 2026-11-03T01:36+02:00: the 16 Winner 16 round 264301 events plus same-day look-alike decoys. Only the fields the parser reads are kept.",
+  "2026-10-30": {
+    "games": [
+      {
+        "id": 4886877,
+        "competitionId": 7698,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-30T12:00:00+02:00",
+        "homeCompetitor": {
+          "name": "בית\"ר כפר סבא",
+          "score": 1
+        },
+        "awayCompetitor": {
+          "name": "בית\"ר פתח תקוה",
+          "score": 2
+        }
+      },
+      {
+        "id": 4887219,
+        "competitionId": 7698,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-30T13:30:00+02:00",
+        "homeCompetitor": {
+          "name": "הפועל יהוד",
+          "score": 1
+        },
+        "awayCompetitor": {
+          "name": "בני יפו אורתודוכסים",
+          "score": 2
+        }
+      },
+      {
+        "id": 4887224,
+        "competitionId": 7698,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-30T13:30:00+02:00",
+        "homeCompetitor": {
+          "name": "הפועל בני ערערה עארה",
+          "score": 3
+        },
+        "awayCompetitor": {
+          "name": "מ.ס. נתניה",
+          "score": 3
+        }
+      }
+    ]
+  },
+  "2026-10-31": {
+    "games": [
+      {
+        "id": 4820892,
+        "competitionId": 525,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T11:00:00+02:00",
+        "homeCompetitor": {
+          "name": "הפועל חיפה (נוער)",
+          "score": 1
+        },
+        "awayCompetitor": {
+          "name": "בני יהודה (נוער)",
+          "score": 1
+        }
+      },
+      {
+        "id": 4820897,
+        "competitionId": 525,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T11:00:00+02:00",
+        "homeCompetitor": {
+          "name": "הפועל פתח תקוה (נוער)",
+          "score": 3
+        },
+        "awayCompetitor": {
+          "name": "הפועל רעננה (נוער)",
+          "score": 2
+        }
+      },
+      {
+        "id": 4742015,
+        "competitionId": 7,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T17:00:00+02:00",
+        "homeCompetitor": {
+          "name": "האל סיטי",
+          "score": 2
+        },
+        "awayCompetitor": {
+          "name": "איפסוויץ'",
+          "score": 2
+        }
+      },
+      {
+        "id": 4742016,
+        "competitionId": 7,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T17:00:00+02:00",
+        "homeCompetitor": {
+          "name": "קובנטרי",
+          "score": 3
+        },
+        "awayCompetitor": {
+          "name": "סנדרלנד",
+          "score": 1
+        }
+      },
+      {
+        "id": 4742020,
+        "competitionId": 7,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T17:00:00+02:00",
+        "homeCompetitor": {
+          "name": "בורנמות׳",
+          "score": 2
+        },
+        "awayCompetitor": {
+          "name": "לידס יונייטד",
+          "score": 0
+        }
+      },
+      {
+        "id": 4820893,
+        "competitionId": 525,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T17:00:00+02:00",
+        "homeCompetitor": {
+          "name": "הפועל תל אביב (נוער)",
+          "score": 3
+        },
+        "awayCompetitor": {
+          "name": "עירוני קרית שמונה (נוער)",
+          "score": 0
+        }
+      },
+      {
+        "id": 4750803,
+        "competitionId": 11,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T17:15:00+02:00",
+        "homeCompetitor": {
+          "name": "ראיו ואיקנו",
+          "score": 3
+        },
+        "awayCompetitor": {
+          "name": "סלטה ויגו",
+          "score": 0
+        }
+      },
+      {
+        "id": 4739296,
+        "competitionId": 42,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T17:30:00+02:00",
+        "homeCompetitor": {
+          "name": "הפועל חיפה",
+          "score": 2
+        },
+        "awayCompetitor": {
+          "name": "הפועל פתח תקוה",
+          "score": 1
+        }
+      },
+      {
+        "id": 4739298,
+        "competitionId": 42,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T18:00:00+02:00",
+        "homeCompetitor": {
+          "name": "בני סכנין",
+          "score": 1
+        },
+        "awayCompetitor": {
+          "name": "עירוני טבריה",
+          "score": 1
+        }
+      },
+      {
+        "id": 4739301,
+        "competitionId": 42,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T19:30:00+02:00",
+        "homeCompetitor": {
+          "name": "מכבי נתניה",
+          "score": 1
+        },
+        "awayCompetitor": {
+          "name": "הפועל ירושלים",
+          "score": 1
+        }
+      },
+      {
+        "id": 4732643,
+        "competitionId": 17,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-10-31T21:45:00+02:00",
+        "homeCompetitor": {
+          "name": "מילאן",
+          "score": 3
+        },
+        "awayCompetitor": {
+          "name": "אינטר",
+          "score": 1
+        },
+        "winDescription": "דרבי דלה מדונינה"
+      }
+    ]
+  },
+  "2026-11-01": {
+    "games": [
+      {
+        "id": 4750806,
+        "competitionId": 11,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-11-01T15:00:00+02:00",
+        "homeCompetitor": {
+          "name": "חטאפה",
+          "score": 3
+        },
+        "awayCompetitor": {
+          "name": "סביליה",
+          "score": 1
+        }
+      },
+      {
+        "id": 4742014,
+        "competitionId": 7,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-11-01T18:30:00+02:00",
+        "homeCompetitor": {
+          "name": "ליברפול",
+          "score": 0
+        },
+        "awayCompetitor": {
+          "name": "ארסנל",
+          "score": 1
+        }
+      },
+      {
+        "id": 4750808,
+        "competitionId": 11,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-11-01T19:30:00+02:00",
+        "homeCompetitor": {
+          "name": "אלצ'ה",
+          "score": 0
+        },
+        "awayCompetitor": {
+          "name": "ולנסיה",
+          "score": 1
+        }
+      },
+      {
+        "id": 4739300,
+        "competitionId": 42,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-11-01T20:00:00+02:00",
+        "homeCompetitor": {
+          "name": "מכבי פתח תקוה",
+          "score": 2
+        },
+        "awayCompetitor": {
+          "name": "הפועל באר שבע",
+          "score": 5
+        }
+      },
+      {
+        "id": 4752263,
+        "competitionId": 7865,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-11-01T21:30:00+02:00",
+        "homeCompetitor": {
+          "name": "הרקולס",
+          "score": 2
+        },
+        "awayCompetitor": {
+          "name": "ראיו מחאדאהונדה",
+          "score": 0
+        }
+      },
+      {
+        "id": 4732646,
+        "competitionId": 17,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-11-01T21:45:00+02:00",
+        "homeCompetitor": {
+          "name": "יובנטוס",
+          "score": 2
+        },
+        "awayCompetitor": {
+          "name": "נאפולי",
+          "score": 0
+        }
+      },
+      {
+        "id": 4750811,
+        "competitionId": 11,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-11-01T22:00:00+02:00",
+        "homeCompetitor": {
+          "name": "אתלטיק בילבאו",
+          "score": 2
+        },
+        "awayCompetitor": {
+          "name": "ריאל סוסיאדד",
+          "score": 1
+        },
+        "winDescription": "הדרבי הבאסקי"
+      }
+    ]
+  },
+  "2026-11-02": {
+    "games": [
+      {
+        "id": 4739083,
+        "competitionId": 43,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-11-02T19:00:00+02:00",
+        "homeCompetitor": {
+          "name": "מכבי קביליו יפו",
+          "score": 0
+        },
+        "awayCompetitor": {
+          "name": "הפועל כפר סבא",
+          "score": 3
+        }
+      },
+      {
+        "id": 4739086,
+        "competitionId": 43,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-11-02T19:00:00+02:00",
+        "homeCompetitor": {
+          "name": "מ.ס. אשדוד",
+          "score": 3
+        },
+        "awayCompetitor": {
+          "name": "בני יהודה ת\"א",
+          "score": 1
+        }
+      },
+      {
+        "id": 4739299,
+        "competitionId": 42,
+        "statusGroup": 4,
+        "statusText": "הסתיים",
+        "shortStatusText": "הסתיים",
+        "gameTime": 90,
+        "startTime": "2026-11-02T20:30:00+02:00",
+        "homeCompetitor": {
+          "name": "הפועל תל אביב",
+          "score": 2
+        },
+        "awayCompetitor": {
+          "name": "מכבי חיפה",
+          "score": 1
+        }
+      }
+    ]
+  }
+}

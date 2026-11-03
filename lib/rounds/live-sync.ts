@@ -138,11 +138,13 @@ export function buildTelesportGameUpdate(
   if (source.status === "finished" && source.outcome) {
     if (scores365) {
       const outcomeConflict = scores365.result.outcome !== source.outcome;
+      // Settlement needs Telesport's own field score to agree as well; a
+      // finished row without one is never corroborated by outcome alone.
       const scoreConflict =
-        source.homeScore != null &&
-        source.awayScore != null &&
-        (scores365.result.homeScore !== source.homeScore ||
-          scores365.result.awayScore !== source.awayScore);
+        source.homeScore == null ||
+        source.awayScore == null ||
+        scores365.result.homeScore !== source.homeScore ||
+        scores365.result.awayScore !== source.awayScore;
       const corroboratedSource =
         `${settlementSource};365scores:event=${scores365.result.eventId}:${scores365.sourceVersion}`;
 
@@ -166,7 +168,9 @@ export function buildTelesportGameUpdate(
     source.status === "under_review"
   ) {
     update.pool_settlement_status = "under_review";
-    update.settlement_source = settlementSource;
+    update.settlement_source = source.reviewReason
+      ? `${settlementSource};review=${source.reviewReason}`
+      : settlementSource;
   }
 
   return update;
