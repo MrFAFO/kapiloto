@@ -1,6 +1,13 @@
 # Winner 16 round 264301 — swapped field scores and settlement repair (D-062)
 
-Status: fix on branch `fix/winner16-settlement-safety-v2`. It is not merged, not deployed, and nothing in production has been changed. Round 264301 is **not** repaired.
+Status update, 2026-11-03: PR #51 was merged as `fe8ca2de470393bd6ab9fe2b494a12c8fb5faaf2`. After review, the guarded correction `docs/operations/sql/winner16-264301-orientation-correction.sql` was executed and post-checked in production. A later independent read-only check, at 2026-11-03T20:31:34Z during pilot R4, found:
+- round 264301 is `settled`, with 16/16 games settled and 0 under review;
+- 0 fixture-score mismatches and 0 `kapiloto_eval_scores` rows;
+- round 264401 is `open`.
+
+The rest of this note describes the state before the repair.
+
+Original status: fix on branch `fix/winner16-settlement-safety-v2`. It is not merged, not deployed, and nothing in production has been changed. Round 264301 is **not** repaired.
 
 ## What production shows
 

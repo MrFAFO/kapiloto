@@ -1,6 +1,6 @@
 # Kapiloto V4 — Master Roadmap and Handoff
 
-Last verified operational snapshot: 2026-11-02
+Last verified operational snapshot: 2026-11-03
 
 This document is the fastest entry point for a new ChatGPT conversation, coding agent, reviewer, or human contributor. It does **not** replace the detailed architecture documents or the code. Its job is to explain the system, the current state, the dependency order, the next gates, and where the authoritative details live.
 
@@ -402,9 +402,10 @@ Interpretation:
   converted to zero or treated as an ingest failure.
 
 This closes the family/history-readiness evidence gate. It does **not** make
-M2B a GO by itself: the remaining production blocker is the deferred identity
-reconciliation for Sportmonks 52 AFC Bournemouth and 676 Sevilla, followed by
-the full 20/20 R7 checks after Winner round 264301 settles.
+M2B a GO by itself. The deferred identity reconciliation for Sportmonks 52 AFC
+Bournemouth and 676 Sevilla, and the full 20/20 R7 checks, were completed on
+2026-11-03 after Winner round 264301 settled. The other M2B gates under
+Gate 6 remain.
 
 ### Operational competition promotion already performed
 
@@ -420,7 +421,7 @@ Post-checks found no mapping conflicts/provider-ref conflicts.
 
 This was an operator data action, not a migration. A future documentation/reconciliation change may record the operational evidence without pretending the DB update was schema history.
 
-## 8. CURRENT BLOCKER — finish pilot identity reconciliation, then A2-B/M2B readiness
+## 8. CURRENT BLOCKER — A2-B/M2B readiness (pilot identity reconciliation complete 2026-11-03)
 
 Historical Match Ledger ingest is currently paused in production by D-057.
 
@@ -477,27 +478,41 @@ Production execution completed:
   Hebrew spellings, aliases and Sportmonks `manual_override` mappings with
   `mapping_confidence = NULL`;
 - R6: those 5 legacy + 13 new identities were attested separately, so
-  **18/20 pilot teams are now actively attested**;
+  18/20 pilot teams were attested on 2026-10-31. R4 below brought the total
+  to 20/20;
 - partial R7 passed: no identity conflicts, no folded canonical duplicates,
   no Sportmonks injectivity conflict, no provider-ref conflicts, 0 ingest runs,
   0 fixture mints and 0 Match Ledger observations;
 - V1/V2 ingest remains revoked and all D-057 guards remain enabled.
 
-R4 remains deliberately deferred for the two existing canonical teams:
-- Sportmonks 52 AFC Bournemouth -> `בורנמות'`;
-- Sportmonks 676 Sevilla -> `סביליה`.
+R4 was deferred until Winner round 264301 settled, because that round
+contained Bournemouth-Leeds and Getafe-Sevilla. It was completed on
+2026-11-03, once the round was settled (16/16 games, D-062 guarded
+correction):
+- Sportmonks 52 AFC Bournemouth -> existing `בורנמות'` and Sportmonks 676
+  Sevilla -> existing `סביליה`, each in its own locked transaction:
+  - a `manual_override` mapping with `mapping_confidence = NULL`;
+  - only the reviewed aliases;
+  - locked duplicate-audit hashes `97b46fbc…40a9` and `0ce76658…3ff9`;
+- each identity was attested separately (R6), version 1;
+- **full 20/20 R7 passed**:
+  - 5/5 competitions and 20/20 teams attested and agreeing with
+    `manual_override` mappings;
+  - one `attest` event per identity and no refresh/revoke;
+  - readiness and provider-ref conflicts V2 empty;
+  - no duplicate or injectivity violation;
+  - 0 Match Ledger observations, fixture mints and ingest runs.
 
-Reason: active Winner round 264301 contains Bournemouth-Leeds and
-Getafe-Sevilla. Adding the two mappings can legitimately trigger V3 current-
-round fixture mapping writes. The reviewed default is to finish R4 only after
-round 264301 settles, then run full 20/20 R7.
+The post-import duplicate audit after the next two natural precompute cycles
+and the next Toto round import is still pending.
 
-M2B remains NO-GO. PR #43 (D-060) is merged and its production migration is applied, so the "uncovered Match Ledger reads"
-gate is closed: attestation-aware V2 consumer reads, a
-conservative history window, and a Prediction Registry bound to the
-squad-state read each lineup forecast used. It does not change the identity
-blocker above. Winner round 264301 reconciliation (Bournemouth 52, Sevilla
-676, full 20/20 R7) remains a separate M2B blocker.
+M2B remains NO-GO. PR #43 (D-060) is merged and its production migration is
+applied, so the "uncovered Match Ledger reads" gate is closed:
+attestation-aware V2 consumer reads, a conservative history window, and a
+Prediction Registry bound to the squad-state read each lineup forecast used.
+The Winner round 264301 / Bournemouth 52 / Sevilla 676 / full 20/20 R7
+blocker is now closed as well. The remaining M2B gates are listed under
+Gate 6.
 
 ### Previously treated as trusted under A2-A columns: 5/20
 
@@ -524,6 +539,9 @@ blocker above. Winner round 264301 reconciliation (Bournemouth 52, Sevilla
 - 3543 — SC Freiburg
 - 4070 — Frosinone
 - 7790 — Lecce
+
+All 15 are now reconciled and attested: 13 through R5 (new canonical teams,
+2026-10-31) and 52/676 through R4 (existing canonical teams, 2026-11-03).
 
 The canonical `teams` table is intentionally not a complete world-football catalog. Many canonical names are Hebrew and were created by Toto/import flows.
 
@@ -619,8 +637,10 @@ Do not use the old global PASS as backfill approval.
 
 ### ACTIVE — Gate 5: reconcile pilot teams through the Stage 1 mechanism
 
-Status: 5/5 pilot competitions and 18/20 pilot teams are attested. R4 for
-Bournemouth/Sevilla is deferred until round 264301 settles.
+Status: 5/5 pilot competitions and **20/20 pilot teams are attested**. R4 for
+Bournemouth/Sevilla was completed on 2026-11-03 after round 264301 settled,
+and the full 20/20 R7 passed. Only the post-import duplicate audit after
+natural cycles remains.
 
 The completed reconciliation classified each missing provider team as one of:
 
@@ -642,9 +662,12 @@ re-reviewed, promoted to manual_override and attested; they were not
 grandfathered merely because they were confidence 1.
 
 Before Gate 5 is complete:
-- finish R4 for Sportmonks 52/676 after round 264301 settles;
-- attest both separately;
-- rerun full R7 and the post-import duplicate audit.
+- DONE (2026-11-03): R4 for Sportmonks 52/676 after round 264301 settled;
+- DONE (2026-11-03): both attested separately;
+- DONE (2026-11-03): full 20/20 R7;
+- after the next two natural precompute cycles and the next Toto round
+  import: rerun the duplicate/collision audit and the readiness/conflict
+  reports, and confirm no canonical duplicate appeared.
 
 ### Gate 5B — Supported Competition Registry for V4 launch (D-059)
 
@@ -697,13 +720,15 @@ V4 V1**.
 
 Current onboarding status:
 - Ligat Ha'al: **identity-complete 14/14**, registry still `validating`;
-- Premier League: **16/20 identity-complete**; Liverpool 8, Arsenal 19,
-  Bournemouth 52 and Ipswich 116 are deferred until Winner round 264301 is no
-  longer active;
+- Premier League: **17/20 identity-complete**. Bournemouth 52 was completed
+  by pilot R4 on 2026-11-03. Liverpool 8, Arsenal 19 and Ipswich 116 remain
+  deferred Class-B mappings: round 264301 has settled, but they still need
+  their own reviewed operation;
 - Bundesliga: **identity-complete 18/18**, registry still `validating`;
-- La Liga: **14/20 identity-complete**; Getafe 106, Rayo Vallecano 377,
-  Real Sociedad 594, Sevilla 676, Elche 1099 and Athletic Club 13258 are
-  deferred while Winner round 264301 remains active/under_review;
+- La Liga: **15/20 identity-complete**. Sevilla 676 was completed by pilot
+  R4 on 2026-11-03. Getafe 106, Rayo Vallecano 377, Real Sociedad 594,
+  Elche 1099 and Athletic Club 13258 remain deferred Class-B mappings: round
+  264301 has settled, but they still need their own reviewed operation;
 - Serie A: incomplete.
 
 Execution records:
@@ -760,9 +785,12 @@ What still blocks M2B after PR #43:
 - DONE: PR #43 migration reviewed and applied to production, with
   post-checks: grants, `private` not exposed, column backfilled read-v1,
   0 snapshots changed;
-- Winner round 264301 settles, then Sportmonks 52 Bournemouth and 676
-  Sevilla reconciliation and the full 20/20 R7 (separate blocker);
-- entity/reconciliation reports clean for the pilot scope;
+- DONE (2026-11-03): Winner round 264301 settled (D-062 guarded correction,
+  16/16 games), then Sportmonks 52 Bournemouth and 676 Sevilla were
+  reconciled (R4/R6) and the full 20/20 R7 passed;
+- entity/reconciliation reports clean for the pilot scope: clean immediately
+  after R4. The rerun after the next two natural precompute cycles and the
+  next Toto round import is still pending;
 - A2-B (PR #19) amended and re-run;
 - DONE: the recovery runbook is implemented, independently reviewed by Claude and Fable, and merged in PR #47 (`7d41c43045ced8f582393e831e176eba2757cbeb`):
   - the hardened M2C body (both ingest RPCs, every non-operator role) with a
@@ -942,16 +970,20 @@ As of the snapshot date:
 
 - the D-059 Supported Competition Registry is not fully complete yet; Ligat
   Ha'al is identity-complete 14/14, Bundesliga is identity-complete 18/18,
-  Premier League is 16/20, La Liga is 14/20 and Serie A is 19/20. All 92
-  launch-universe clubs now exist canonically; the only 11 remaining identity
-  gaps are deferred Class-B provider mappings tied to Winner round 264301.
+  Premier League is 17/20, La Liga is 15/20 and Serie A is 19/20. All 92
+  launch-universe clubs now exist canonically. The only 9 remaining identity
+  gaps are deferred Class-B provider mappings that were held back for Winner
+  round 264301, which is now settled: Liverpool 8, Arsenal 19, Ipswich 116,
+  Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Elche 1099, Athletic
+  Club 13258 and Juventus 625. Each still needs its own reviewed operation.
   All five leagues still require the applicable provider-family/history gates
   before `supported`;
 - no broad Sportmonks historical backfill;
 - no real A2-B Match Ledger pilot observation has been persisted yet; historical provider ingest stays paused: M2A is applied in production, V1 and V2 ingest remain non-executable by `service_role`, and only the separate M2B migration may grant V2;
-- pilot identity reconciliation is **not fully complete**: 18/20 pilot teams
-  and 5/5 competitions are attested, while Sportmonks 52 Bournemouth and 676
-  Sevilla are intentionally deferred until round 264301 settles;
+- the pilot identity post-import duplicate audit after natural precompute and
+  Toto cycles has not run yet. The pilot identities themselves are complete:
+  20/20 teams and 5/5 competitions are attested, and the full R7 passed on
+  2026-11-03;
 - PR #19 is not merged;
 - PR #43 (D-060, attestation-aware consumer reads and the squad-state read
   binding) is merged as `a531187794681469d203ade3e1a01b78b92625cc` and its production migration is applied; the
@@ -1047,7 +1079,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Match Ledger still has 0 observations and V1/V2 ingest remains disabled. Ligat Ha'al is identity-complete 14/14. Bundesliga is identity-complete 18/18. Premier League remains 16/20, La Liga 14/20 and Serie A 19/20 from frozen current-season Sportmonks roster captures. All 92 launch-universe clubs now exist canonically. Round 264301 remains under_review, so the only remaining identity work is the 11 deferred Class-B mappings/attestations: Liverpool 8, Arsenal 19, Bournemouth 52, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Sevilla 676, Elche 1099, Athletic Club 13258 and Juventus 625. Once round 264301 settles, finish those 11 identities and rerun the full five-league/pilot readiness audit. After identity readiness, validate provider-family/history gates, amend/re-run A2-B and close the remaining M2B gates before the first real Match Ledger ingest. PR #43 (D-060) adds the attestation-aware consumer reads and binds lineup snapshots to their squad-state read; it is merged and applied to production, and it does not lift any other M2B gate.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Match Ledger still has 0 observations and V1/V2 ingest remains disabled. Ligat Ha'al is identity-complete 14/14. Bundesliga is identity-complete 18/18. Premier League is 17/20, La Liga 15/20 and Serie A 19/20 from frozen current-season Sportmonks roster captures. All 92 launch-universe clubs now exist canonically. Round 264301 is settled (D-062 guarded correction). Pilot R4 for Bournemouth 52 and Sevilla 676 and the full 20/20 pilot R7 passed on 2026-11-03. The post-import duplicate audit after the next two natural precompute cycles and the next Toto import is still pending. The only remaining identity work is the 9 deferred Class-B mappings/attestations, each in its own reviewed operation: Liverpool 8, Arsenal 19, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Elche 1099, Athletic Club 13258 and Juventus 625. After them, rerun the full five-league readiness audit. After identity readiness, validate provider-family/history gates, amend/re-run A2-B and close the remaining M2B gates before the first real Match Ledger ingest. PR #43 (D-060) adds the attestation-aware consumer reads and binds lineup snapshots to their squad-state read; it is merged and applied to production, and it does not lift any other M2B gate.
 
 ## 15. Updating this file
 
