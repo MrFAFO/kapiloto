@@ -43,14 +43,15 @@ export const SPORTMONKS_A2B_ENTITLEMENT_DETAILS_VERSION = "kapiloto-sportmonks-a
 
 /**
  * Reviewed D-059 launch competitions. `expectedCountry` is the Sportmonks
- * country name observed in the 2026-11-02 readiness run (41421166450).
- * `expectedCountryIso2` is the reviewed ISO2 expectation carried over from
- * PR #30; it has not yet been observed on a real payload, so a mismatch fails
- * closed and is resolved only by a reviewed change backed by archived raw
- * evidence, never by loosening the check.
+ * country name observed in provider evidence. `expectedCountryIso2` is the
+ * reviewed provider-native two-letter country code from archived Sportmonks
+ * payloads; it is not assumed to be ISO 3166 (Sportmonks uses EN for
+ * England/country 462). A mismatch still fails closed and is resolved only by
+ * a reviewed change backed by archived raw evidence, never by loosening the
+ * check.
  */
 export const SPORTMONKS_A2B_TARGET_LEAGUES = [
-  { providerLeagueId: "8", expectedName: "Premier League", expectedCountry: "England", expectedCountryIso2: "GB", expectedType: "league", expectedSubType: "domestic" },
+  { providerLeagueId: "8", expectedName: "Premier League", expectedCountry: "England", expectedCountryIso2: "EN", expectedType: "league", expectedSubType: "domestic" },
   { providerLeagueId: "82", expectedName: "Bundesliga", expectedCountry: "Germany", expectedCountryIso2: "DE", expectedType: "league", expectedSubType: "domestic" },
   { providerLeagueId: "564", expectedName: "La Liga", expectedCountry: "Spain", expectedCountryIso2: "ES", expectedType: "league", expectedSubType: "domestic" },
   { providerLeagueId: "384", expectedName: "Serie A", expectedCountry: "Italy", expectedCountryIso2: "IT", expectedType: "league", expectedSubType: "domestic" },
