@@ -1054,14 +1054,23 @@ historical trust rules. Columns:
 
 ## A2-B provider pilot (read only)
 
-Status: **implemented, not run, not complete.** Draft PR on branch
+Status: **implemented, first real dispatch safely blocked, re-run pending, not complete.** Draft PR on branch
 `feat/v4-provider-ingest-a2b-pilot-v3`. It supersedes PR #30 and PR #19 and is
 ported onto the current V4 mainline. An independent adversarial review of
 head `76ab92a` (2026-11-04) passed the real-dispatch gate; the merge gate was
 not evaluated. Its credential-guard, fixture-identity, pagination-metadata
 and score-semantics findings are fixed on the branch (described below); its
-other findings stay open. A real operator dispatch is still open. A2-B is not
-complete and M2B stays NO-GO.
+other findings stay open.
+
+Real workflow run `41914842471` on head `379163b` reached Sportmonks and
+failed closed only on Premier League competition identity: the reviewed
+expectation was `GB`, while both the entitlement and league-detail payloads
+reported country 462 / England / `EN`. Bundesliga, La Liga, Serie A and Ligat
+ha'Al identities passed; provider-wide semantics passed across 24 sampled
+fixtures. The uploaded artifact contained zero `api_token` occurrences.
+The archived payload therefore supports a reviewed correction of the
+provider-native England code to `EN`; a real re-run is still required.
+A2-B is not complete and M2B stays NO-GO.
 
 Code:
 - `lib/kapiloto-v4/sportmonks-pilot.ts`: pure audits, summaries, report;
@@ -1114,9 +1123,12 @@ The pilot produces three deliberately separate evidence classes.
    - every listed season must carry the league's id. A malformed season row
      fails; it is never skipped.
 
-   The ISO2 expectations (GB, DE, ES, IT, IL) come from PR #30 and have not
-   yet been seen on a real payload. A mismatch fails closed. It is changed only
-   by a reviewed edit backed by the archived raw response.
+   These are Sportmonks provider-native two-letter country codes, not an
+   independent ISO-3166 authority. Real run `41914842471` observed
+   `EN, DE, ES, IT, IL`: in particular Sportmonks country 462 / England uses
+   `EN`, while the earlier PR #30 expectation `GB` was stale. A mismatch
+   still fails closed and is changed only by a reviewed edit backed by the
+   archived raw response.
 2. **Provider-wide field semantics**, pooled over every sampled fixture
    because they describe what a Sportmonks field means:
    - `meta.location` discriminates exactly one home and one away participant
