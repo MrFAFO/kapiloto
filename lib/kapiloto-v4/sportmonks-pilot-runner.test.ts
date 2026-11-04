@@ -16,7 +16,7 @@ import { runSportmonksA2BPilotCli, SPORTMONKS_A2B_ENTITLEMENT_PAGE_CAP, type Spo
 
 const TOKEN = "RehearsalToken0123456789abcdefXYZ";
 const COUNTRY: Record<string, { name: string; iso2: string }> = {
-  "8": { name: "England", iso2: "GB" },
+  "8": { name: "England", iso2: "EN" },
   "82": { name: "Germany", iso2: "DE" },
   "564": { name: "Spain", iso2: "ES" },
   "384": { name: "Italy", iso2: "IT" },
