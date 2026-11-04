@@ -21,6 +21,7 @@ import {
   parseSportmonksA2BEntitlementRow,
   parseSportmonksA2BLeagueSeasons,
   parseSportmonksA2BPilotArgs,
+  readSportmonksA2BListPage,
   sanitizeSportmonksEndpoint,
   selectSportmonksA2BSeasons,
   selectSportmonksFinishedSeasonFixtures,
@@ -613,6 +614,48 @@ test("pagination caps fail closed when the provider says more pages exist", () =
   assert.throws(() => assertSportmonksA2BSinglePage("season schedule", { has_more: true }), /refusing a partial read/);
   assert.doesNotThrow(() => assertSportmonksA2BSinglePage("season schedule", undefined));
   assert.doesNotThrow(() => assertSportmonksA2BSinglePage("season schedule", { has_more: false }));
+});
+
+test("regression (review M-3): a list page without complete pagination metadata is never read as the last page", () => {
+  const rows = Array.from({ length: 50 }, (_, index) => ({ id: index + 1 }));
+  const page = (pagination: unknown, data: unknown = rows) => ({ data, pagination });
+  const read = (body: unknown, pageNo = 1, cap = 100) => readSportmonksA2BListPage({ label: "league entitlement", page: pageNo, cap, body });
+
+  assert.deepEqual(read(page({ current_page: 1, has_more: true })), { rows, hasMore: true });
+  assert.deepEqual(read(page({ current_page: 2, has_more: false }, rows.slice(0, 3)), 2), { rows: rows.slice(0, 3), hasMore: false });
+  // A last page that is exactly full is legitimate.
+  assert.deepEqual(read(page({ current_page: 1, has_more: false })), { rows, hasMore: false });
+
+  const refusals: Array<[string, unknown, RegExp]> = [
+    ["a full page with no pagination object", { data: rows }, /has no pagination metadata/],
+    ["pagination null", page(null), /has no pagination metadata/],
+    ["pagination as a string", page("1"), /has no pagination metadata/],
+    ["has_more missing", page({ current_page: 1 }), /non-boolean or missing pagination\.has_more/],
+    ["has_more as a string", page({ current_page: 1, has_more: "false" }), /non-boolean or missing pagination\.has_more/],
+    ["has_more as a number", page({ current_page: 1, has_more: 0 }), /non-boolean or missing pagination\.has_more/],
+    ["current_page missing", page({ has_more: false }), /reported current_page undefined/],
+    ["current_page as a string", page({ current_page: "1", has_more: false }), /reported current_page string/],
+    ["the provider ignored the page parameter", page({ current_page: 1, has_more: true }), /reported current_page 1/],
+    ["data missing", { pagination: { current_page: 1, has_more: false } }, /has no data array/],
+    ["data as an object", page({ current_page: 1, has_more: false }, { 1: rows[0] }), /has no data array/],
+    ["an empty page that announces more", page({ current_page: 1, has_more: true }, []), /is empty while has_more=true/],
+    ["a non-object body", "[]", /has no data array/],
+  ];
+  for (const [name, body, pattern] of refusals) {
+    const pageNo = name === "the provider ignored the page parameter" ? 2 : 1;
+    assert.throws(() => read(body, pageNo), (error: unknown) => error instanceof Error && pattern.test(error.message) && /refusing a partial snapshot/.test(error.message), name);
+  }
+  // The hard cap still applies on top.
+  assert.throws(() => read(page({ current_page: 100, has_more: true }), 100), /reached hard cap 100 while has_more=true/);
+});
+
+test("regression (review M-3): malformed pagination on a single-document read is refused, absent pagination is fine", () => {
+  for (const pagination of [undefined, null, {}, { has_more: false }, { count: 1, has_more: false }]) {
+    assert.doesNotThrow(() => assertSportmonksA2BSinglePage("season schedule", pagination), JSON.stringify(pagination));
+  }
+  for (const pagination of [{ has_more: "true" }, { has_more: 1 }, { has_more: null }, "more", 1, [{ has_more: true }]]) {
+    assert.throws(() => assertSportmonksA2BSinglePage("season schedule", pagination), /malformed pagination metadata/, JSON.stringify(pagination));
+  }
 });
 
 test("sanitized endpoints never carry the API token", () => {

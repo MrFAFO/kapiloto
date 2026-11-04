@@ -1058,8 +1058,9 @@ Status: **implemented, not run, not complete.** Draft PR on branch
 `feat/v4-provider-ingest-a2b-pilot-v3`. It supersedes PR #30 and PR #19 and is
 ported onto the current V4 mainline. An independent adversarial review of
 head `76ab92a` (2026-11-04) passed the real-dispatch gate; the merge gate was
-not evaluated. Its credential-guard and fixture-identity findings are fixed on
-the branch (described below); its other findings stay open. A real operator
+not evaluated. Its credential-guard, fixture-identity and pagination-metadata
+findings are fixed on the branch (described below); its other findings stay
+open. A real operator
 dispatch is still open. A2-B is not complete and M2B stays NO-GO.
 
 Code:
@@ -1215,9 +1216,16 @@ rows: country, ISO2, type, sub_type and active.
 Pagination rules:
 - Entitlement pagination fails closed when the hard cap is reached while
   `has_more = true`.
+- Every entitlement page must carry a `data` array and a `pagination` object
+  with a boolean `has_more` and `current_page` equal to the requested page.
+  Missing or malformed metadata refuses the snapshot; it is never read as the
+  last page. A provider that ignores the `page` parameter is caught by
+  `current_page`, and an empty page that still says `has_more = true` is
+  refused at once.
 - A repeated league id whose details differ refuses the snapshot.
 - League detail, season schedule and fixture detail responses must not
-  announce more pages.
+  announce more pages. They normally carry no pagination; present but
+  malformed metadata (not an object, or a non-boolean `has_more`) is refused.
 
 ### What the report always says
 

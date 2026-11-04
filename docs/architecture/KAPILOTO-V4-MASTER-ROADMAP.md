@@ -281,8 +281,9 @@ provider pilot".
 - It is not merged.
 - Its independent adversarial review of head `76ab92a` (2026-11-04) passed
   the real-dispatch gate; the merge gate was not evaluated. The review's
-  credential-guard and fixture-identity findings were then fixed on the branch
-  by the reviewer, so that fix diff has had no separate review. The other
+  credential-guard, fixture-identity and pagination-metadata findings were
+  then fixed on the branch by the reviewer, so those fix diffs have had no
+  separate review. The other
   findings stay open for the merge review.
 - It has not been dispatched against real Sportmonks.
 
@@ -649,8 +650,8 @@ tested; the runbook rehearsal before M2B covers them.
 Status: **implemented on the v3 draft PR, not done.**
 - It covers every item below.
 - The independent adversarial review of `76ab92a` passed the real-dispatch
-  gate (2026-11-04); its credential-guard and fixture-identity findings are
-  fixed on the branch.
+  gate (2026-11-04); its credential-guard, fixture-identity and
+  pagination-metadata findings are fixed on the branch.
 - A real read-only dispatch is pending.
 
 The dispatch must not run before that review. Its report always says

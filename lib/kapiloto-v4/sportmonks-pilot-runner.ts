@@ -26,7 +26,6 @@ import {
   SportmonksLedgerParseError,
 } from "./sportmonks-ledger";
 import {
-  assertSportmonksA2BPaginationComplete,
   assertSportmonksA2BSinglePage,
   auditSportmonksA2BCapture,
   auditSportmonksA2BLeagueIdentity,
@@ -39,6 +38,7 @@ import {
   parseSportmonksA2BEntitlementRow,
   parseSportmonksA2BLeagueSeasons,
   parseSportmonksA2BPilotArgs,
+  readSportmonksA2BListPage,
   sanitizeSportmonksEndpoint,
   selectSportmonksA2BSeasons,
   selectSportmonksFinishedSeasonFixtures,
@@ -153,13 +153,17 @@ async function loadEntitlement(reader: SportmonksReader): Promise<{ rows: Sportm
       per_page: PER_PAGE,
     });
     pageHashes.push(response.hash);
-    for (const raw of Array.isArray(response.body.data) ? response.body.data : []) {
+    const listed = readSportmonksA2BListPage({
+      label: "league entitlement",
+      page,
+      cap: ENTITLEMENT_PAGE_CAP,
+      body: response.body,
+    });
+    for (const raw of listed.rows) {
       const row = parseSportmonksA2BEntitlementRow(raw);
       if (row) rows.push(row);
     }
-    const hasMore = response.body.pagination?.has_more === true;
-    assertSportmonksA2BPaginationComplete({ label: "league entitlement", page, cap: ENTITLEMENT_PAGE_CAP, hasMore });
-    if (!hasMore) return { rows: mergeSportmonksA2BEntitlementRows(rows), pageHashes };
+    if (!listed.hasMore) return { rows: mergeSportmonksA2BEntitlementRows(rows), pageHashes };
   }
   throw new Error("Entitlement pagination terminated unexpectedly.");
 }

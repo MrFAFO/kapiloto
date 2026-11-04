@@ -325,11 +325,49 @@ export function assertSportmonksA2BPaginationComplete(input: {
 }
 
 /**
+ * One page of an exhaustive list read (the league entitlement). The page must
+ * carry a data array and pagination metadata that names this page and says
+ * whether more pages follow. Missing or malformed metadata refuses the
+ * snapshot instead of being read as the last page, a provider that ignores
+ * the page parameter is caught by current_page, and an empty page that
+ * announces more is refused at once.
+ */
+export function readSportmonksA2BListPage(input: {
+  label: string;
+  page: number;
+  cap: number;
+  body: unknown;
+}): { rows: unknown[]; hasMore: boolean } {
+  const refuse = (why: string): never => {
+    throw new Error(`${input.label} page ${input.page} ${why}; refusing a partial snapshot`);
+  };
+  const body = isRecord(input.body) ? input.body : null;
+  if (!body || !Array.isArray(body.data)) return refuse("has no data array");
+  const pagination = body.pagination;
+  if (!isRecord(pagination)) return refuse("has no pagination metadata");
+  if (typeof pagination.has_more !== "boolean") return refuse("has a non-boolean or missing pagination.has_more");
+  if (pagination.current_page !== input.page) {
+    const observed = typeof pagination.current_page === "number" ? String(pagination.current_page) : typeof pagination.current_page;
+    return refuse(`reported current_page ${observed}`);
+  }
+  if (pagination.has_more && body.data.length === 0) return refuse("is empty while has_more=true");
+  assertSportmonksA2BPaginationComplete({ label: input.label, page: input.page, cap: input.cap, hasMore: pagination.has_more });
+  return { rows: body.data, hasMore: pagination.has_more };
+}
+
+/**
  * A response read as one complete document (league detail, season schedule,
- * fixture detail) must not announce more pages.
+ * fixture detail) must not announce more pages. These endpoints normally
+ * carry no pagination at all; metadata that is present but malformed (not an
+ * object, or a has_more that is not a boolean) is refused rather than read as
+ * "no more pages".
  */
 export function assertSportmonksA2BSinglePage(label: string, pagination: unknown): void {
-  if (isRecord(pagination) && pagination.has_more === true) {
+  if (pagination === undefined || pagination === null) return;
+  if (!isRecord(pagination) || (pagination.has_more !== undefined && typeof pagination.has_more !== "boolean")) {
+    throw new Error(`${label} carried malformed pagination metadata; refusing a partial read`);
+  }
+  if (pagination.has_more === true) {
     throw new Error(`${label} unexpectedly reported has_more=true; refusing a partial read`);
   }
 }

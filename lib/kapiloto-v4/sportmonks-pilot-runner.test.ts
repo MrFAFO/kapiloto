@@ -170,6 +170,8 @@ function sportmonks(
     failFixture?: string;
     /** Requested fixture id -> the fixture whose detail is served instead. */
     serveFixtureAs?: Record<string, string>;
+    /** Replaces the entitlement page's pagination object (undefined omits it). */
+    entitlementPagination?: (page: number, standard: Record<string, unknown>) => unknown;
   } = {},
 ): SportmonksA2BFetch {
   return async (url) => {
@@ -193,7 +195,8 @@ function sportmonks(
         : options.echoEscapedTokenInNextPage
           ? `https://api.sportmonks.com/v3/football/leagues?api_token=__ESCAPED_TOKEN__&page=${page + 1}`
           : `https://api.sportmonks.com/v3/football/leagues?page=${page + 1}`;
-      return json({ data, pagination: { count: data.length, per_page: 50, current_page: page, next_page: hasMore ? nextPage : null, has_more: hasMore } });
+      const pagination = { count: data.length, per_page: 50, current_page: page, next_page: hasMore ? nextPage : null, has_more: hasMore };
+      return json({ data, pagination: options.entitlementPagination ? options.entitlementPagination(page, pagination) : pagination });
     }
     let match = /^\/leagues\/(\d+)$/.exec(route);
     if (match) {
@@ -397,6 +400,37 @@ test("entitlement pagination that never ends refuses a partial snapshot", async 
     assert.equal(calls.urls.length, SPORTMONKS_A2B_ENTITLEMENT_PAGE_CAP);
     assert.match(run.stderr, /refusing a partial snapshot/);
     await assertNoToken(run);
+  } finally {
+    await run.cleanup();
+  }
+});
+
+test("regression (review M-3): an entitlement page without pagination metadata is refused, not read as the last page", async () => {
+  const calls: Calls = { urls: [] };
+  const run = await runIn([], sportmonks(world(), calls, { entitlementPagination: () => undefined }));
+  try {
+    assert.equal(run.code, 1);
+    assert.equal(calls.urls.length, 1);
+    assert.match(run.stderr, /league entitlement page 1 has no pagination metadata; refusing a partial snapshot/);
+    await assertNoToken(run);
+    // The refused page is still archived as evidence; no snapshot or report is written.
+    assert.equal((await readdir(path.join(run.out, "raw"))).length, 1);
+    const written = await readdir(run.out);
+    assert.equal(written.includes("entitlement.json"), false);
+    assert.equal(written.includes("pilot-report.json"), false);
+  } finally {
+    await run.cleanup();
+  }
+});
+
+test("regression (review M-3): a provider that ignores the page parameter is caught by current_page", async () => {
+  const calls: Calls = { urls: [] };
+  const run = await runIn([], sportmonks(world(), calls, { entitlementPagination: (_page, standard) => ({ ...standard, current_page: 1 }) }));
+  try {
+    assert.equal(run.code, 1);
+    assert.equal(calls.urls.length, 2);
+    assert.match(run.stderr, /league entitlement page 2 reported current_page 1; refusing a partial snapshot/);
+    assert.equal((await readdir(run.out)).includes("pilot-report.json"), false);
   } finally {
     await run.cleanup();
   }
