@@ -285,7 +285,14 @@ provider pilot".
   findings were then fixed on the branch by the reviewer, so those fix diffs
   have had no separate review. The other findings stay open for the merge
   review.
-- It has not been dispatched against real Sportmonks.
+- First real dispatch `41914842471` ran on 2026-11-04 from head
+  `379163b`. It failed closed only on Premier League country code:
+  archived entitlement and detail payloads both reported England/country 462
+  as `EN`, while the reviewed target still expected `GB`. The other four
+  launch-league identities passed and provider-wide semantics passed over 24
+  sampled fixtures. The artifact scan found zero `api_token` occurrences.
+- The branch now corrects the provider-native England code to `EN` and adds a
+  regression that rejects `GB`. A real re-run is pending.
 
 A2-B is therefore **not complete**.
 
