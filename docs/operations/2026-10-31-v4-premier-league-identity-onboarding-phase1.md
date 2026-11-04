@@ -188,6 +188,14 @@ Remaining only:
 
 Update 2026-11-03: AFC Bournemouth 52 was mapped and attested by pilot R4 after round 264301 settled. See `docs/operations/2026-10-31-v4-pilot-identity-reconciliation-execution.md` §8. The Premier League is now 17/20. Liverpool 8, Arsenal 19 and Ipswich Town 116 remain.
 
+Update 2026-11-04: Liverpool 8, Arsenal 19 and Ipswich Town 116 were mapped and attested. Each got:
+- its own locked R4-pattern transaction;
+- a `manual_override` mapping with confidence `NULL`;
+- only its exact English Sportmonks alias;
+- a separate version-1 attestation.
+
+None of them is in open round 264401. The post-check reads 20/20 canonical, 20/20 Sportmonks mapped, 20/20 `manual_override` and 20/20 actively attested, with readiness empty. See `docs/operations/2026-11-04-v4-class-b-deferred-identities-execution.md`.
+
 Global checks after phase 1:
 
 - blocking Sportmonks identity issues: **0**
@@ -203,7 +211,7 @@ Global checks after phase 1:
 
 ## 7. Status
 
-Premier League identity onboarding is **16/20 complete**.
+Premier League identity onboarding is **20/20 complete** (2026-11-04). Phase 1 ended at 16/20. Bournemouth followed on 2026-11-03, and Liverpool, Arsenal and Ipswich on 2026-11-04 (§6 updates). The plan below was carried out as written.
 
 The four deferred Class-B mappings must be revisited only after Winner 16 round
 `264301` is no longer active. Their provider IDs are already frozen by the

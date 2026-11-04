@@ -401,6 +401,15 @@ Recommended order:
 
 Update 2026-11-03: round 264301 has settled. Pilot R4 completed Bournemouth 52 and Sevilla 676, so items 2, 3 and 5 are now Premier League 17/20 and La Liga 15/20. The deferred Class-B set in item 7 is down to 9: Liverpool 8, Arsenal 19, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Elche 1099, Athletic Club 13258 and Juventus 625. See `docs/operations/2026-10-31-v4-pilot-identity-reconciliation-execution.md` §8.
 
+Update 2026-11-04: seven of the nine were completed, each in its own locked mapping transaction followed by a separate attestation: Liverpool 8, Arsenal 19, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594 and Juventus 625. Launch-league identity status:
+- Premier League 20/20;
+- Bundesliga 18/18;
+- Ligat Ha'al 14/14;
+- La Liga 18/20;
+- Serie A 20/20.
+
+The only remaining identities are Elche 1099 and Athletic Club 13258. Both are deferred because they play in open Winner round 264401. See `docs/operations/2026-11-04-v4-class-b-deferred-identities-execution.md`.
+
 This order gives a small first complete league and repeatedly exercises all
 three onboarding classes before the larger European catalogs are finished.
 
