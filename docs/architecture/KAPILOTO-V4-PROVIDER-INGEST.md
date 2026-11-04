@@ -1056,9 +1056,11 @@ historical trust rules. Columns:
 
 Status: **implemented, not run, not complete.** Draft PR on branch
 `feat/v4-provider-ingest-a2b-pilot-v3`. It supersedes PR #30 and PR #19 and is
-ported onto the current V4 mainline. An independent adversarial review and a
-real operator dispatch are separate gates that are still open. A2-B is not
-complete and M2B stays NO-GO.
+ported onto the current V4 mainline. An independent adversarial review of
+head `76ab92a` (2026-11-04) passed the real-dispatch gate; the merge gate was
+not evaluated. Its credential-guard and fixture-identity findings are fixed on
+the branch (described below); its other findings stay open. A real operator
+dispatch is still open. A2-B is not complete and M2B stays NO-GO.
 
 Code:
 - `lib/kapiloto-v4/sportmonks-pilot.ts`: pure audits, summaries, report;
@@ -1162,8 +1164,14 @@ Finished fixtures come from `/schedules/seasons/{id}`, the endpoint the
 `/fixtures/between` discovery are not used. The finished state is read from
 `state.developer_name`, or else from `state_id` 5/7/8.
 
+Each fixture detail (`/fixtures/{id}`) must carry the requested fixture id
+and the season's league id and season id. Any other fixture is
+`fixture_identity_mismatch`: it is not audited, it is never counted under the
+requested id, and its season blocks. A season profile also refuses an audit
+whose fixture id differs from its sample, and blocks a fixture sampled twice.
+
 A season is `sample_clean` only when:
-- it has the requested fixture count;
+- it has the requested fixture count of distinct fixtures;
 - it has no parse failure and no contradiction;
 - participant and score semantics pass on every fixture.
 
@@ -1179,12 +1187,21 @@ A season is `sample_clean` only when:
 - **Capture hash.** A capture's `raw_payload_sha256` therefore has a retained
   byte preimage.
 - **Credential guard.** Sportmonks returns `pagination.next_page` as a URL,
-  and the token travels as the `api_token` query parameter. A body that
-  contains the token (raw or percent-encoded) is never archived: its bytes
-  cannot be redacted without breaking the hash, so the run aborts.
-- **Final scrub.** Before upload, every output file is scanned. If one
-  contains the token, the output directory, which was verified empty at
-  start, is emptied. Error output is redacted.
+  and the token travels as the `api_token` query parameter.
+  - Only an alphanumeric token (`A-Z`, `a-z`, `0-9`, at least 16 characters)
+    is accepted, checked before any request. For such a token the literal,
+    percent-encoded, `URLSearchParams` form-encoded and JSON-escaped forms
+    are one string, so no serialization of the request can carry it past the
+    guard.
+  - A body that contains the token, literally or behind JSON `\uXXXX` / `\/`
+    escapes or percent escapes (either hex case, repeated), is never
+    archived: its bytes cannot be redacted without breaking the hash, so the
+    run aborts.
+  - Redirects are refused (`redirect: "error"`), so the query-string token
+    is never re-sent to another location.
+- **Final scrub.** Before upload, every output file is scanned with the same
+  escape-aware check. If one contains the token, the output directory, which
+  was verified empty at start, is emptied. Error output is redacted.
 - **Output directory.** `--out` must be empty or absent, so evidence from two
   runs never mixes.
 

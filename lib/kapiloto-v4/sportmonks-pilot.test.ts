@@ -438,6 +438,36 @@ test("a season profile refuses another season's or league's fixture", () => {
   assert.equal(failedDetail.auditedFixtures, 0);
 });
 
+test("regression (review M-2): a season profile refuses another fixture's audit and never counts a fixture twice", () => {
+  // The sample asked for 9002 but carries the audit of 9001.
+  assert.throws(
+    () =>
+      buildSportmonksA2BSeasonProfile({
+        providerLeagueId: "8",
+        providerSeasonId: "28083",
+        seasonName: null,
+        sampleReasons: ["most_recent"],
+        requestedFixtures: 1,
+        results: [{ providerFixtureId: "9002", parseStatus: "pass", audit: audit() }],
+      }),
+    /sample 9002 carries the audit of fixture 9001/,
+  );
+  // The same fixture twice fills a two-fixture request only on paper.
+  const twice = buildSportmonksA2BSeasonProfile({
+    providerLeagueId: "8",
+    providerSeasonId: "28083",
+    seasonName: null,
+    sampleReasons: ["most_recent"],
+    requestedFixtures: 2,
+    results: [
+      { providerFixtureId: "9001", parseStatus: "pass", audit: audit() },
+      { providerFixtureId: "9001", parseStatus: "pass", audit: audit() },
+    ],
+  });
+  assert.equal(twice.seasonSampleStatus, "blocked");
+  assert.ok(twice.blockers.includes("fixture(s) sampled more than once: 9001"), twice.blockers.join("; "));
+});
+
 // ---------------------------------------------------------------------------
 // Competition identity
 // ---------------------------------------------------------------------------
@@ -595,16 +625,81 @@ test("sanitized endpoints never carry the API token", () => {
   assert.ok(!sanitized.includes(TOKEN));
 });
 
-test("the credential guard detects raw and percent-encoded tokens and refuses weak tokens", () => {
+const jsonEscapeAll = (text: string) => [...text].map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
+const percentEncodeAll = (text: string, upper: boolean) =>
+  [...text].map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, "0")[upper ? "toUpperCase" : "toLowerCase"]()}`).join("");
+
+test("the credential guard detects the literal token and refuses weak tokens", () => {
   const guard = createSportmonksA2BCredentialGuard(TOKEN);
   assert.equal(guard.contains(`{"next_page":"https://x/?api_token=${TOKEN}&page=2"}`), true);
   assert.equal(guard.contains(new TextEncoder().encode(`x${TOKEN}x`)), true);
   assert.equal(guard.contains("{}"), false);
   assert.equal(guard.redact(`a ${TOKEN} b ${TOKEN}`), "a [REDACTED] b [REDACTED]");
-  const special = "abc/def+ghi=jkl0123456";
-  assert.equal(createSportmonksA2BCredentialGuard(special).contains(`?api_token=${encodeURIComponent(special)}`), true);
   assert.throws(() => createSportmonksA2BCredentialGuard("short"), /at least 16/);
   assert.throws(() => createSportmonksA2BCredentialGuard("has whitespace 0123456789"), /without whitespace/);
+});
+
+test("regression (review M-1): only alphanumeric tokens are guarded, so no URL or JSON encoding differs from the literal", () => {
+  // URLSearchParams form-encodes ~ ! ' ( ) * differently from
+  // encodeURIComponent, and PHP's JSON escapes "/" as "\/": a token with any
+  // such character could be echoed in a form the guard never looked for.
+  for (const token of ["Probe0123456789~abcdef", "Probe0123456789/abcdef", "abc/def+ghi=jkl0123456", "Probe0123456789-abcdef", "Probe0123456789_abcdef", "Probe0123456789!abcdef", "Probe0123456789(abcdef)", "Probe0123456789*abcdef", "Probe0123456789'abcdef", "Probe0123456789äbcdef"]) {
+    assert.throws(
+      () => createSportmonksA2BCredentialGuard(token),
+      (error: unknown) => error instanceof Error && /only the letters A-Z, a-z and the digits 0-9/.test(error.message) && !error.message.includes(token),
+      token,
+    );
+  }
+  // For an alphanumeric token every serialization of the request is the literal token.
+  assert.equal(new URLSearchParams({ api_token: TOKEN }).toString(), `api_token=${TOKEN}`);
+  assert.equal(encodeURIComponent(TOKEN), TOKEN);
+  assert.equal(JSON.stringify(TOKEN), `"${TOKEN}"`);
+});
+
+test("regression (review M-1): the credential guard sees through JSON and percent escapes of the token", () => {
+  const guard = createSportmonksA2BCredentialGuard(TOKEN);
+  const echoes = [
+    `\\u${TOKEN.charCodeAt(0).toString(16).padStart(4, "0")}${TOKEN.slice(1)}`,
+    jsonEscapeAll(TOKEN),
+    // Upper-case hex digits in the JSON escapes.
+    jsonEscapeAll(TOKEN).replace(/[a-f]/g, (digit) => digit.toUpperCase()),
+    percentEncodeAll(TOKEN, true),
+    percentEncodeAll(TOKEN, false),
+    // Double percent encoding: %2554 -> %54 -> T.
+    percentEncodeAll(TOKEN, true).replace(/%/g, "%25"),
+    // Mixed: JSON escape of a percent-encoded character.
+    `${TOKEN.slice(0, 4)}\\u0025${TOKEN.charCodeAt(4).toString(16)}${TOKEN.slice(5)}`,
+  ];
+  for (const echo of echoes) {
+    const body = `{"pagination":{"next_page":"https:\\/\\/api.sportmonks.com\\/v3\\/football\\/leagues?api_token=${echo}&page=2"}}`;
+    assert.equal(guard.contains(body), true, echo);
+    assert.equal(guard.contains(new TextEncoder().encode(body)), true, echo);
+  }
+  // Near misses are not the credential.
+  assert.equal(guard.contains(jsonEscapeAll(TOKEN.slice(1))), false);
+  assert.equal(guard.contains(percentEncodeAll(`${TOKEN.slice(0, -1)}Q`, true)), false);
+  assert.equal(guard.contains(`${TOKEN.slice(0, 8)}...${TOKEN.slice(-4)}`), false);
+});
+
+test("regression (review M-1): an escaped echo is never archived and the final scrub catches an escaped token", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kapiloto-a2b-"));
+  try {
+    const guard = createSportmonksA2BCredentialGuard(TOKEN);
+    const archive = new SportmonksA2BRawArchive(root, guard);
+    await archive.init();
+    const echo = new TextEncoder().encode(`{"data":[],"echo":"api_token=${jsonEscapeAll(TOKEN)}"}`);
+    await assert.rejects(
+      archive.record({ bytes: echo, endpoint: "/v3/football/leagues?page=1", status: 200, contentType: "application/json" }),
+      SportmonksA2BCredentialEchoError,
+    );
+    assert.deepEqual(await readdir(path.join(root, "raw")), []);
+
+    await writeFile(path.join(root, "pilot-report.json"), `{"echo":"${percentEncodeAll(TOKEN, false)}"}`);
+    assert.deepEqual(await scrubSportmonksA2BOutputIfCredentialPresent(root, guard), ["pilot-report.json"]);
+    assert.deepEqual(await readdir(root), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------

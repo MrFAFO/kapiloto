@@ -226,11 +226,42 @@ export function parseSportmonksA2BPilotArgs(argv: readonly string[]): Sportmonks
 // ---------------------------------------------------------------------------
 
 export type SportmonksA2BCredentialGuard = {
-  /** True when the text or bytes contain the credential (raw or percent-encoded). */
+  /**
+   * True when the text or bytes contain the credential, literally or behind
+   * JSON (\uXXXX, \/) or URL percent escapes.
+   */
   contains(value: string | Uint8Array): boolean;
-  /** Replaces every occurrence of the credential with [REDACTED]. */
+  /** Replaces every literal occurrence of the credential with [REDACTED]. */
   redact(text: string): string;
 };
+
+/**
+ * Only alphanumeric tokens are guarded. For them the literal, percent-encoded
+ * (encodeURIComponent or URLSearchParams form encoding) and JSON-escaped forms
+ * are the same string, so no serialization of the request URL can carry the
+ * token past the guard. A token with any other character fails before any
+ * request is made.
+ */
+const GUARDED_TOKEN_PATTERN = /^[A-Za-z0-9]+$/;
+
+/**
+ * Undoes the escapes a provider body can carry around an echoed token: JSON
+ * \uXXXX and \/ escapes and URL percent escapes in either hex case, repeated
+ * so double encoding is undone too. Used for detection only; archived bytes
+ * are never altered.
+ */
+function unescapeForCredentialScan(text: string): string {
+  let current = text;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = current
+      .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+      .replace(/\\\//g, "/")
+      .replace(/%([0-9a-fA-F]{2})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+    if (next === current) return current;
+    current = next;
+  }
+  return current;
+}
 
 /**
  * The raw archive keeps exact response bytes, so a response that echoed the
@@ -241,15 +272,17 @@ export function createSportmonksA2BCredentialGuard(token: string): SportmonksA2B
   if (typeof token !== "string" || token.length < 16 || /\s/.test(token)) {
     throw new Error("SPORTMONKS_API_TOKEN must be at least 16 characters without whitespace to be guarded.");
   }
-  const needles = [...new Set([token, encodeURIComponent(token)])];
+  if (!GUARDED_TOKEN_PATTERN.test(token)) {
+    throw new Error("SPORTMONKS_API_TOKEN must contain only the letters A-Z, a-z and the digits 0-9 to be guarded.");
+  }
   const decoder = new TextDecoder("utf-8", { fatal: false });
   return {
     contains(value) {
       const text = typeof value === "string" ? value : decoder.decode(value);
-      return needles.some((needle) => text.includes(needle));
+      return text.includes(token) || unescapeForCredentialScan(text).includes(token);
     },
     redact(text) {
-      return needles.reduce((acc, needle) => acc.split(needle).join("[REDACTED]"), text);
+      return text.split(token).join("[REDACTED]");
     },
   };
 }
@@ -1235,7 +1268,8 @@ export type SportmonksA2BSeasonProfile = {
 
 /**
  * Profile of one sampled season. Results whose audit belongs to another
- * league or season are refused: a season never inherits another's evidence.
+ * league, season or fixture are refused: a season never inherits another's
+ * evidence. A fixture sampled twice blocks instead of counting twice.
  */
 export function buildSportmonksA2BSeasonProfile(input: {
   providerLeagueId: string;
@@ -1251,15 +1285,23 @@ export function buildSportmonksA2BSeasonProfile(input: {
         `season profile ${input.providerLeagueId}:${input.providerSeasonId} received fixture ${result.providerFixtureId} of ${result.audit.providerLeagueId}:${result.audit.providerSeasonId}`,
       );
     }
+    if (result.audit && result.audit.providerFixtureId !== result.providerFixtureId) {
+      throw new Error(
+        `season profile ${input.providerLeagueId}:${input.providerSeasonId} sample ${result.providerFixtureId} carries the audit of fixture ${result.audit.providerFixtureId}`,
+      );
+    }
   }
   const audits = input.results.flatMap((result) => (result.audit ? [result.audit] : []));
   const gateEvidence = summarizeSportmonksA2BGateEvidence(audits);
   const contradictions = contradictionsOf(audits);
   const parseFailures = input.results.filter((result) => result.parseStatus === "fail").length;
+  const sampledIds = input.results.map((result) => result.providerFixtureId);
+  const duplicateIds = [...new Set(sampledIds.filter((id, index) => sampledIds.indexOf(id) !== index))].sort(compareProviderIds);
   const blockers: string[] = [];
   if (input.results.length < input.requestedFixtures) {
     blockers.push(`sampled ${input.results.length} of ${input.requestedFixtures} requested finished fixtures`);
   }
+  if (duplicateIds.length > 0) blockers.push(`fixture(s) sampled more than once: ${duplicateIds.join(",")}`);
   if (parseFailures > 0) blockers.push(`${parseFailures} fixture(s) failed capture or parse`);
   if (contradictions.length > 0) blockers.push(`${contradictions.length} contradictory gate observation(s)`);
   if (gateEvidence.participantLocations.status !== "pass") blockers.push("participant locations not verified on every sampled fixture");

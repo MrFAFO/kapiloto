@@ -157,13 +157,30 @@ function world(): World {
 
 type Calls = { urls: URL[] };
 
-function sportmonks(w: World, calls: Calls, options: { echoTokenInNextPage?: boolean; alwaysMore?: boolean; failFixture?: string } = {}): SportmonksA2BFetch {
+/** The token as a JSON string body may carry it: first character as a \u escape. */
+const JSON_ESCAPED_TOKEN = `\\u${TOKEN.charCodeAt(0).toString(16).padStart(4, "0")}${TOKEN.slice(1)}`;
+
+function sportmonks(
+  w: World,
+  calls: Calls,
+  options: {
+    echoTokenInNextPage?: boolean;
+    echoEscapedTokenInNextPage?: boolean;
+    alwaysMore?: boolean;
+    failFixture?: string;
+    /** Requested fixture id -> the fixture whose detail is served instead. */
+    serveFixtureAs?: Record<string, string>;
+  } = {},
+): SportmonksA2BFetch {
   return async (url) => {
     calls.urls.push(new URL(url));
     assert.equal(url.origin, "https://api.sportmonks.com");
     assert.equal(url.searchParams.get("api_token"), TOKEN);
     const json = (body: unknown, status = 200) =>
-      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+      new Response(JSON.stringify(body).replace("__ESCAPED_TOKEN__", JSON_ESCAPED_TOKEN), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
     const route = url.pathname.replace(/^\/v3\/football/, "");
     if (route === "/leagues") {
       const page = Number(url.searchParams.get("page"));
@@ -173,7 +190,9 @@ function sportmonks(w: World, calls: Calls, options: { echoTokenInNextPage?: boo
       const hasMore = options.alwaysMore ? true : page === 1;
       const nextPage = options.echoTokenInNextPage
         ? `https://api.sportmonks.com/v3/football/leagues?api_token=${TOKEN}&page=${page + 1}`
-        : `https://api.sportmonks.com/v3/football/leagues?page=${page + 1}`;
+        : options.echoEscapedTokenInNextPage
+          ? `https://api.sportmonks.com/v3/football/leagues?api_token=__ESCAPED_TOKEN__&page=${page + 1}`
+          : `https://api.sportmonks.com/v3/football/leagues?page=${page + 1}`;
       return json({ data, pagination: { count: data.length, per_page: 50, current_page: page, next_page: hasMore ? nextPage : null, has_more: hasMore } });
     }
     let match = /^\/leagues\/(\d+)$/.exec(route);
@@ -187,7 +206,7 @@ function sportmonks(w: World, calls: Calls, options: { echoTokenInNextPage?: boo
     if (match) {
       if (match[1] === options.failFixture) return json({ message: "Server Error" }, 500);
       assert.equal(url.searchParams.get("include"), "participants;scores;state;lineups;formations;statistics.type;xgfixture.type");
-      return json({ data: w.fixtures.get(match[1]) });
+      return json({ data: w.fixtures.get(options.serveFixtureAs?.[match[1]] ?? match[1]) });
     }
     return json({ message: "not found" }, 404);
   };
@@ -313,6 +332,63 @@ test("a response that echoes the token is never archived and the run aborts", as
   }
 });
 
+test("regression (review M-1): a response that echoes the token behind a JSON escape is never archived either", async () => {
+  // The body really carries an escaped form, not the literal token.
+  assert.notEqual(JSON_ESCAPED_TOKEN, TOKEN);
+  assert.equal(JSON.parse(`"${JSON_ESCAPED_TOKEN}"`), TOKEN);
+  const calls: Calls = { urls: [] };
+  const run = await runIn([], sportmonks(world(), calls, { echoEscapedTokenInNextPage: true }));
+  try {
+    assert.equal(run.code, 1);
+    assert.equal(calls.urls.length, 1);
+    assert.match(run.stderr, /contains the API credential/);
+    await assertNoToken(run);
+    assert.deepEqual(await readdir(path.join(run.out, "raw")), []);
+    assert.equal((await readdir(run.out)).includes("pilot-report.json"), false);
+  } finally {
+    await run.cleanup();
+  }
+});
+
+test("regression (review M-2): a fixture detail that answers with another fixture is identity drift, never a sample", async () => {
+  const [plCurrent] = seasonIds("8");
+  // 8012 is the most recent finished fixture, 8011 the one before it.
+  const asked = `${plCurrent}2`;
+  const served = `${plCurrent}1`;
+  const run = await runIn(
+    ["--seasons-per-league", "1", "--fixtures-per-season", "2"],
+    sportmonks(world(), { urls: [] }, { serveFixtureAs: { [asked]: served } }),
+  );
+  try {
+    assert.equal(run.code, 2);
+    await assertNoToken(run);
+    const report = JSON.parse(await readFile(path.join(run.out, "pilot-report.json"), "utf8"));
+    assert.equal(report.evidenceStatus, "blocked");
+    assert.equal(report.backfillApproval.approved, false);
+    const drift = report.blockingErrors.filter((error: { code: string }) => error.code === "fixture_identity_mismatch");
+    assert.deepEqual(
+      drift.map((error: { fixtureId: string; observed: unknown }) => [error.fixtureId, error.observed]),
+      [[asked, { fixtureId: served, leagueId: "8", seasonId: plCurrent }]],
+    );
+
+    const pl = report.leagues.find((league: { target: { providerLeagueId: string } }) => league.target.providerLeagueId === "8");
+    assert.equal(pl.sampledSeasons.length, 1);
+    assert.equal(pl.sampledSeasons[0].seasonSampleStatus, "blocked");
+    assert.equal(pl.sampledSeasons[0].auditedFixtures, 1);
+    // The served fixture is audited once, under its own id, never twice.
+    assert.equal(pl.competitionProfile.fixtures, 1);
+    const captures = await readdir(path.join(run.out, "captures"));
+    assert.equal(captures.includes(`8-${plCurrent}-${asked}.json`), false);
+    assert.equal(captures.includes(`8-${plCurrent}-${served}.json`), true);
+    // No other league inherits the drift.
+    for (const league of report.leagues.filter((row: { target: { providerLeagueId: string } }) => row.target.providerLeagueId !== "8")) {
+      for (const season of league.sampledSeasons) assert.equal(season.seasonSampleStatus, "sample_clean", league.target.providerLeagueId);
+    }
+  } finally {
+    await run.cleanup();
+  }
+});
+
 test("entitlement pagination that never ends refuses a partial snapshot", async () => {
   const calls: Calls = { urls: [] };
   const run = await runIn([], sportmonks(world(), calls, { alwaysMore: true }));
@@ -386,11 +462,16 @@ test("bad arguments, a missing or weak token and a non-empty --out abort before 
     [["--days", "45"], { SPORTMONKS_API_TOKEN: TOKEN }, /Unknown argument/],
     [[], {}, /SPORTMONKS_API_TOKEN is required/],
     [[], { SPORTMONKS_API_TOKEN: "short" }, /at least 16/],
+    // Review M-1: a token the guard cannot fully see is refused up front.
+    [[], { SPORTMONKS_API_TOKEN: "RehearsalToken0123456789~abcdef" }, /only the letters A-Z, a-z and the digits 0-9/],
+    [[], { SPORTMONKS_API_TOKEN: "RehearsalToken0123456789/abcdef" }, /only the letters A-Z, a-z and the digits 0-9/],
   ] as const) {
     const run = await runIn([...argv], fetch, env);
     try {
       assert.equal(run.code, 1);
       assert.match(run.stderr, pattern);
+      const token = (env as Record<string, string | undefined>).SPORTMONKS_API_TOKEN;
+      if (token && token !== TOKEN) assert.ok(!run.stderr.includes(token), "a refused token is never printed");
     } finally {
       await run.cleanup();
     }

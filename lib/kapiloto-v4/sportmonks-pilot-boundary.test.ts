@@ -153,6 +153,8 @@ test("the pilot's import graph has no Supabase client, no RPC and no network cal
   assert.match(runner, /export const SPORTMONKS_FOOTBALL_BASE = "https:\/\/api\.sportmonks\.com\/v3\/football";/);
   assert.equal((runner.match(/fetchImpl\(/g) ?? []).length, 1);
   assert.match(runner, /this\.fetchImpl\(url, \{/);
+  // Review M-1: the query-string credential is never re-sent to a redirect target.
+  assert.match(runner, /this\.fetchImpl\(url, \{[^}]*redirect: "error",/);
   assert.deepEqual([...runner.matchAll(/new URL\(([^)]*)\)/g)].map((match) => match[1]), ["`${SPORTMONKS_FOOTBALL_BASE}${endpoint}`"]);
   // Neither references ingest, run-header or attestation builders.
   for (const code of [tool, runner]) {

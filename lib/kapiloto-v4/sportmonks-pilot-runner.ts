@@ -112,8 +112,11 @@ class SportmonksReader {
     const sanitized = sanitizeSportmonksEndpoint(url);
     url.searchParams.set("api_token", this.token);
 
+    // A redirect would re-send the query-string credential to whatever its
+    // Location names and detach the archived endpoint from the body: refuse it.
     const response = await this.fetchImpl(url, {
       cache: "no-store",
+      redirect: "error",
       signal: AbortSignal.timeout(30_000),
       headers: { Accept: "application/json" },
     });
@@ -291,13 +294,22 @@ async function run(
           });
           assertSportmonksA2BSinglePage(`fixture detail ${fixtureId}`, response.body.pagination);
           const fixture = response.body.data;
-          if (!fixture || String(fixture.league_id) !== target.providerLeagueId || String(fixture.season_id) !== season.id) {
+          // The detail must be the requested fixture of this league and
+          // season; any other fixture is identity drift, never a sample.
+          if (
+            !fixture ||
+            asProviderId(fixture.id) !== fixtureId ||
+            String(fixture.league_id) !== target.providerLeagueId ||
+            String(fixture.season_id) !== season.id
+          ) {
             blockingErrors.push({
               code: fixture ? "fixture_identity_mismatch" : "fixture_detail_missing",
               leagueId: target.providerLeagueId,
               seasonId: season.id,
               fixtureId,
-              observed: fixture ? { leagueId: String(fixture.league_id), seasonId: String(fixture.season_id) } : null,
+              observed: fixture
+                ? { fixtureId: String(fixture.id), leagueId: String(fixture.league_id), seasonId: String(fixture.season_id) }
+                : null,
               rawSha256: response.hash,
             });
             results.push({ providerFixtureId: fixtureId, parseStatus: "fail", audit: null });
