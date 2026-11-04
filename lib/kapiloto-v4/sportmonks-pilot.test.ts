@@ -140,7 +140,7 @@ function plEntitlement(overrides: Partial<SportmonksA2BEntitlementRow> = {}): Sp
     name: "Premier League",
     countryId: "462",
     countryName: "England",
-    countryIso2: "GB",
+    countryIso2: "EN",
     type: "league",
     subType: "domestic",
     active: true,
@@ -154,7 +154,7 @@ function plDetail(overrides: Record<string, unknown> = {}): Record<string, unkno
     name: "Premier League",
     type: "league",
     sub_type: "domestic",
-    country: { name: "England", iso2: "GB" },
+    country: { name: "England", iso2: "EN" },
     currentseason: { id: 28083, league_id: 8, name: "2026/2027", is_current: true, starting_at: "2026-08-14", ending_at: "2027-05-23" },
     seasons: [
       { id: 25583, league_id: 8, name: "2025/2026", is_current: false, starting_at: "2025-08-15", ending_at: "2026-05-24" },
@@ -564,6 +564,7 @@ test("league identity passes only when subscription and detail agree on id, name
   const good = auditSportmonksA2BLeagueIdentity({ target: PL, entitlement: plEntitlement(), detail: plDetail() });
   assert.equal(good.identityStatus, "pass");
   assert.ok(Object.values(good.gates).every((gate) => gate.status === "pass"));
+  assert.equal(PL.expectedCountryIso2, "EN");
 
   const cases: Array<[string, SportmonksA2BEntitlementRow | null, Record<string, unknown> | null, string]> = [
     ["not entitled", null, plDetail(), "entitled"],
@@ -571,7 +572,7 @@ test("league identity passes only when subscription and detail agree on id, name
     ["subscription ISO2", plEntitlement({ countryIso2: "US" }), plDetail(), "countryIso2"],
     ["detail ISO2", plEntitlement(), plDetail({ country: { name: "England", iso2: "ES" } }), "countryIso2"],
     ["subscription country missing", plEntitlement({ countryName: null, countryIso2: null }), plDetail(), "countryIso2"],
-    ["detail country name", plEntitlement(), plDetail({ country: { name: "Spain", iso2: "GB" } }), "country"],
+    ["detail country name", plEntitlement(), plDetail({ country: { name: "Spain", iso2: "EN" } }), "country"],
     ["subscription name", plEntitlement({ name: "La Liga" }), plDetail(), "name"],
     ["detail id", plEntitlement(), plDetail({ id: 9 }), "id"],
     ["subscription sub_type", plEntitlement({ subType: "cup_international" }), plDetail(), "type"],
@@ -588,8 +589,18 @@ test("league identity passes only when subscription and detail agree on id, name
   }
 });
 
+test("Premier League identity rejects ISO-3166 GB because Sportmonks country 462 uses provider code EN", () => {
+  const result = auditSportmonksA2BLeagueIdentity({
+    target: PL,
+    entitlement: plEntitlement({ countryIso2: "GB" }),
+    detail: plDetail({ country: { name: "England", iso2: "GB" } }),
+  });
+  assert.equal(result.identityStatus, "fail");
+  assert.equal(result.gates.countryIso2.status, "fail");
+});
+
 test("entitlement rows are normalized, deduplicated and refused when a repeat disagrees", () => {
-  const row = parseSportmonksA2BEntitlementRow({ id: 8, name: "Premier League", country_id: 462, country: { name: "England", iso2: "gb" }, type: "league", sub_type: "domestic", active: true });
+  const row = parseSportmonksA2BEntitlementRow({ id: 8, name: "Premier League", country_id: 462, country: { name: "England", iso2: "en" }, type: "league", sub_type: "domestic", active: true });
   assert.deepEqual(row, plEntitlement());
   assert.equal(parseSportmonksA2BEntitlementRow({ id: "x" }), null);
   const merged = mergeSportmonksA2BEntitlementRows([plEntitlement({ providerLeagueId: "82", name: "Bundesliga" }), plEntitlement(), plEntitlement()]);
