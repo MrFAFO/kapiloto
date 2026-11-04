@@ -164,6 +164,8 @@ Remaining only:
 - 1099 Elche
 - 13258 Athletic Club
 
+Update 2026-11-03: Sevilla 676 was mapped and attested by pilot R4 after round 264301 settled. See `docs/operations/2026-10-31-v4-pilot-identity-reconciliation-execution.md` §8. La Liga is now 15/20. Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Elche 1099 and Athletic Club 13258 remain.
+
 Global checks after phase 1:
 
 - blocking Sportmonks identity issues: **0**

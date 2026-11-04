@@ -186,6 +186,8 @@ Remaining only:
 - AFC Bournemouth 52
 - Ipswich Town 116
 
+Update 2026-11-03: AFC Bournemouth 52 was mapped and attested by pilot R4 after round 264301 settled. See `docs/operations/2026-10-31-v4-pilot-identity-reconciliation-execution.md` §8. The Premier League is now 17/20. Liverpool 8, Arsenal 19 and Ipswich Town 116 remain.
+
 Global checks after phase 1:
 
 - blocking Sportmonks identity issues: **0**

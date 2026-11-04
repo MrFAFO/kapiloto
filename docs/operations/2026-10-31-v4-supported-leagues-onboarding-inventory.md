@@ -399,6 +399,8 @@ Recommended order:
 9. validate provider-family/history gates per league;
 10. only then promote each qualifying competition from `validating` to `supported`.
 
+Update 2026-11-03: round 264301 has settled. Pilot R4 completed Bournemouth 52 and Sevilla 676, so items 2, 3 and 5 are now Premier League 17/20 and La Liga 15/20. The deferred Class-B set in item 7 is down to 9: Liverpool 8, Arsenal 19, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Elche 1099, Athletic Club 13258 and Juventus 625. See `docs/operations/2026-10-31-v4-pilot-identity-reconciliation-execution.md` §8.
+
 This order gives a small first complete league and repeatedly exercises all
 three onboarding classes before the larger European catalogs are finished.
 
