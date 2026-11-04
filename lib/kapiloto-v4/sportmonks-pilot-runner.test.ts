@@ -465,7 +465,7 @@ test("regression (review M-4): a sample in which every first half is 0-0 never v
 
 test("a competition whose identity fails is not sampled and never borrows another league's evidence", async () => {
   const w = world();
-  w.details.get("8")!.country = { name: "England", iso2: "EN" };
+  w.details.get("8")!.country = { name: "England", iso2: "US" };
   const calls: Calls = { urls: [] };
   const run = await runIn(["--seasons-per-league", "1", "--fixtures-per-season", "1", "--required-seasons", "8:801"], sportmonks(w, calls));
   try {
