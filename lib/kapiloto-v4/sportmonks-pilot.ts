@@ -864,6 +864,8 @@ export type SportmonksA2BFixtureAudit = {
     explicitZeroStatTypes: string[];
     omittedAllowlistedStatTypes: string[];
     presentAllowlistedStatTypes: string[];
+    /** True only for a passing FT fixture whose non-zero first half tells a cumulative 2ND_HALF apart. */
+    cumulativeSecondHalfDiscriminated: boolean;
   };
 };
 
@@ -919,28 +921,68 @@ function valuesBySideAndType(capture: SportmonksLedgerCaptureV1, sides: Map<stri
   return result;
 }
 
-function scoreSemanticsGate(state: string, scores: unknown[]): PilotGate {
+type ScoreSemantics = { gate: PilotGate; cumulativeSecondHalfDiscriminated: boolean };
+
+/**
+ * Finished-score semantics of one fixture.
+ *
+ * 1ST_HALF is used twice. A first-half score above a later cumulative score
+ * is a contradiction (goals never decrease). A non-zero first half is also
+ * what lets an FT fixture discriminate a cumulative 2ND_HALF from a
+ * second-half-only one: after a 0-0 first half both read the same, so such a
+ * fixture is consistent but proves nothing about the field's meaning. The
+ * provider-wide summary therefore needs at least one discriminating fixture.
+ *
+ * Extra-time states pass only when the pairs themselves discriminate:
+ * - AET passes only when an extra-time goal separates the 90-minute 2ND_HALF
+ *   from CURRENT; without one it stays unverified;
+ * - FT_PEN never passes here. Whether CURRENT excludes the shootout cannot be
+ *   told from these pairs (a two-legged tie need not be level on the night).
+ */
+function scoreSemanticsGate(state: string, scores: unknown[]): ScoreSemantics {
+  const result = (gate: PilotGate, cumulativeSecondHalfDiscriminated = false): ScoreSemantics => ({
+    gate,
+    cumulativeSecondHalfDiscriminated,
+  });
+  const firstHalf = scorePair(scores, "1ST_HALF");
   const secondHalf = scorePair(scores, "2ND_HALF");
   const current = scorePair(scores, "CURRENT");
-  if (secondHalf.conflict || current.conflict) return fail("A score pair carries two different values for the same side.");
+  if (firstHalf.conflict || secondHalf.conflict || current.conflict) {
+    return result(fail("A score pair carries two different values for the same side."));
+  }
+  const fh = firstHalf.pair;
   const sh = secondHalf.pair;
   const cur = current.pair;
+  const exceeds = (low: typeof fh, high: typeof fh) => low !== null && high !== null && (low.home > high.home || low.away > high.away);
   if (state === "FT") {
-    if (!sh && !cur) return fail("FT fixture exposes neither a 2ND_HALF nor a CURRENT score pair.");
+    if (!sh && !cur) return result(fail("FT fixture exposes neither a 2ND_HALF nor a CURRENT score pair."));
+    if (exceeds(fh, sh) || exceeds(fh, cur)) return result(fail("FT 1ST_HALF score exceeds the full-time score; goals cannot decrease."));
     if (!sh || !cur) {
-      return unverified(`FT exposes only ${sh ? "2ND_HALF" : "CURRENT"}; cumulative 2ND_HALF semantics are not discriminated.`);
+      return result(unverified(`FT exposes only ${sh ? "2ND_HALF" : "CURRENT"}; cumulative 2ND_HALF semantics are not discriminated.`));
     }
-    return sh.home === cur.home && sh.away === cur.away
-      ? pass("FT has equal cumulative 2ND_HALF and CURRENT scores.")
-      : fail("FT 2ND_HALF and CURRENT scores disagree.");
+    if (sh.home !== cur.home || sh.away !== cur.away) return result(fail("FT 2ND_HALF and CURRENT scores disagree."));
+    if (fh && (fh.home > 0 || fh.away > 0)) {
+      return result(pass("FT has equal 2ND_HALF and CURRENT scores after a scoring first half, so 2ND_HALF is cumulative."), true);
+    }
+    return result(
+      pass(
+        `FT has equal 2ND_HALF and CURRENT scores; ${fh ? "a 0-0 first half" : "without a 1ST_HALF pair the fixture"} does not discriminate a cumulative 2ND_HALF on its own.`,
+      ),
+    );
   }
   if (state === "AET" || state === "FT_PEN") {
-    if (!sh || !cur) return fail(`${state} requires both the 90-minute 2ND_HALF and the after-extra-time CURRENT score pairs.`);
-    return cur.home < sh.home || cur.away < sh.away
-      ? fail(`${state} CURRENT score is lower than the cumulative 90-minute 2ND_HALF score.`)
-      : pass(`${state} exposes 2ND_HALF at 90 minutes and a non-decreasing CURRENT score after extra time.`);
+    if (!sh || !cur) return result(fail(`${state} requires both the 90-minute 2ND_HALF and the after-extra-time CURRENT score pairs.`));
+    if (exceeds(fh, sh)) return result(fail(`${state} 1ST_HALF score exceeds the 90-minute 2ND_HALF score; goals cannot decrease.`));
+    if (exceeds(sh, cur)) return result(fail(`${state} CURRENT score is lower than the cumulative 90-minute 2ND_HALF score.`));
+    if (state === "FT_PEN") {
+      return result(unverified("FT_PEN: whether CURRENT excludes the penalty shootout cannot be discriminated from the score pairs."));
+    }
+    if (sh.home === cur.home && sh.away === cur.away) {
+      return result(unverified("AET without an extra-time goal: whether 2ND_HALF excludes extra time is not discriminated."));
+    }
+    return result(pass("AET: extra-time goals separate the 90-minute 2ND_HALF from the after-extra-time CURRENT."));
   }
-  return unverified(`Fixture state ${state || "unknown"} is not a finished pilot state.`);
+  return result(unverified(`Fixture state ${state || "unknown"} is not a finished pilot state.`));
 }
 
 export function auditSportmonksA2BCapture(capture: SportmonksLedgerCaptureV1): SportmonksA2BFixtureAudit {
@@ -955,7 +997,8 @@ export function auditSportmonksA2BCapture(capture: SportmonksLedgerCaptureV1): S
       ? pass("Exactly one home and one away participant with distinct provider ids.")
       : fail(`Expected exactly one home and one away participant; observed ${locations.join(",") || "none"}.`);
 
-  const scoreSemantics = scoreSemanticsGate(capture.fixture.state?.developer_name ?? "", capture.fixture.scores as unknown[]);
+  const score = scoreSemanticsGate(capture.fixture.state?.developer_name ?? "", capture.fixture.scores as unknown[]);
+  const scoreSemantics = score.gate;
 
   const lineupRows = capture.families.lineups.rows.filter(isRecord);
   const lineupTypeIds = [
@@ -1112,6 +1155,7 @@ export function auditSportmonksA2BCapture(capture: SportmonksLedgerCaptureV1): S
       explicitZeroStatTypes: [...explicitZeroStatTypes].sort(compareProviderIds),
       omittedAllowlistedStatTypes: [...omittedAllowlistedStatTypes].sort(compareProviderIds),
       presentAllowlistedStatTypes: [...presentAllowlistedStatTypes].sort(compareProviderIds),
+      cumulativeSecondHalfDiscriminated: score.cumulativeSecondHalfDiscriminated,
     },
   };
 }
@@ -1162,11 +1206,15 @@ export type SportmonksA2BProviderSemantics = {
   gateEvidence: Record<SportmonksA2BGateName, GateEvidence>;
   lineupTypeIds: number[];
   positionIds: number[];
+  /** FT fixtures whose scoring first half discriminated a cumulative 2ND_HALF. */
+  cumulativeSecondHalfDiscriminatingFixtures: number;
 };
 
 /**
  * Provider-wide semantics are evidence about field meanings only: not a
- * per-competition coverage signal and not backfill approval.
+ * per-competition coverage signal and not backfill approval. A field meaning
+ * counts as verified only when some fixture discriminated it: a sample made
+ * only of 0-0 first halves leaves cumulative 2ND_HALF unproven.
  */
 export function summarizeSportmonksA2BProviderSemantics(
   audits: readonly SportmonksA2BFixtureAudit[],
@@ -1186,6 +1234,10 @@ export function summarizeSportmonksA2BProviderSemantics(
   if (gateEvidence.scoreSemantics.unverifiedFixtures > 0) {
     blockers.push("finished-score semantics are unverified on one or more sampled fixtures");
   }
+  const cumulativeSecondHalfDiscriminatingFixtures = audits.filter((audit) => audit.observed.cumulativeSecondHalfDiscriminated).length;
+  if (audits.length > 0 && cumulativeSecondHalfDiscriminatingFixtures === 0) {
+    blockers.push("no sampled FT fixture discriminated cumulative 2ND_HALF semantics (every first half was 0-0 or had no 1ST_HALF pair)");
+  }
   const unknownLineupTypes = lineupTypeIds.filter((id) => !(EXPECTED_LINEUP_TYPES as readonly number[]).includes(id));
   if (unknownLineupTypes.length > 0) blockers.push(`unknown lineup type ids: ${unknownLineupTypes.join(",")}`);
   if (!EXPECTED_LINEUP_TYPES.every((id) => lineupTypeIds.includes(id))) {
@@ -1203,6 +1255,7 @@ export function summarizeSportmonksA2BProviderSemantics(
     gateEvidence,
     lineupTypeIds,
     positionIds,
+    cumulativeSecondHalfDiscriminatingFixtures,
   };
 }
 

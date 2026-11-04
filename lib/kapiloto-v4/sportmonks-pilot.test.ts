@@ -87,6 +87,8 @@ function fixture(overrides: Record<string, unknown> = {}): Record<string, unknow
       { id: 200, name: "Away FC", meta: { location: "away" } },
     ],
     scores: [
+      { description: "1ST_HALF", score: { goals: 1, participant: "home" } },
+      { description: "1ST_HALF", score: { goals: 0, participant: "away" } },
       { description: "2ND_HALF", score: { goals: 2, participant: "home" } },
       { description: "2ND_HALF", score: { goals: 1, participant: "away" } },
       { description: "CURRENT", score: { goals: 2, participant: "home" } },
@@ -297,6 +299,85 @@ test("extra-time semantics require both pairs and a CURRENT score no lower than 
   assert.equal(audit({ state: { developer_name: "AET" }, scores: aet([1, 1], [2, 1]) }).gates.scoreSemantics.status, "pass");
   assert.equal(audit({ state: { developer_name: "AET" }, scores: aet([2, 1], [1, 1]) }).gates.scoreSemantics.status, "fail");
   assert.equal(audit({ state: { developer_name: "FT_PEN" }, scores: aet([1, 1], null) }).gates.scoreSemantics.status, "fail");
+});
+
+const scorePairs = (pairs: Record<string, [number, number]>) =>
+  Object.entries(pairs).flatMap(([description, [home, away]]) => [
+    { description, score: { goals: home, participant: "home" } },
+    { description, score: { goals: away, participant: "away" } },
+  ]);
+
+test("regression (review M-4): a first half above the full-time score is a contradiction, not a pass", () => {
+  // Probe F: 1ST_HALF 3-0, yet 2ND_HALF and CURRENT agree on 2-1.
+  const decreasing = audit({ scores: scorePairs({ "1ST_HALF": [3, 0], "2ND_HALF": [2, 1], CURRENT: [2, 1] }) });
+  assert.equal(decreasing.gates.scoreSemantics.status, "fail");
+  assert.match(decreasing.gates.scoreSemantics.detail, /1ST_HALF score exceeds the full-time score/);
+  assert.equal(decreasing.observed.cumulativeSecondHalfDiscriminated, false);
+  // Also when only one full-time pair is present: a contradiction beats "unverified".
+  assert.equal(audit({ scores: scorePairs({ "1ST_HALF": [0, 2], CURRENT: [0, 1] }) }).gates.scoreSemantics.status, "fail");
+  // And for extra time.
+  const aetDecreasing = audit({ state: { developer_name: "AET" }, scores: scorePairs({ "1ST_HALF": [2, 0], "2ND_HALF": [1, 1], CURRENT: [2, 1] }) });
+  assert.equal(aetDecreasing.gates.scoreSemantics.status, "fail");
+  // Two values for one side of 1ST_HALF are a contradiction too.
+  const conflictingFirstHalf = audit({ scores: [...(fixture().scores as unknown[]), { description: "1ST_HALF", score: { goals: 2, participant: "home" } }] });
+  assert.equal(conflictingFirstHalf.gates.scoreSemantics.status, "fail");
+});
+
+test("regression (review M-4): only a scoring first half discriminates a cumulative 2ND_HALF", () => {
+  const scoring = audit({ scores: scorePairs({ "1ST_HALF": [0, 1], "2ND_HALF": [2, 1], CURRENT: [2, 1] }) });
+  assert.equal(scoring.gates.scoreSemantics.status, "pass");
+  assert.equal(scoring.observed.cumulativeSecondHalfDiscriminated, true);
+  // Probe F2: after a 0-0 first half a second-half-only 2ND_HALF would read the same.
+  for (const scores of [scorePairs({ "1ST_HALF": [0, 0], "2ND_HALF": [2, 1], CURRENT: [2, 1] }), scorePairs({ "2ND_HALF": [2, 1], CURRENT: [2, 1] })]) {
+    const consistent = audit({ scores });
+    assert.equal(consistent.gates.scoreSemantics.status, "pass", "consistent per fixture");
+    assert.equal(consistent.observed.cumulativeSecondHalfDiscriminated, false);
+    assert.match(consistent.gates.scoreSemantics.detail, /does not discriminate a cumulative 2ND_HALF/);
+  }
+});
+
+test("regression (review M-4): provider semantics need at least one fixture that discriminates a cumulative 2ND_HALF", () => {
+  const goalless = (id: number) => audit({ id, scores: scorePairs({ "1ST_HALF": [0, 0], "2ND_HALF": [1, 0], CURRENT: [1, 0] }) });
+  const undiscriminated = summarizeSportmonksA2BProviderSemantics([goalless(9001), goalless(9002)]);
+  assert.equal(undiscriminated.status, "fail");
+  assert.equal(undiscriminated.cumulativeSecondHalfDiscriminatingFixtures, 0);
+  assert.ok(undiscriminated.blockers.some((item) => item.includes("discriminated cumulative 2ND_HALF")), undiscriminated.blockers.join("; "));
+  // Every fixture still passes on its own, so no season inherits a provider-wide gap as a contradiction.
+  assert.equal(undiscriminated.gateEvidence.scoreSemantics.status, "pass");
+
+  const discriminated = summarizeSportmonksA2BProviderSemantics([goalless(9001), audit({ id: 9002 })]);
+  assert.equal(discriminated.status, "pass");
+  assert.equal(discriminated.cumulativeSecondHalfDiscriminatingFixtures, 1);
+});
+
+test("regression (review M-4): extra-time states pass only when the score pairs discriminate them", () => {
+  const extraTime = (state: string, pairs: Record<string, [number, number]>) =>
+    audit({ state: { developer_name: state }, scores: scorePairs(pairs) }).gates.scoreSemantics;
+  // Probe F3: AET with 2ND_HALF == CURRENT cannot show that 2ND_HALF excludes extra time.
+  const noExtraTimeGoal = extraTime("AET", { "1ST_HALF": [1, 0], "2ND_HALF": [1, 1], CURRENT: [1, 1] });
+  assert.equal(noExtraTimeGoal.status, "unverified");
+  assert.match(noExtraTimeGoal.detail, /without an extra-time goal/);
+  assert.equal(extraTime("AET", { "1ST_HALF": [1, 0], "2ND_HALF": [1, 1], CURRENT: [2, 1] }).status, "pass");
+  // FT_PEN never passes: shootout exclusion from CURRENT is not discriminable from the pairs.
+  for (const current of [[1, 1], [2, 2], [2, 1]] as Array<[number, number]>) {
+    assert.equal(extraTime("FT_PEN", { "1ST_HALF": [0, 0], "2ND_HALF": [1, 1], CURRENT: current }).status, "unverified", String(current));
+  }
+  assert.equal(extraTime("FT_PEN", { "2ND_HALF": [2, 1], CURRENT: [1, 1] }).status, "fail");
+
+  // An undiscriminated extra-time fixture blocks its season instead of passing it.
+  const season = buildSportmonksA2BSeasonProfile({
+    providerLeagueId: "8",
+    providerSeasonId: "28083",
+    seasonName: null,
+    sampleReasons: ["most_recent"],
+    requestedFixtures: 2,
+    results: [
+      { providerFixtureId: "9001", parseStatus: "pass", audit: audit() },
+      { providerFixtureId: "9002", parseStatus: "pass", audit: audit({ id: 9002, state: { developer_name: "AET" }, scores: scorePairs({ "2ND_HALF": [1, 1], CURRENT: [1, 1] }) }) },
+    ],
+  });
+  assert.equal(season.seasonSampleStatus, "blocked");
+  assert.ok(season.blockers.includes("finished-score semantics not verified on every sampled fixture"));
 });
 
 test("formations fail on an unknown participant or an invalid string", () => {

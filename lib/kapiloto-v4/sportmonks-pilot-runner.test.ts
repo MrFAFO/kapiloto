@@ -436,6 +436,33 @@ test("regression (review M-3): a provider that ignores the page parameter is cau
   }
 });
 
+test("regression (review M-4): a sample in which every first half is 0-0 never verifies cumulative 2ND_HALF semantics", async () => {
+  const w = world();
+  for (const detail of w.fixtures.values()) {
+    for (const score of detail.scores as Array<{ description: string; score: { goals: number } }>) {
+      if (score.description === "1ST_HALF") score.score.goals = 0;
+    }
+  }
+  const run = await runIn(["--seasons-per-league", "1", "--fixtures-per-season", "1"], sportmonks(w, { urls: [] }));
+  try {
+    assert.equal(run.code, 2);
+    await assertNoToken(run);
+    const report = JSON.parse(await readFile(path.join(run.out, "pilot-report.json"), "utf8"));
+    assert.equal(report.evidenceStatus, "blocked");
+    assert.equal(report.providerSemantics.status, "fail");
+    assert.equal(report.providerSemantics.cumulativeSecondHalfDiscriminatingFixtures, 0);
+    const failed = report.blockingErrors.find((error: { code: string }) => error.code === "provider_semantics_failed");
+    assert.ok(failed.blockers.some((item: string) => item.includes("discriminated cumulative 2ND_HALF")), JSON.stringify(failed));
+    // The gap is provider-wide: each season's own sample is still consistent and clean.
+    for (const league of report.leagues) {
+      for (const season of league.sampledSeasons) assert.equal(season.seasonSampleStatus, "sample_clean", league.target.providerLeagueId);
+    }
+    assert.deepEqual(report.blockingErrors.map((error: { code: string }) => error.code), ["provider_semantics_failed"]);
+  } finally {
+    await run.cleanup();
+  }
+});
+
 test("a competition whose identity fails is not sampled and never borrows another league's evidence", async () => {
   const w = world();
   w.details.get("8")!.country = { name: "England", iso2: "EN" };

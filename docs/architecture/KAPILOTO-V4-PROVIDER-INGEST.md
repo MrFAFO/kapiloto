@@ -1058,10 +1058,10 @@ Status: **implemented, not run, not complete.** Draft PR on branch
 `feat/v4-provider-ingest-a2b-pilot-v3`. It supersedes PR #30 and PR #19 and is
 ported onto the current V4 mainline. An independent adversarial review of
 head `76ab92a` (2026-11-04) passed the real-dispatch gate; the merge gate was
-not evaluated. Its credential-guard, fixture-identity and pagination-metadata
-findings are fixed on the branch (described below); its other findings stay
-open. A real operator
-dispatch is still open. A2-B is not complete and M2B stays NO-GO.
+not evaluated. Its credential-guard, fixture-identity, pagination-metadata
+and score-semantics findings are fixed on the branch (described below); its
+other findings stay open. A real operator dispatch is still open. A2-B is not
+complete and M2B stays NO-GO.
 
 Code:
 - `lib/kapiloto-v4/sportmonks-pilot.ts`: pure audits, summaries, report;
@@ -1122,9 +1122,29 @@ The pilot produces three deliberately separate evidence classes.
    - `meta.location` discriminates exactly one home and one away participant
      with distinct ids.
    - FT needs equal cumulative `2ND_HALF` / `CURRENT` pairs. A single pair is
-     unverified. No pair, a disagreement, or two values for one side fails.
-   - AET / FT_PEN need both pairs, and `CURRENT` must not be lower than
-     `2ND_HALF`.
+     unverified. No pair, a disagreement, or two values for one side fails
+     (for `1ST_HALF` too).
+   - A `1ST_HALF` score above a later cumulative score fails: goals never
+     decrease.
+   - Only an FT fixture with a scoring first half discriminates a cumulative
+     `2ND_HALF`. After a 0-0 first half, or without a `1ST_HALF` pair, a
+     second-half-only field would read the same, so such a fixture is
+     consistent but proves nothing. The provider-wide sample needs at least
+     one discriminating fixture
+     (`cumulativeSecondHalfDiscriminatingFixtures`), or provider semantics
+     fail. Seasons are not each required to discriminate.
+   - AET / FT_PEN need both pairs, `1ST_HALF` ≤ `2ND_HALF` ≤ `CURRENT`, and
+     they pass only when the pairs discriminate them:
+     - AET passes only when an extra-time goal separates the 90-minute
+       `2ND_HALF` from `CURRENT`. Without one it stays unverified.
+     - FT_PEN never passes. Whether `CURRENT` excludes the shootout cannot be
+       told from these pairs: a two-legged tie need not be level on the
+       night. The parser's assumption that `CURRENT` never includes penalties
+       is therefore **not verified by A2-B**.
+
+     An unverified extra-time fixture blocks its season. A cup or play-off
+     competition would need another discriminating source before its
+     extra-time handling counts as verified.
    - A returned lineup must show exactly 11 type-11 starters and type-12 bench
      rows on both sides. An unknown type id or team fails, and so does a
      duplicate player. A bench row with a null `player_id` is tolerated, as in
@@ -1255,8 +1275,15 @@ before they become rules. A2-A deliberately does not enforce them:
 - lineup type ids 11 (starter) and 12 (bench);
 - position ids 24-27 (GK/DF/MF/FW);
 - `2ND_HALF` being the cumulative 90-minute score (checked against `CURRENT`
-  for FT matches; relied on alone for AET/FT_PEN);
+  for FT matches, and discriminated only by an FT match with a scoring first
+  half; relied on alone for AET/FT_PEN);
 - participant `meta.location` as the home/away source.
+
+One parser assumption is outside what the A2-B pilot can verify: that
+`CURRENT` excludes the penalty shootout for `FT_PEN`. The score pairs cannot
+discriminate it, so A2-B reports every FT_PEN fixture as unverified. It stays
+an unverified assumption until a competition with shootouts is onboarded with
+another discriminating source.
 
 No migration is required unless the pilot finds a documentation/payload
 mismatch, which would be fixed with a new `definition_version`.
