@@ -288,13 +288,23 @@ provider pilot".
 - First real dispatch `41914842471` ran on 2026-11-04 from head
   `379163b`. It failed closed only on Premier League country code:
   archived entitlement and detail payloads both reported England/country 462
-  as `EN`, while the reviewed target still expected `GB`. The other four
-  launch-league identities passed and provider-wide semantics passed over 24
-  sampled fixtures. The artifact scan found zero `api_token` occurrences.
-- The branch now corrects the provider-native England code to `EN` and adds a
-  regression that rejects `GB`. A real re-run is pending.
+  as `EN`, while the reviewed target still expected `GB`.
+- The branch corrected the provider-native England code to `EN`, added a
+  regression that rejects `GB`, and fixed the associated offline runner
+  fixtures.
+- Corrected real dispatch `41919170280` ran from head `862be729` and
+  completed successfully. Its report is clean with zero blockers: 5/5
+  competition identities pass, 15/15 season samples are `sample_clean`, and
+  30 fixture captures pass the required provider-semantic gates. Lineups,
+  formations and statistics are non-empty on 30/30 fixtures; non-penalty xG is
+  present on 24/30 and remains explicitly unverified on six Ligat ha'Al
+  fixtures. The artifact has 51 raw HTTP 200 responses with matching
+  SHA-256/byte counts and zero `api_token` occurrences. Backfill approval,
+  fixture minting and team-identity readiness remain disabled/unassessed.
+- A2-B real-provider evidence is therefore **complete and clean**. PR #54 still
+  needs its separate merge-gate review before merge.
 
-A2-B is therefore **not complete**.
+M2B remains **NO-GO** until its own blockers are cleared.
 
 History, superseded by the above:
 
