@@ -1054,23 +1054,34 @@ historical trust rules. Columns:
 
 ## A2-B provider pilot (read only)
 
-Status: **implemented, first real dispatch safely blocked, re-run pending, not complete.** Draft PR on branch
+Status: **implemented and real-provider pilot passed; merge review still open.** Draft PR on branch
 `feat/v4-provider-ingest-a2b-pilot-v3`. It supersedes PR #30 and PR #19 and is
 ported onto the current V4 mainline. An independent adversarial review of
 head `76ab92a` (2026-11-04) passed the real-dispatch gate; the merge gate was
 not evaluated. Its credential-guard, fixture-identity, pagination-metadata
 and score-semantics findings are fixed on the branch (described below); its
-other findings stay open.
+other findings stay open for merge review.
 
-Real workflow run `41914842471` on head `379163b` reached Sportmonks and
-failed closed only on Premier League competition identity: the reviewed
+Real workflow run `41914842471` on head `379163b` first reached Sportmonks
+and failed closed only on Premier League competition identity: the reviewed
 expectation was `GB`, while both the entitlement and league-detail payloads
-reported country 462 / England / `EN`. Bundesliga, La Liga, Serie A and Ligat
-ha'Al identities passed; provider-wide semantics passed across 24 sampled
-fixtures. The uploaded artifact contained zero `api_token` occurrences.
-The archived payload therefore supports a reviewed correction of the
-provider-native England code to `EN`; a real re-run is still required.
-A2-B is not complete and M2B stays NO-GO.
+reported country 462 / England / `EN`. The archived payload supported the
+reviewed provider-native correction to `EN`.
+
+The corrected real re-run `41919170280` on head `862be729` completed
+successfully. The report is `evidenceStatus = clean` with no blocking errors:
+all five launch competitions passed identity, all 15 sampled seasons were
+`sample_clean`, and 30/30 fixture captures passed the required participant,
+score, lineup, formation, possession and shots-on-target gates. Provider-wide
+score semantics passed on all 30 captures, with 24 fixtures independently
+discriminating cumulative `2ND_HALF` semantics. Lineups, formations and
+statistics were non-empty on 30/30 fixtures. Non-penalty xG was present on
+24/30 fixtures and unverified on the six Ligat ha'Al fixtures; missing xG was
+kept missing and did not become zero. The artifact contained 51 raw HTTP 200
+responses with matching SHA-256/byte counts and zero `api_token` occurrences.
+`backfillApproval.approved` remains false, `fixtureMint.allowed` remains
+false, and team identity was not assessed. A2-B provider evidence is therefore
+clean; M2B still stays NO-GO until its separate gates are satisfied.
 
 Code:
 - `lib/kapiloto-v4/sportmonks-pilot.ts`: pure audits, summaries, report;
