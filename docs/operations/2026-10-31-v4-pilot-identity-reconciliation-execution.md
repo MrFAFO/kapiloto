@@ -7,7 +7,7 @@ Provider: `sportmonks`
 
 This record captures the production identity writes performed after two independent adversarial reviews and the reconciled PR #28 runbook. It does not authorize provider ingest or M2B.
 
-Status: **all 25 pilot identities are complete.** 5/5 competitions and 20/20 teams are attested, and the full R7 passed on 2026-11-03 (§9). The post-import duplicate audit after natural precompute and Toto cycles is still pending (§10). M2B remains NO-GO.
+Status: **all 25 pilot identities are complete.** 5/5 competitions and 20/20 teams are attested, and the full R7 passed on 2026-11-03 (§9). The natural-cycle observation window was complete by 2026-11-04 (§10). M2B remains NO-GO.
 
 ## 1. R1 baseline
 
@@ -350,7 +350,7 @@ Counts:
 
 No unauthorized Match Ledger, fixture-mint, ingest-run or fixture-mapping write occurred.
 
-## 10. Natural-cycle audit — pending
+## 10. Natural-cycle audit — complete (2026-11-04)
 
 Complete now, at 2026-11-03T20:53Z:
 - the duplicate, collision and injectivity reports;
@@ -367,6 +367,23 @@ Still required by the reviewed plan (§12, R7), after the next two natural preco
 Also compare the Sportmonks fixture mappings with the baseline of 32. The new mappings may legitimately let V3 map future Bournemouth or Sevilla fixtures. Record any such row in the follow-up audit.
 
 Do not trigger an ingest or historical workflow to satisfy this check.
+
+Update 2026-11-04: the observation window is complete.
+
+The operation handoff for the next identity step reported:
+- many natural precompute cycles with no duplicate or conflict;
+- a structured sync at 06:07:24Z;
+- a round 264401 update at 08:15:04Z;
+- Sportmonks fixture mappings unchanged at 32.
+
+The read-only preflight of `docs/operations/2026-11-04-v4-class-b-deferred-identities-execution.md` (10:38–10:48Z) confirmed the resulting state independently:
+- no folded canonical duplicate and no alias pointing at two teams;
+- no injectivity violation;
+- readiness and provider-ref conflicts V2 empty;
+- 32 Sportmonks fixture mappings, with none involving Bournemouth or Sevilla;
+- 52 and 676 still `manual_override` with confidence NULL and their original event and generation ids.
+
+R4 no longer blocks the remaining identities. Seven of the nine other deferred Class-B refs were completed on 2026-11-04 in that record. Elche 1099 and Athletic Club 13258 remain deferred for open round 264401.
 
 ## 11. Remaining gates
 

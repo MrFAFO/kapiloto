@@ -170,6 +170,14 @@ Remaining only:
 
 - 625 Juventus — existing canonical `יובנטוס`
 
+Update 2026-11-04: Juventus 625 was mapped and attested after round 264301 settled. It got:
+- its own locked R4-pattern transaction;
+- a `manual_override` mapping with confidence `NULL`;
+- only the exact English Sportmonks alias `Juventus`;
+- a separate version-1 attestation.
+
+Juventus is not in open round 264401. The post-check reads 20/20 canonical, 20/20 Sportmonks mapped, 20/20 `manual_override` and 20/20 actively attested, with readiness empty. See `docs/operations/2026-11-04-v4-class-b-deferred-identities-execution.md`.
+
 Global checks after phase 1:
 
 - blocking Sportmonks identity issues: **0**
@@ -186,10 +194,7 @@ Global checks after phase 1:
 
 ## 7. Status
 
-Serie A identity onboarding is **19/20 complete**.
-
-Juventus must be revisited only after Winner round `264301` is no longer
-active/under_review. Its exact provider ID and canonical target are frozen.
+Serie A identity onboarding is **20/20 complete** (2026-11-04). Phase 1 ended at 19/20, and Juventus was completed on 2026-11-04 (§6 update).
 
 Serie A remains registry state `validating`, not `supported`.
 

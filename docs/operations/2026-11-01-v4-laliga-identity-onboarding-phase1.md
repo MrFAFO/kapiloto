@@ -166,6 +166,16 @@ Remaining only:
 
 Update 2026-11-03: Sevilla 676 was mapped and attested by pilot R4 after round 264301 settled. See `docs/operations/2026-10-31-v4-pilot-identity-reconciliation-execution.md` §8. La Liga is now 15/20. Getafe 106, Rayo Vallecano 377, Real Sociedad 594, Elche 1099 and Athletic Club 13258 remain.
 
+Update 2026-11-04: Getafe 106, Rayo Vallecano 377 and Real Sociedad 594 were mapped and attested. Each got:
+- its own locked R4-pattern transaction;
+- a `manual_override` mapping with confidence `NULL`;
+- only its exact English Sportmonks alias;
+- a separate version-1 attestation.
+
+The post-check reads 20/20 canonical and 18/20 Sportmonks mapped, `manual_override` and actively attested, with readiness empty. See `docs/operations/2026-11-04-v4-class-b-deferred-identities-execution.md`.
+
+Elche 1099 and Athletic Club 13258 were deliberately not touched. Both play in open Winner round 264401: game 13 Elche v Betis, and game 12 Osasuna v Athletic Bilbao. They remain the only missing La Liga mappings.
+
 Global checks after phase 1:
 
 - blocking Sportmonks identity issues: **0**
@@ -182,11 +192,9 @@ Global checks after phase 1:
 
 ## 7. Status
 
-La Liga identity onboarding is **14/20 complete**.
+La Liga identity onboarding is **18/20 complete** (2026-11-04). Phase 1 ended at 14/20. Sevilla followed on 2026-11-03, and Getafe, Rayo Vallecano and Real Sociedad on 2026-11-04 (§6 updates).
 
-The six deferred Class-B mappings must be revisited only after Winner round
-`264301` is no longer active. Their exact provider IDs and canonical targets are
-already frozen.
+The two remaining Class-B mappings, Elche 1099 and Athletic Club 13258, must be revisited only after Winner round `264401` is no longer active. Their exact provider IDs and canonical targets are already frozen.
 
 La Liga remains registry state `validating`, not `supported`.
 
