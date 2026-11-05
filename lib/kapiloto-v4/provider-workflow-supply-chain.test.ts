@@ -44,6 +44,11 @@ test("provider-secret workflow allowlist is complete and hardened", async () => 
     );
     assert.match(
       source,
+      /environment:\s*provider-readonly/,
+      `${name} must use the protected provider-readonly environment`,
+    );
+    assert.match(
+      source,
       /persist-credentials:\s*false/,
       `${name} must not persist checkout credentials`,
     );
