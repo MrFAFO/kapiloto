@@ -35,13 +35,64 @@ function stripYamlComment(line: string): string {
     const char = line[index];
     if (char === "'" && !double) single = !single;
     else if (char === '"' && !single && line[index - 1] !== "\\") double = !double;
-    else if (char === "#" && !single && !double) return line.slice(0, index).trimEnd();
+    else if (
+      char === "#" &&
+      !single &&
+      !double &&
+      (index === 0 || /\\s/.test(line[index - 1] ?? ""))
+    ) {
+      return line.slice(0, index).trimEnd();
+    }
   }
   return line.trimEnd();
 }
 
 function cleanLines(source: string): string[] {
   return normalizeYaml(source).split("\n").map(stripYamlComment);
+}
+
+function assertCanonicalProviderYaml(source: string, name: string): void {
+  const lines = normalizeYaml(source).split("\n");
+
+  for (const [index, rawLine] of lines.entries()) {
+    const line = stripYamlComment(rawLine);
+    if (!line.trim()) continue;
+
+    assert.doesNotMatch(
+      line,
+      /^\s*\?\s+/,
+      `${name}:${index + 1} explicit-key YAML syntax is not allowed`,
+    );
+    assert.doesNotMatch(
+      line,
+      /^\s*["'][^"']+["']\s*:/,
+      `${name}:${index + 1} quoted mapping keys are not allowed`,
+    );
+    assert.doesNotMatch(
+      line,
+      /^\s*[A-Za-z0-9_-]+\s*:\s*[\[{]/,
+      `${name}:${index + 1} flow-style mappings/sequences are not allowed`,
+    );
+
+    if (/^ {2}[^ ]/.test(line) && /:\s*$/.test(line)) {
+      const key = line.trim().slice(0, -1);
+      if (key !== "workflow_dispatch" && key !== "contents") {
+        assert.match(
+          key,
+          /^[A-Za-z0-9_-]+$/,
+          `${name}:${index + 1} job/trigger keys must use simple canonical identifiers`,
+        );
+      }
+    }
+
+    if (/^ {6}-\s+/.test(line)) {
+      assert.match(
+        line,
+        /^ {6}-\s+(?:name|uses)\s*:/,
+        `${name}:${index + 1} every step must begin with "- name:" or "- uses:"`,
+      );
+    }
+  }
 }
 
 function indent(line: string): number {
@@ -145,21 +196,38 @@ function assertReadOnlyPermissions(source: string, name: string): void {
     /^permissions\s*:\s*\n {2}contents\s*:\s*read\s*$/m,
     `${name} must set top-level contents: read permissions`,
   );
-  assert.doesNotMatch(clean, /permissions\s*:\s*write-all/i, `${name} must not use write-all permissions`);
-  assert.doesNotMatch(clean, /^\s+[A-Za-z0-9_-]+\s*:\s*write\s*$/im, `${name} must not grant write permission`);
+  assert.doesNotMatch(
+    clean,
+    /permissions\s*:\s*(?:"|')?write-all(?:"|')?/i,
+    `${name} must not use write-all permissions`,
+  );
+  assert.doesNotMatch(
+    clean,
+    /^\s+[A-Za-z0-9_-]+\s*:\s*(?:"|')?write(?:"|')?\s*$/im,
+    `${name} must not grant write permission`,
+  );
 }
 
 function assertLockedInstallCommands(source: string, name: string): void {
   const clean = cleanLines(source).join("\n");
-  assert.doesNotMatch(clean, /\bnpm\s+(?:install|i)\b/i, `${name} must not use npm install/npm i`);
+  assert.doesNotMatch(
+    clean,
+    /\bnpm\s+(?:install|i|add|clean-install|rebuild|update|uninstall|remove|link)\b/i,
+    `${name} must not run npm package mutation or rebuild commands`,
+  );
   const ciCommands = [...clean.matchAll(/\bnpm\s+ci\b[^\n]*/gi)].map((match) => match[0]);
   for (const command of ciCommands) {
-    assert.match(command, /(?:^|\s)--ignore-scripts(?:\s|$)/, `${name} npm ci must include --ignore-scripts`);
+    assert.match(
+      command,
+      /^npm\s+ci\s+--ignore-scripts\s*$/,
+      `${name} npm ci must be exactly "npm ci --ignore-scripts"`,
+    );
   }
 }
 
 function assertProviderWorkflowPolicy(name: string, source: string): void {
   const normalized = normalizeYaml(source);
+  assertCanonicalProviderYaml(normalized, name);
   const triggers = workflowTriggers(normalized);
   assert.deepEqual(triggers, ["workflow_dispatch"], `${name} must be workflow_dispatch-only`);
   assertReadOnlyPermissions(normalized, name);
@@ -224,7 +292,7 @@ function assertLockfilePolicy(packageJsonSource: string, packageLockSource: stri
 
   for (const [name, entry] of Object.entries(packageLock.packages ?? {})) {
     if (!name || entry.inBundle) continue;
-    if (!entry.resolved) continue;
+    assert.ok(entry.resolved, `${name} must have a resolved registry URL unless it is bundled`);
     assert.match(
       entry.resolved,
       /^https:\/\/registry\.npmjs\.org\//,
@@ -264,7 +332,9 @@ test("npm lockfile matches direct dependencies and registry entries are sha512 i
 });
 
 test("M-5 guard rejects reviewed bypass variants and accepts CRLF", async () => {
-  const providerSpike = await readFile(path.join(WORKFLOW_DIR, "provider-spike.yml"), "utf8");
+  const providerSpike = normalizeYaml(
+    await readFile(path.join(WORKFLOW_DIR, "provider-spike.yml"), "utf8"),
+  );
   assert.doesNotThrow(() => assertProviderWorkflowPolicy("provider-spike.yml", providerSpike.replace(/\n/g, "\r\n")));
 
   const mustFail: Array<[string, string]> = [
@@ -279,6 +349,16 @@ test("M-5 guard rejects reviewed bypass variants and accepts CRLF", async () => 
     ["quoted push", providerSpike.replace("  workflow_dispatch:", '  "push":\n  workflow_dispatch:')],
     ["schedule spacing", providerSpike.replace("  workflow_dispatch:", "  schedule :\n  workflow_dispatch:")],
     ["write-all", providerSpike.replace("permissions:\n  contents: read", "permissions: write-all")],
+    ["quoted write-all", providerSpike.replace("permissions:\n  contents: read", 'permissions: "write-all"')],
+    ["quoted contents write", providerSpike.replace("contents: read", 'contents: "write"')],
+    ["flow permissions", providerSpike.replace("permissions:\n  contents: read", "permissions: {contents: write, id-token: write}")],
+    ["npm clean-install", providerSpike.replace("npm ci --ignore-scripts", "npm clean-install")],
+    ["npm rebuild after ci", providerSpike.replace("npm ci --ignore-scripts", "npm ci --ignore-scripts && npm rebuild")],
+    ["npm add", providerSpike.replace("npm ci --ignore-scripts", "npm add left-pad")],
+    ["step starts with id", providerSpike.replace("      - name: Setup Node", "      - id: setup\n        uses: actions/setup-node@v4")],
+    ["quoted job id", providerSpike.replace("  spike:", '  "spike":')],
+    ["flow job", providerSpike.replace("  spike:", "  spike: {uses: evil/workflow.yml}")],
+    ["explicit trigger key", providerSpike.replace("  workflow_dispatch:", "  ? push\n  : {}\n  workflow_dispatch:")],
     [
       "second checkout without credential hardening",
       providerSpike.replace(
@@ -295,6 +375,7 @@ test("M-5 guard rejects reviewed bypass variants and accepts CRLF", async () => 
   assert.equal(containsSecretContext("env:\n  X: ${{ secrets['SPORTMONKS_API_TOKEN'] }}\n"), true);
   assert.equal(containsSecretContext("env:\n  X: ${{ toJSON(secrets) }}\n"), true);
   assert.equal(containsSecretContext("    secrets: inherit\n"), true);
+  assert.equal(containsSecretContext("env:\n  X: x#${{ secrets.SPORTMONKS_API_TOKEN }}\n"), true);
 });
 
 test("lockfile guard rejects non-registry resolutions and weak integrity", async () => {
@@ -311,4 +392,9 @@ test("lockfile guard rejects non-registry resolutions and weak integrity", async
   const weak = structuredClone(parsed);
   weak.packages[target].integrity = "sha1-deadbeef";
   assert.throws(() => assertLockfilePolicy(packageJson, JSON.stringify(weak)));
+
+  const missing = structuredClone(parsed);
+  delete missing.packages[target].resolved;
+  delete missing.packages[target].integrity;
+  assert.throws(() => assertLockfilePolicy(packageJson, JSON.stringify(missing)));
 });
