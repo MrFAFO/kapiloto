@@ -25,6 +25,7 @@ jobs:
   spike:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: provider-readonly
     timeout-minutes: 30
 
     steps:
