@@ -85,6 +85,9 @@ function assertCanonicalProviderYaml(source: string, name: string): void {
       }
     }
 
+    if (/^ {4}-\s+/.test(line)) {
+      assert.fail(`${name}:${index + 1} step list items must be indented exactly six spaces`);
+    }
     if (/^ {6}-\s+/.test(line)) {
       assert.match(
         line,
@@ -189,6 +192,39 @@ function actionUse(step: string[]): string | undefined {
   return undefined;
 }
 
+function allActionUses(source: string): Array<{ line: number; use: string }> {
+  const lines = cleanLines(source);
+  const uses: Array<{ line: number; use: string }> = [];
+  for (const [index, line] of lines.entries()) {
+    if (!/\buses\s*:/.test(line)) continue;
+    const match = line.match(/^\s*(?:-\s*)?uses\s*:\s*([^\s]+)\s*$/);
+    assert.ok(match, `uses: at line ${index + 1} must use canonical scalar syntax`);
+    uses.push({ line: index, use: match[1] });
+  }
+  return uses;
+}
+
+function assertCheckoutCredentials(source: string, name: string): void {
+  const lines = cleanLines(source);
+  const uses = allActionUses(source);
+  for (const action of uses) {
+    if (!action.use.startsWith("actions/checkout@")) continue;
+
+    let stepStart = action.line;
+    while (stepStart >= 0 && !/^ {6}-\s+(?:name|uses)\s*:/.test(lines[stepStart])) stepStart -= 1;
+    assert.ok(stepStart >= 0, `${name} checkout must be inside a canonical step`);
+
+    let stepEnd = action.line + 1;
+    while (stepEnd < lines.length && !/^ {6}-\s+(?:name|uses)\s*:/.test(lines[stepEnd])) stepEnd += 1;
+    const step = lines.slice(stepStart, stepEnd).join("\n");
+    assert.match(
+      step,
+      /^\s*persist-credentials\s*:\s*false\s*$/m,
+      `${name} checkout at line ${action.line + 1} must set persist-credentials: false in the same step`,
+    );
+  }
+}
+
 function assertReadOnlyPermissions(source: string, name: string): void {
   const clean = cleanLines(source).join("\n");
   assert.match(
@@ -249,20 +285,15 @@ function assertProviderWorkflowPolicy(name: string, source: string): void {
       `${name}/${job.name} must use exactly environment: provider-readonly`,
     );
 
-    const steps = stepBlocks(job);
-    for (const step of steps) {
-      const use = actionUse(step);
-      if (!use) continue;
-      assert.ok(ALLOWED_ACTION_USES.has(use), `${name}/${job.name} uses unreviewed or mutable action ${use}`);
-      if (use.startsWith("actions/checkout@")) {
-        assert.match(
-          step.join("\n"),
-          /^\s*persist-credentials\s*:\s*false\s*$/m,
-          `${name}/${job.name} checkout must set persist-credentials: false in the same step`,
-        );
-      }
-    }
   }
+
+  for (const action of allActionUses(normalized)) {
+    assert.ok(
+      ALLOWED_ACTION_USES.has(action.use),
+      `${name} uses unreviewed or mutable action ${action.use} at line ${action.line + 1}`,
+    );
+  }
+  assertCheckoutCredentials(normalized, name);
 }
 
 function assertLockfilePolicy(packageJsonSource: string, packageLockSource: string): void {
