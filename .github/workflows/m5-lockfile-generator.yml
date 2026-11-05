@@ -1,0 +1,41 @@
+name: M5 lockfile generator
+
+on:
+  push:
+    branches:
+      - chore/m5-supply-chain-hardening
+    paths:
+      - package.json
+      - .github/workflows/m5-lockfile-generator.yml
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Generate lockfile without lifecycle scripts
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Verify lockfile exists
+        run: test -s package-lock.json
+
+      - name: Upload generated lockfile
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: m5-package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1
