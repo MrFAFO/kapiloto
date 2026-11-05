@@ -39,7 +39,7 @@ function stripYamlComment(line: string): string {
       char === "#" &&
       !single &&
       !double &&
-      (index === 0 || /\\s/.test(line[index - 1] ?? ""))
+      (index === 0 || /\s/.test(line[index - 1] ?? ""))
     ) {
       return line.slice(0, index).trimEnd();
     }
