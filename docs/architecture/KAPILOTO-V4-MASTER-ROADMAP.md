@@ -271,6 +271,43 @@ M1 is containment, not the final trust model. Existing Sportmonks
 
 A2-B is the current workstream.
 
+Current implementation (2026-11-04): a draft PR on
+`feat/v4-provider-ingest-a2b-pilot-v3`. It ports PR #30 onto the current V4
+mainline and merges it with the 2026-11-02 family/history readiness tool into
+one read-only pilot, described in `KAPILOTO-V4-PROVIDER-INGEST.md` under "A2-B
+provider pilot".
+- It **supersedes PR #30** (`feat/v4-provider-ingest-a2b-pilot-v2`, head
+  `e5c1d579`), which superseded PR #19. Neither older PR is merged or revived.
+- It is not merged.
+- Its independent adversarial review of head `76ab92a` (2026-11-04) passed
+  the real-dispatch gate; the merge gate was not evaluated. The review's
+  credential-guard, fixture-identity, pagination-metadata and score-semantics
+  findings were then fixed on the branch by the reviewer, so those fix diffs
+  have had no separate review. The other findings stay open for the merge
+  review.
+- First real dispatch `41914842471` ran on 2026-11-04 from head
+  `379163b`. It failed closed only on Premier League country code:
+  archived entitlement and detail payloads both reported England/country 462
+  as `EN`, while the reviewed target still expected `GB`.
+- The branch corrected the provider-native England code to `EN`, added a
+  regression that rejects `GB`, and fixed the associated offline runner
+  fixtures.
+- Corrected real dispatch `41919170280` ran from head `862be729` and
+  completed successfully. Its report is clean with zero blockers: 5/5
+  competition identities pass, 15/15 season samples are `sample_clean`, and
+  30 fixture captures pass the required provider-semantic gates. Lineups,
+  formations and statistics are non-empty on 30/30 fixtures; non-penalty xG is
+  present on 24/30 and remains explicitly unverified on six Ligat ha'Al
+  fixtures. The artifact has 51 raw HTTP 200 responses with matching
+  SHA-256/byte counts and zero `api_token` occurrences. Backfill approval,
+  fixture minting and team-identity readiness remain disabled/unassessed.
+- A2-B real-provider evidence is therefore **complete and clean**. PR #54 still
+  needs its separate merge-gate review before merge.
+
+M2B remains **NO-GO** until its own blockers are cleared.
+
+History, superseded by the above:
+
 Branch:
 `feat/v4-provider-ingest-a2b-pilot`
 
@@ -283,7 +320,7 @@ Snapshot head:
 Base `main` at the time:
 `e0826c780dca6e388ef65fa595046716d0ce3adb`
 
-### What the A2-B branch adds
+### What the original A2-B branch (PR #19) added
 
 - read-only Sportmonks pilot capture;
 - raw-response SHA-256 before JSON parsing;
@@ -362,6 +399,11 @@ commit `2b2aa7cc9bab39582b0137eb3fadc5eba0d1e1ab` after fixing season
 fixture discovery and one real Sportmonks edge case: a bench row with
 `player_id = null`. The parser remains strict for starters; an unidentified
 bench row is not promoted into a canonical player observation.
+
+This run used the pre-amendment readiness tool. On the v3 draft PR the same
+workflow file runs the amended A2-B pilot, renamed "Kapiloto V4 Sportmonks
+A2-B Pilot (read-only)". The coverage below is still valid observed evidence.
+It is not the "A2-B amended and re-run" gate.
 
 Run:
 `41421166450`
@@ -622,7 +664,19 @@ tested; the runbook rehearsal before M2B covers them.
 
 ### Gate 4 — amend A2-B pilot tooling
 
-Apply the independent-review findings to PR #19:
+Status: **implemented on the v3 draft PR, not done.**
+- It covers every item below.
+- The independent adversarial review of `76ab92a` passed the real-dispatch
+  gate (2026-11-04); its credential-guard, fixture-identity,
+  pagination-metadata and score-semantics findings are fixed on the branch.
+- A real read-only dispatch is pending.
+
+The dispatch must not run before that review. Its report always says
+`backfillApproval.approved = false` and `teamIdentityReadiness.assessed =
+false`.
+
+Apply the independent-review findings to PR #19 (now carried by PR #30 and
+then the v3 draft PR):
 
 - workflow should be operator-dispatched rather than provider-calling on each
   push;
@@ -795,7 +849,11 @@ What still blocks M2B after PR #43:
   reconciled (R4/R6) and the full 20/20 R7 passed;
 - DONE (2026-11-04): entity/reconciliation reports are clean for the pilot
   scope, immediately after R4 and again after the natural-cycle window;
-- A2-B (PR #19) amended and re-run;
+- A2-B amended and re-run. **Not done.** The amendment is the v3 draft PR
+  (`feat/v4-provider-ingest-a2b-pilot-v3`, superseding PR #30 and PR #19). It
+  still needs independent review, merge and a real operator dispatch whose
+  evidence is reviewed. The 2026-11-02 readiness run used the pre-amendment
+  tool and does not count as this re-run;
 - DONE: the recovery runbook is implemented, independently reviewed by Claude and Fable, and merged in PR #47 (`7d41c43045ced8f582393e831e176eba2757cbeb`):
   - the hardened M2C body (both ingest RPCs, every non-operator role) with a
     read-only verification;
@@ -986,7 +1044,10 @@ As of the snapshot date:
 - the pilot identities are complete: 20/20 teams and 5/5 competitions are
   attested, the full R7 passed on 2026-11-03, and the natural-cycle
   observation window was clean by 2026-11-04;
-- PR #19 is not merged;
+- PR #19 and PR #30 are not merged and are superseded. The amended A2-B
+  pilot is the v3 draft PR (`feat/v4-provider-ingest-a2b-pilot-v3`). It is not
+  merged, not independently reviewed and not yet dispatched against real
+  Sportmonks;
 - PR #43 (D-060, attestation-aware consumer reads and the squad-state read
   binding) is merged as `a531187794681469d203ade3e1a01b78b92625cc` and its production migration is applied; the
   1A/1C reads remain the only consumer reads in production, and no
@@ -1081,7 +1142,7 @@ A new agent should use this map rather than search randomly.
 
 A new conversation can start with:
 
-> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Match Ledger still has 0 observations and V1/V2 ingest remains disabled. Ligat Ha'al is identity-complete 14/14, Bundesliga 18/18, Premier League 20/20, La Liga 18/20 and Serie A 20/20, from frozen current-season Sportmonks roster captures. All 92 launch-universe clubs exist canonically. Round 264301 is settled (D-062 guarded correction). Pilot R4 for Bournemouth 52 and Sevilla 676 and the full 20/20 pilot R7 passed on 2026-11-03, and the natural-cycle window after R4 was clean by 2026-11-04. On 2026-11-04 seven deferred Class-B identities were mapped and attested, each in its own reviewed operation: Liverpool 8, Arsenal 19, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594 and Juventus 625 (`docs/operations/2026-11-04-v4-class-b-deferred-identities-execution.md`). The only remaining identity work is Elche 1099 and Athletic Club 13258. Both are deferred because they play in open Winner round 264401; do them only after that round is no longer active, each in its own reviewed operation. After them, rerun the full five-league readiness audit. After identity readiness, validate provider-family/history gates, amend/re-run A2-B and close the remaining M2B gates before the first real Match Ledger ingest. PR #43 (D-060) adds the attestation-aware consumer reads and binds lineup snapshots to their squad-state read; it is merged and applied to production, and it does not lift any other M2B gate.
+> Read `docs/architecture/KAPILOTO-V4-MASTER-ROADMAP.md` first. Treat it as the navigation/status document, not as a replacement for code or runtime truth. Then read the primary docs for the active workstream and verify the current GitHub/Supabase/Vercel state before changing anything. Preserve frozen V1/V2/V3 semantics and V4 versioned-science rules. Do not guess identity or missing data. Current handoff: D-057 containment, V3 Sportmonks insert-only alignment and D-058 M2A are deployed. Match Ledger still has 0 observations and V1/V2 ingest remains disabled. Ligat Ha'al is identity-complete 14/14, Bundesliga 18/18, Premier League 20/20, La Liga 18/20 and Serie A 20/20, from frozen current-season Sportmonks roster captures. All 92 launch-universe clubs exist canonically. Round 264301 is settled (D-062 guarded correction). Pilot R4 for Bournemouth 52 and Sevilla 676 and the full 20/20 pilot R7 passed on 2026-11-03, and the natural-cycle window after R4 was clean by 2026-11-04. On 2026-11-04 seven deferred Class-B identities were mapped and attested, each in its own reviewed operation: Liverpool 8, Arsenal 19, Ipswich 116, Getafe 106, Rayo Vallecano 377, Real Sociedad 594 and Juventus 625 (`docs/operations/2026-11-04-v4-class-b-deferred-identities-execution.md`). The only remaining identity work is Elche 1099 and Athletic Club 13258. Both are deferred because they play in open Winner round 264401; do them only after that round is no longer active, each in its own reviewed operation. After them, rerun the full five-league readiness audit. After identity readiness, validate provider-family/history gates and close the remaining M2B gates before the first real Match Ledger ingest. A2-B is amended on the v3 draft PR (`feat/v4-provider-ingest-a2b-pilot-v3`, superseding PR #30). Its independent adversarial review of `76ab92a` passed the real-dispatch gate on 2026-11-04 (merge gate not evaluated). It still needs a merge and a real read-only dispatch. A2-B never approves a backfill and does not assess team identity. PR #43 (D-060) adds the attestation-aware consumer reads and binds lineup snapshots to their squad-state read; it is merged and applied to production, and it does not lift any other M2B gate.
 
 ## 15. Updating this file
 

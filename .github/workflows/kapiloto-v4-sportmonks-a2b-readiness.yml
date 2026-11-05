@@ -1,19 +1,33 @@
-name: Kapiloto V4 Sportmonks Family/History Readiness
+name: Kapiloto V4 Sportmonks A2-B Pilot (read-only)
 
+# Operator-dispatched only. This workflow calls the real Sportmonks API, so it
+# must never gain a push, pull_request, schedule or other automatic trigger.
+# It writes only to the job's artifact directory: no Supabase credentials are
+# available to it, and the report always says backfillApproval.approved=false.
 on:
   workflow_dispatch:
     inputs:
       seasons_per_league:
-        description: "How many most-recent accessible seasons to sample per supported league"
+        description: "Most-recent accessible seasons sampled per reviewed league (1-6)"
         required: true
         default: "3"
+        type: string
       fixtures_per_season:
-        description: "How many finished fixtures to sample per season"
+        description: "Finished fixtures sampled per selected season (1-5)"
         required: true
         default: "2"
+        type: string
+      required_seasons:
+        description: "Comma-separated LEAGUE_ID:SEASON_ID seasons that must each be sampled (every season of a later backfill proposal)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
-  readiness:
+  pilot:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -22,6 +36,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -34,32 +50,31 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Focused A2-B readiness tests
-        run: npx tsx --test lib/kapiloto-v4/sportmonks-ledger.test.ts lib/kapiloto-v4/sportmonks-pilot.test.ts
+      - name: Focused A2-B tests
+        run: npx tsx --test lib/kapiloto-v4/sportmonks-ledger.test.ts lib/kapiloto-v4/sportmonks-pilot.test.ts lib/kapiloto-v4/sportmonks-pilot-boundary.test.ts lib/kapiloto-v4/sportmonks-pilot-runner.test.ts
 
-      - name: Run read-only Sportmonks family/history readiness pilot
+      # The secret is scoped to this one step: dependency installation and the
+      # test steps above never see it.
+      - name: Run read-only Sportmonks A2-B pilot
         env:
           SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
-        run: >
+          SEASONS_PER_LEAGUE: ${{ inputs.seasons_per_league }}
+          FIXTURES_PER_SEASON: ${{ inputs.fixtures_per_season }}
+          REQUIRED_SEASONS: ${{ inputs.required_seasons }}
+        run: >-
           npm run pilot:sportmonks-a2b --
-          --out artifacts/kapiloto-v4-a2b-readiness
-          --seasons-per-league ${{ inputs.seasons_per_league }}
-          --fixtures-per-season ${{ inputs.fixtures_per_season }}
+          --out artifacts/kapiloto-v4-a2b
+          --seasons-per-league "$SEASONS_PER_LEAGUE"
+          --fixtures-per-season "$FIXTURES_PER_SEASON"
+          --required-seasons "$REQUIRED_SEASONS"
 
-      - name: Print readiness report
-        if: always()
-        run: |
-          if [ -f artifacts/kapiloto-v4-a2b-readiness/pilot-report.json ]; then
-            cat artifacts/kapiloto-v4-a2b-readiness/pilot-report.json
-          fi
-
-      - name: Upload readiness artifacts
+      - name: Upload exact pilot evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kapiloto-v4-sportmonks-family-history-readiness
-          path: artifacts/kapiloto-v4-a2b-readiness
-          if-no-files-found: warn
+          name: kapiloto-v4-sportmonks-a2b-pilot
+          path: artifacts/kapiloto-v4-a2b
+          if-no-files-found: error
           retention-days: 14
 
   v4-regression:
@@ -71,6 +86,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v4

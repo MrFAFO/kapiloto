@@ -113,6 +113,13 @@ otherwise usable match.
 The workflow is read-only: these results are readiness evidence and do not
 constitute a historical Match Ledger backfill or a production ingest grant.
 
+This run used the pre-amendment readiness tool at `2b2aa7cc`. That tool pooled
+gate status within a season (any pass and no fail counted as pass), kept
+`explicitZero` in its gate summary, did not keep a raw-response index and did
+not check the country ISO2. The amended pilot (see "A2-B provider pilot" below)
+replaces it. The coverage table above stays valid as observed evidence. It is
+not the re-run of the amended A2-B, which is still an open M2B gate.
+
 ## Parser rules (`kapiloto-sportmonks-ledger-mapping-v1`)
 
 The mapping version is also the ledger `ingest_version`.
@@ -1045,24 +1052,243 @@ historical trust rules. Columns:
   `match_ledger_mapping_conflicts()`.
 - Detection only: nothing is mutated.
 
-## A2-B (not in this change)
+## A2-B provider pilot (read only)
 
-A2-B covers:
+Status: **implemented and real-provider pilot passed; merge review still open.** Draft PR on branch
+`feat/v4-provider-ingest-a2b-pilot-v3`. It supersedes PR #30 and PR #19 and is
+ported onto the current V4 mainline. An independent adversarial review of
+head `76ab92a` (2026-11-04) passed the real-dispatch gate; the merge gate was
+not evaluated. Its credential-guard, fixture-identity, pagination-metadata
+and score-semantics findings are fixed on the branch (described below); its
+other findings stay open for merge review.
 
-- an operator CLI that captures bundles, hashing the exact response bytes and
-  setting fetch statuses honestly;
-- a verified entitlement snapshot and a run header;
-- team and competition reconciliation, including the preflight that promotes
-  verified Sportmonks competitions to `manual_override`, and
-  `match_ledger_provider_ref_conflicts` as a pilot and backfill gate;
-- a small pilot that checks the seeded definitions against real payloads.
+Real workflow run `41914842471` on head `379163b` first reached Sportmonks
+and failed closed only on Premier League competition identity: the reviewed
+expectation was `GB`, while both the entitlement and league-detail payloads
+reported country 462 / England / `EN`. The archived payload supported the
+reviewed provider-native correction to `EN`.
 
-No migration is required unless the pilot finds a documentation/payload
-mismatch, which would be fixed with a new `definition_version`.
+The corrected real re-run `41919170280` on head `862be729` completed
+successfully. The report is `evidenceStatus = clean` with no blocking errors:
+all five launch competitions passed identity, all 15 sampled seasons were
+`sample_clean`, and 30/30 fixture captures passed the required participant,
+score, lineup, formation, possession and shots-on-target gates. Provider-wide
+score semantics passed on all 30 captures, with 24 fixtures independently
+discriminating cumulative `2ND_HALF` semantics. Lineups, formations and
+statistics were non-empty on 30/30 fixtures. Non-penalty xG was present on
+24/30 fixtures and unverified on the six Ligat ha'Al fixtures; missing xG was
+kept missing and did not become zero. The artifact contained 51 raw HTTP 200
+responses with matching SHA-256/byte counts and zero `api_token` occurrences.
+`backfillApproval.approved` remains false, `fixtureMint.allowed` remains
+false, and team identity was not assessed. A2-B provider evidence is therefore
+clean; M2B still stays NO-GO until its separate gates are satisfied.
+
+Code:
+- `lib/kapiloto-v4/sportmonks-pilot.ts`: pure audits, summaries, report;
+- `lib/kapiloto-v4/sportmonks-pilot-io.ts`: output directory, raw archive,
+  credential scrub;
+- `lib/kapiloto-v4/sportmonks-pilot-runner.ts`: the orchestration. Its HTTP
+  transport is injected so `sportmonks-pilot-runner.test.ts` can rehearse a
+  full run offline against recorded-shape responses;
+- `tools/kapiloto-v4-sportmonks-pilot.ts`: the operator entry point (`npm
+  run pilot:sportmonks-a2b`).
+
+The runner lives in `tools/`. The M2B boundary test forbids `scripts/`, `app/`
+and production `lib/` paths from importing the V4 foundation.
+
+Workflow: `.github/workflows/kapiloto-v4-sportmonks-a2b-readiness.yml`, named
+"Kapiloto V4 Sportmonks A2-B Pilot (read-only)". It is the same file that ran
+the 2026-11-02 readiness sample. It replaces that sample's tool and PR #30's
+separate workflow.
+
+A2-B is an **operator-dispatched evidence producer**. It does not ingest and it
+does not approve a backfill.
+- **Trigger.** `workflow_dispatch` only. A test pins this: there is no push,
+  pull_request, schedule or other trigger.
+- **Credentials.** The Sportmonks token is the only secret. It is scoped to
+  the pilot step, so dependency installation and the tests never see it.
+  Dispatch inputs reach the shell only through `env`. The workflow holds no
+  Supabase credential.
+- **Reach.** The runner's import graph contains no Supabase client and no RPC
+  call, and its only network call goes to `api.sportmonks.com` (tested). It
+  creates no `provider_ingest_run`, mints no fixture, writes no Match Ledger
+  observation and changes no identity mapping.
+- **Parser.** The offline A2-A parser runs only with the frozen policy
+  `fixtureMint = {allowed: false, kickoffBefore: null}`, and its output is
+  discarded.
+
+### Evidence classes
+
+The pilot produces three deliberately separate evidence classes.
+
+1. **Competition identity / entitlement**, per reviewed D-059 target. The
+   subscription listing (`/leagues?include=country`) and the league detail
+   (`/leagues/{id}?include=country;currentSeason;seasons`) must both agree on:
+   - the league id and name;
+   - the country name (observed in the 2026-11-02 run);
+   - the country ISO2;
+   - `type = league` and `sub_type = domestic`.
+
+   In addition:
+   - the current season must belong to the league and be `is_current`;
+   - every listed season must carry the league's id. A malformed season row
+     fails; it is never skipped.
+
+   These are Sportmonks provider-native two-letter country codes, not an
+   independent ISO-3166 authority. Real run `41914842471` observed
+   `EN, DE, ES, IT, IL`: in particular Sportmonks country 462 / England uses
+   `EN`, while the earlier PR #30 expectation `GB` was stale. A mismatch
+   still fails closed and is changed only by a reviewed edit backed by the
+   archived raw response.
+2. **Provider-wide field semantics**, pooled over every sampled fixture
+   because they describe what a Sportmonks field means:
+   - `meta.location` discriminates exactly one home and one away participant
+     with distinct ids.
+   - FT needs equal cumulative `2ND_HALF` / `CURRENT` pairs. A single pair is
+     unverified. No pair, a disagreement, or two values for one side fails
+     (for `1ST_HALF` too).
+   - A `1ST_HALF` score above a later cumulative score fails: goals never
+     decrease.
+   - Only an FT fixture with a scoring first half discriminates a cumulative
+     `2ND_HALF`. After a 0-0 first half, or without a `1ST_HALF` pair, a
+     second-half-only field would read the same, so such a fixture is
+     consistent but proves nothing. The provider-wide sample needs at least
+     one discriminating fixture
+     (`cumulativeSecondHalfDiscriminatingFixtures`), or provider semantics
+     fail. Seasons are not each required to discriminate.
+   - AET / FT_PEN need both pairs, `1ST_HALF` ≤ `2ND_HALF` ≤ `CURRENT`, and
+     they pass only when the pairs discriminate them:
+     - AET passes only when an extra-time goal separates the 90-minute
+       `2ND_HALF` from `CURRENT`. Without one it stays unverified.
+     - FT_PEN never passes. Whether `CURRENT` excludes the shootout cannot be
+       told from these pairs: a two-legged tie need not be level on the
+       night. The parser's assumption that `CURRENT` never includes penalties
+       is therefore **not verified by A2-B**.
+
+     An unverified extra-time fixture blocks its season. A cup or play-off
+     competition would need another discriminating source before its
+     extra-time handling counts as verified.
+   - A returned lineup must show exactly 11 type-11 starters and type-12 bench
+     rows on both sides. An unknown type id or team fails, and so does a
+     duplicate player. A bench row with a null `player_id` is tolerated, as in
+     the parser.
+   - Position ids must stay within 24/25/26/27. Per fixture, all four are
+     needed for a pass, and the sample must cover all four.
+   - Formations must be valid for known participants.
+   - Possession, shots-on-target and npxG relations fail on an observed
+     contradiction. An absent optional value stays unverified.
+3. **Per-competition and per-season coverage**:
+   - family row counts and coverage ratios for lineups, formations, statistics
+     and xG;
+   - allow-listed stat-type presence and explicit-zero counts;
+   - complete-lineup and paired-formation counts;
+   - strict gate evidence per season and per competition.
+
+Evidence is strict and never pooled across classes:
+- Any contradiction is a fail, and pass + unverified stays unverified.
+- With nothing sampled the coverage ratio is `null`, not 0.
+- A profile only counts its own league. A season profile refuses a fixture of
+  another league or season. One competition's xG never fills another's.
+- A missing optional family, such as Ligat ha'Al xG, is reported as coverage.
+  It is neither a failure nor a zero.
+
+### Sampling
+
+For each identity-verified league the pilot samples:
+- the `--seasons-per-league` most recent accessible seasons;
+- every season in `--required-season(s) LEAGUE_ID:SEASON_ID`.
+
+A required season must appear in that league's own season list
+(`required_season_not_in_league` otherwise). A historical backfill proposal
+must dispatch A2-B with **every season in its scope** listed as required. A
+season is never approved because another season passed.
+
+Finished fixtures come from `/schedules/seasons/{id}`, the endpoint the
+2026-11-02 run verified. PR #30's `/fixtures/seasons/{id}` and recent-window
+`/fixtures/between` discovery are not used. The finished state is read from
+`state.developer_name`, or else from `state_id` 5/7/8.
+
+Each fixture detail (`/fixtures/{id}`) must carry the requested fixture id
+and the season's league id and season id. Any other fixture is
+`fixture_identity_mismatch`: it is not audited, it is never counted under the
+requested id, and its season blocks. A season profile also refuses an audit
+whose fixture id differs from its sample, and blocks a fixture sampled twice.
+
+A season is `sample_clean` only when:
+- it has the requested fixture count of distinct fixtures;
+- it has no parse failure and no contradiction;
+- participant and score semantics pass on every fixture.
+
+`sample_clean` describes one season's sample. It is never backfill approval.
+
+### Exact raw evidence and credential safety
+
+- **Raw archive.** Every Sportmonks HTTP response body is archived **before
+  JSON parsing** as the exact bytes at `raw/<sha256>.bin`.
+- **Index.** `raw-index.json` (`kapiloto-sportmonks-a2b-raw-index-v1`)
+  records the hash, the sanitized endpoint (no `api_token`), the HTTP status,
+  the content type and the byte count.
+- **Capture hash.** A capture's `raw_payload_sha256` therefore has a retained
+  byte preimage.
+- **Credential guard.** Sportmonks returns `pagination.next_page` as a URL,
+  and the token travels as the `api_token` query parameter.
+  - Only an alphanumeric token (`A-Z`, `a-z`, `0-9`, at least 16 characters)
+    is accepted, checked before any request. For such a token the literal,
+    percent-encoded, `URLSearchParams` form-encoded and JSON-escaped forms
+    are one string, so no serialization of the request can carry it past the
+    guard.
+  - A body that contains the token, literally or behind JSON `\uXXXX` / `\/`
+    escapes or percent escapes (either hex case, repeated), is never
+    archived: its bytes cannot be redacted without breaking the hash, so the
+    run aborts.
+  - Redirects are refused (`redirect: "error"`), so the query-string token
+    is never re-sent to another location.
+- **Final scrub.** Before upload, every output file is scanned with the same
+  escape-aware check. If one contains the token, the output directory, which
+  was verified empty at start, is emptied. Error output is redacted.
+- **Output directory.** `--out` must be empty or absent, so evidence from two
+  runs never mixes.
+
+### Entitlement hashes and pagination
+
+The A2-A entitlement snapshot hash (`kapiloto-provider-entitlement-snapshot-v1`,
+id + name) is unchanged. A second hash,
+`kapiloto-sportmonks-a2b-entitlement-details-v1`, binds the full normalized
+rows: country, ISO2, type, sub_type and active.
+
+Pagination rules:
+- Entitlement pagination fails closed when the hard cap is reached while
+  `has_more = true`.
+- Every entitlement page must carry a `data` array and a `pagination` object
+  with a boolean `has_more` and `current_page` equal to the requested page.
+  Missing or malformed metadata refuses the snapshot; it is never read as the
+  last page. A provider that ignores the `page` parameter is caught by
+  `current_page`, and an empty page that still says `has_more = true` is
+  refused at once.
+- A repeated league id whose details differ refuses the snapshot.
+- League detail, season schedule and fixture detail responses must not
+  announce more pages. They normally carry no pagination; present but
+  malformed metadata (not an object, or a non-boolean `has_more`) is refused.
+
+### What the report always says
+
+Each of these is a constant in `pilot-report.json`
+(`kapiloto-sportmonks-a2b-pilot-report-v1`), not an input:
+- `backfillApproval.approved = false`;
+- `fixtureMint.allowed = false`;
+- `teamIdentityReadiness.assessed = false`. A2-B neither reads nor changes
+  team identity. Team mapping and attestation completeness come from the
+  D-058 readiness reports and the onboarding records. For example, Elche 1099
+  and Athletic Club 13258 are still deferred, and a sampled La Liga fixture
+  between them proves nothing about their identities.
+
+`evidenceStatus` is `clean` or `blocked`. A provider-semantics failure always
+blocks. No A2-B result promotes a competition to `supported`, creates a run,
+grants V2 ingest or approves a backfill.
 
 ### Pilot gates (not A2-A database invariants)
 
-These must be verified on real Sportmonks payloads during the A2-B pilot
+These must be verified on real Sportmonks payloads by the amended A2-B pilot
 before they become rules. A2-A deliberately does not enforce them:
 
 - cross-stat checks that are sensible but unverified: possession summing to
@@ -1072,8 +1298,18 @@ before they become rules. A2-A deliberately does not enforce them:
 - lineup type ids 11 (starter) and 12 (bench);
 - position ids 24-27 (GK/DF/MF/FW);
 - `2ND_HALF` being the cumulative 90-minute score (checked against `CURRENT`
-  for FT matches; relied on alone for AET/FT_PEN);
+  for FT matches, and discriminated only by an FT match with a scoring first
+  half; relied on alone for AET/FT_PEN);
 - participant `meta.location` as the home/away source.
+
+One parser assumption is outside what the A2-B pilot can verify: that
+`CURRENT` excludes the penalty shootout for `FT_PEN`. The score pairs cannot
+discriminate it, so A2-B reports every FT_PEN fixture as unverified. It stays
+an unverified assumption until a competition with shootouts is onboarded with
+another discriminating source.
+
+No migration is required unless the pilot finds a documentation/payload
+mismatch, which would be fixed with a new `definition_version`.
 
 ## Security
 
