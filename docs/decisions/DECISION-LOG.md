@@ -358,7 +358,7 @@ Decision:
     - a team or an existing fixture mapping resolves through `manual_override` or `confirmed` at `mapping_confidence = 1`;
     - anything else quarantines (`competition_untrusted`, `team_untrusted`, `fixture_mapping_untrusted`).
 
-    Ingest never promotes mappings; the A2-B preflight does, after review.
+    Ingest never promotes mappings. Provider preflight/capture is read-only; reviewed mapping changes and D-058 attestation/onboarding are separate operator-controlled steps.
   - An existing provider fixture mapping wins if it is authoritative and consistent.
   - Otherwise every canonical fixture of the same two teams (either orientation, ±180 days) is a candidate, including fixtures already mapped (any status) or ledger-attached to another provider fixture id. Such a fixture in any guard window gives `fixture_provider_identity_conflict`. A unique unmapped ±48 h candidate is attached only when no reversed-orientation or other-competition fixture lies within 48 h, and no ±14-day, ±180-day postponed or unknown-competition fixture exists. Anything else is quarantined.
   - The search runs under one lock per unordered team pair, held through the write.
@@ -587,3 +587,14 @@ Decision:
 Implementation status: `lib/rounds/telesport.ts`, `lib/rounds/live-sync.ts` and `lib/rounds/scores365.ts`, with tests on real round 264301 markup and 365Scores data, including an end-to-end live sync on the real migration chain. There is no migration. The Supabase Edge Function `kapiloto-live-sync` is unchanged: it reads only the classic table, which it cannot find on the current page, so it writes nothing. Production remediation, and a guarded contingency that is not applied, are described in `docs/operations/2026-11-03-winner16-264301-settlement-orientation.md`.
 
 Reason: in round 264301, Telesport's away-first text was read home first. As a result 13 of 16 stored field scores were swapped, along with `fixtures` scores and provisional ticket results. Only the three draws settled, because a draw is the same in either order. 365Scores corroboration kept every other game under review. Every non-draw row contradicted its own marker, and nothing checked that.
+
+## D-063 — Provider credentials are environment-scoped; raw provider artifacts are ephemeral
+Decision:
+- **Provider secrets.** Provider credentials used by GitHub Actions are scoped to the protected `provider-readonly` Environment. The Environment permits only `main`. Provider-secret jobs remain `workflow_dispatch`-only, require `github.ref == 'refs/heads/main'`, use pinned Actions and non-persistent checkout credentials, and install npm dependencies through the committed lockfile with `npm ci --ignore-scripts`.
+- **No repository fallback.** Repository-level `SPORTMONKS_API_TOKEN` and `API_FOOTBALL_API_KEY` are removed. A provider workflow must fail closed if the Environment secret is absent; no branch-level fallback is allowed.
+- **Operational proof.** After PR #55 merged, `Kapiloto V4 Sportmonks Season Roster Capture` was re-run on `main` with the repository-level provider secrets absent. The first attempt used the wrong Sportmonks account token and correctly reached the provider but lacked Premier League entitlement. After replacing only the Environment secret with the Starter-trial token, the same run succeeded and captured league 8 / season 28083 with exactly 20 teams. This proves the workflow resolves the Environment secret rather than a repository fallback.
+- **Public-artifact policy.** Raw provider captures uploaded by provider-secret workflows are temporary debugging/evidence artifacts, not durable project storage. Retention is one day. Reports must not contain credentials; raw evidence is retained only long enough for immediate review. Longer-term evidence belongs in reviewed summaries/hashes and decision/operations docs, not public Actions artifact storage.
+
+Implementation status: PR #55 merged as `ab7ad6bce26824db3fa571543de8e8ee48e32776`; environment migration verified by workflow run `42231162147` attempt 2. The one-day retention change is carried by the follow-up PR that records this decision.
+
+Reason: repository-scoped provider tokens were readable by workflow copies on historical branches, and 14-day raw artifacts in a public repository created unnecessary exposure. The protected Environment narrows who can receive the secret, while short artifact retention minimizes provider-data exposure without removing the immediate audit trail.
