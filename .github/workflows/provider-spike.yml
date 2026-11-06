@@ -1,11 +1,6 @@
 name: Provider Spike
 
 on:
-  push:
-    branches:
-      - design/mobile-first-dark-stadium
-    paths:
-      - .github/provider-spike-trigger
   workflow_dispatch:
     inputs:
       provider:
@@ -23,22 +18,29 @@ on:
         default: "2"
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   spike:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: provider-readonly
     timeout-minutes: 30
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci --ignore-scripts
 
       - name: Typecheck provider spike
         run: npm run typecheck
@@ -49,12 +51,8 @@ jobs:
       - name: Prepare artifact directory
         run: mkdir -p artifacts/provider-spike
 
-      - name: Cooldown API-Football free tier
-        if: ${{ github.event_name == 'push' }}
-        run: sleep 65
-
       - name: Probe API-Football
-        if: ${{ github.event_name == 'push' || inputs.provider == 'both' || inputs.provider == 'api-football' }}
+        if: ${{ inputs.provider == 'both' || inputs.provider == 'api-football' }}
         env:
           API_FOOTBALL_API_KEY: ${{ secrets.API_FOOTBALL_API_KEY }}
         run: |
@@ -65,7 +63,7 @@ jobs:
             --concurrency "${{ inputs.concurrency || '2' }}"
 
       - name: Probe Sportmonks
-        if: ${{ github.event_name == 'push' || inputs.provider == 'both' || inputs.provider == 'sportmonks' }}
+        if: ${{ inputs.provider == 'both' || inputs.provider == 'sportmonks' }}
         env:
           SPORTMONKS_API_TOKEN: ${{ secrets.SPORTMONKS_API_TOKEN }}
         run: |
@@ -76,7 +74,7 @@ jobs:
             --concurrency "${{ inputs.concurrency || '2' }}"
 
       - name: Compare providers
-        if: ${{ github.event_name == 'push' || inputs.provider == 'both' }}
+        if: ${{ inputs.provider == 'both' }}
         run: |
           npm run spike:compare -- \
             --left artifacts/provider-spike/api-football.json \
@@ -95,7 +93,7 @@ jobs:
 
       - name: Upload spike reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: provider-spike-264101
           path: artifacts/provider-spike
