@@ -327,16 +327,35 @@ test("the attestation-aware read migration is additive, binds the registry read,
 // D-058 M2B gate: attestation-aware V2 successors now exist, but no
 // production app/script/cron path may activate V4 ingest/consumers before the
 // separately reviewed M2B activation and tiny-ingest gate.
-test("no production app/script/cron path calls V4 ingest/read consumers before M2B activation", () => {
+test("no production app/script/tool/edge-function/cron path calls V4 ingest/read consumers before M2B activation", () => {
   const consumers = /squad_state_inputs_as_of|match_ledger_observation_as_of|match_ledger_provider_(team|player)_matches_as_of|prediction_record_snapshot(_v2)?|match_ledger_ingest_provider_fixture(_v2)?|match_ledger_team_match_stats|provider_identity_(attest|revoke)|kapiloto-v4/;
-  const productionFiles = ["app", "components", "scripts", "lib"]
+  const reviewedNonProduction = new Set([
+    // A2-B evidence capture only: imports the V4 read-only pilot runner but has
+    // no Supabase client and cannot call an ingest/identity/read RPC.
+    "tools/kapiloto-v4-sportmonks-pilot.ts",
+  ]);
+  const runtimeRoots = ["app", "components", "scripts", "lib", "tools", "supabase/functions"];
+  const jsRuntimeFiles = ["scripts", "tools"].flatMap((dir) =>
+    readdirSync(join(ROOT, dir))
+      .filter((name) => /\.(mjs|js)$/.test(name))
+      .map((name) => join(ROOT, dir, name)),
+  );
+  const productionFiles = runtimeRoots
     .flatMap((dir) => sourceFiles(join(ROOT, dir)))
-    .concat(readdirSync(join(ROOT, "scripts")).filter((name) => /\.(mjs|js)$/.test(name)).map((name) => join(ROOT, "scripts", name)))
+    .concat(jsRuntimeFiles)
     .filter((file) => !/\.test\.tsx?$/.test(file))
     .filter((file) => !relative(ROOT, file).replace(/\\/g, "/").startsWith("lib/kapiloto-v4/"))
-    .filter((file) => relative(ROOT, file).replace(/\\/g, "/") !== "lib/supabase/database.types.ts");
+    .filter((file) => relative(ROOT, file).replace(/\\/g, "/") !== "lib/supabase/database.types.ts")
+    .filter((file) => !reviewedNonProduction.has(relative(ROOT, file).replace(/\\/g, "/")));
   const offenders = productionFiles.filter((file) => consumers.test(readFileSync(file, "utf8"))).map((file) => relative(ROOT, file));
   assert.deepEqual(offenders, []);
+
+  const reviewedPilot = readFileSync(join(ROOT, "tools", "kapiloto-v4-sportmonks-pilot.ts"), "utf8");
+  assert.doesNotMatch(
+    reviewedPilot,
+    /match_ledger_ingest_provider_fixture|provider_identity_(attest|revoke)|squad_state_inputs_as_of|match_ledger_observation_as_of|prediction_record_snapshot/,
+  );
+
   assert.doesNotMatch(readFileSync(join(ROOT, "vercel.json"), "utf8"), consumers);
   // Database cron jobs (pg_cron) never schedule them either.
   const dir = join(ROOT, "supabase", "migrations");
