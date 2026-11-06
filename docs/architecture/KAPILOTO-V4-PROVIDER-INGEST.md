@@ -1054,13 +1054,18 @@ historical trust rules. Columns:
 
 ## A2-B provider pilot (read only)
 
-Status: **implemented and real-provider pilot passed; merge review still open.** Draft PR on branch
-`feat/v4-provider-ingest-a2b-pilot-v3`. It supersedes PR #30 and PR #19 and is
-ported onto the current V4 mainline. An independent adversarial review of
-head `76ab92a` (2026-11-04) passed the real-dispatch gate; the merge gate was
-not evaluated. Its credential-guard, fixture-identity, pagination-metadata
-and score-semantics findings are fixed on the branch (described below); its
-other findings stay open for merge review.
+Status: **implemented, real-provider pilot passed and merged.** PR #54 on
+`feat/v4-provider-ingest-a2b-pilot-v3` superseded PR #30 and PR #19 and
+merged to `main` as `e94a01cde7b7b77a835b492cf434593a3b03ffe6` on
+2026-11-05 after independent real-dispatch and merge-gate review. The
+credential-guard, fixture-identity, pagination-metadata and score-semantics
+findings were fixed before merge.
+
+Post-merge workflow hardening is recorded by D-063: provider-secret jobs bind
+to the protected `provider-readonly` Environment on `main`, repository-level
+provider-secret fallbacks are removed, and new raw provider Actions artifacts
+have one-day retention. Environment-only Sportmonks resolution was verified by
+Season Roster run `42231162147` attempt 2.
 
 Real workflow run `41914842471` on head `379163b` first reached Sportmonks
 and failed closed only on Premier League competition identity: the reviewed
