@@ -113,4 +113,4 @@ jobs:
           name: sportmonks-analytics-spike-264101
           path: artifacts/provider-spike
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
