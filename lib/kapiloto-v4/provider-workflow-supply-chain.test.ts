@@ -294,6 +294,14 @@ function assertProviderWorkflowPolicy(name: string, source: string): void {
     );
   }
   assertCheckoutCredentials(normalized, name);
+
+  if (normalized.includes("actions/upload-artifact@")) {
+    assert.match(
+      normalized,
+      /^\s*retention-days\s*:\s*1\s*$/m,
+      `${name} provider artifacts must be retained for exactly one day`,
+    );
+  }
 }
 
 function assertLockfilePolicy(packageJsonSource: string, packageLockSource: string): void {

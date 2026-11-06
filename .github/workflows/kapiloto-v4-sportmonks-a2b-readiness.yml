@@ -77,7 +77,7 @@ jobs:
           name: kapiloto-v4-sportmonks-a2b-pilot
           path: artifacts/kapiloto-v4-a2b
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   v4-regression:
     if: github.ref == 'refs/heads/main'

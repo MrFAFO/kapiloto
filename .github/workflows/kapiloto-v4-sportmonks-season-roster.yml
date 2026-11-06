@@ -63,4 +63,4 @@ jobs:
           name: kapiloto-v4-sportmonks-season-roster-${{ inputs.league_id }}
           path: artifacts/kapiloto-v4-season-roster
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
