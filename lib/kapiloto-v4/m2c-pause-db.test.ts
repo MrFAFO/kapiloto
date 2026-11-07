@@ -15,10 +15,12 @@ import { recoveryDataDigest, runRunbookSql, runbookSql } from "./test-support/re
  * read-only verification passes only when no application path can still
  * execute a provider ingest RPC. PGlite runs one backend: the in-flight case
  * is shown as an open transaction that already executed a call when the
- * revoke lands (it completes and commits; every later call is refused,
- * including a statement prepared before the revoke). True multi-backend
- * interleaving rests on PostgreSQL checking EXECUTE once per call, at
- * executor start.
+ * revoke lands (it completes and commits). PGlite also refuses a later call
+ * in that same synthetic transaction, but real PostgreSQL safety does not
+ * rely on that stronger claim: transactions starting after M2C must be
+ * refused, and the provider-identity lock drain is authoritative. True
+ * multi-backend interleaving is covered by the disposable PostgreSQL
+ * rehearsal evidence.
  */
 
 const KICKOFF = "2026-08-15T18:00:00.000Z";
@@ -165,7 +167,7 @@ test("the M2C verification fails on every other path that could still execute in
   await db.close();
 });
 
-test("an ingest call that already executed when M2C lands completes and commits; every later call is refused", async () => {
+test("an ingest call that already executed when M2C lands completes; PGlite refuses a later call and the drain lock clears on commit", async () => {
   const db = await createLedgerDatabase({ supabaseDefaultPrivileges: true });
   const w = await attestedWorld(db, { kickoffAt: KICKOFF, capturedAt: CAPTURED });
   await db.exec(SIMULATED_M2B);
