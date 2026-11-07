@@ -24,7 +24,8 @@
     "test:kapiloto-v4": "tsx --test lib/kapiloto-v4/*.test.ts",
     "eval:shadow": "tsx scripts/evaluation-shadow.ts",
     "round:discover": "tsx scripts/discover-toto-round.ts",
-    "pilot:sportmonks-a2b": "tsx tools/kapiloto-v4-sportmonks-pilot.ts"
+    "pilot:sportmonks-a2b": "tsx tools/kapiloto-v4-sportmonks-pilot.ts",
+    "rehearsal:v4-m2b-real-postgres": "tsx tools/kapiloto-v4-m2b-real-postgres-rehearsal.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
@@ -39,8 +40,10 @@
     "@electric-sql/pglite": "0.5.8",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "26.6.5",
+    "@types/pg": "8.23.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "pg": "8.23.1",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "tsx": "4.23.15"

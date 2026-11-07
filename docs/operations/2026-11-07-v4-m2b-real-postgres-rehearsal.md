@@ -144,6 +144,133 @@ an error.
 The six-second interval is deliberately longer than V2's five-second
 `lock_timeout` and is now part of the runbook.
 
+## Reusable harness (PR-R)
+
+The manual pg_cron rehearsal above is now encoded as an operator-run harness.
+It can be repeated on any disposable database:
+
+- `tools/kapiloto-v4-m2b-real-postgres-rehearsal.ts`: a thin entry point that
+  turns the validated target into `pg` client connections;
+- `lib/kapiloto-v4/test-support/real-postgres-rehearsal.ts`: the guards,
+  experiments, cleanup and evidence.
+
+### What it does
+
+**Separate backends.** Each session is its own `pg` client connection: direct,
+or through the Supabase session pooler on port 5432. Before an experiment
+starts, the harness checks two things:
+
+- every session pid is distinct;
+- `pg_stat_activity` shows each pid with that session's own `application_name`.
+
+No pg_cron job is created, so the M2C verification output carries no cron
+noise.
+
+**Experiments.** The harness runs P0 (preflight: record, then an unchanged
+replay), A2, A4, B1, B2 and B3, each in a fresh synthetic world.
+
+- Every competing statement starts only after the observer sees the expected
+  holder or waiter in `pg_locks` / `pg_blocking_pids`.
+- Polling sleeps only pace the observer.
+- Every step has a bound: handshake 3 s, statement 20 s, idle-in-transaction
+  60 s, whole run 5 min. V2's 5 s function `lock_timeout` stays in force; if a
+  waiter hits it, the experiment is reported `inconclusive`.
+
+**Reviewed SQL only.** M2C is always
+`docs/operations/sql/kapiloto-v4-m2c-revoke-body.sql` and verification is
+always `docs/operations/sql/kapiloto-v4-m2c-verify.sql`, executed verbatim. The
+harness holds no copy of either file. Its only privilege change is the
+simulated M2B grant, which is the exact grant-only M2B statement.
+
+### Before any write: refusal guards
+
+Production cannot pass these guards. The harness refuses to run in any of these
+cases:
+
+- **Runner:** it is running in CI.
+- **Process environment:**
+  - it holds a provider or service secret;
+  - it sets PG* connection defaults;
+  - the DSN is reused under another variable.
+- **Target:**
+  - the DSN is not the declared project's direct host or a Supabase session
+    pooler on 5432;
+  - the declared ref is the checkout's linked project or the application's
+    configured project;
+  - TLS is not verified against `KAPILOTO_REHEARSAL_PG_CA_FILE`, unless
+    explicitly acknowledged as `disposable-only`.
+- **Database content**, checked read-only (all must be zero):
+  - auth users;
+  - rounds;
+  - teams, competitions, ingest runs and team attestations that the harness
+    did not create.
+- **Database state:**
+  - a function under test (V2, V1, the identity attest/revoke RPCs, the identity
+    lock helpers, the impact report, the V2 read, the information clock) does not
+    match this checkout's migration text;
+  - V2 and the identity RPCs no longer keep `lock_timeout=5s`;
+  - ingest is not paused, or the M2C verification does not PASS;
+  - an M2B migration is in the history;
+  - another harness session is connected.
+
+### Always ends paused
+
+Once anything has been written, the run always ends with the reviewed M2C body
+and a double verification PASS, whatever failed. The steps are:
+
+1. Terminate this run's sessions.
+2. Execute the M2C body.
+3. Run the verification twice, at least 6.5 s apart.
+
+### Evidence
+
+The evidence is JSON: guards, function hashes, per-experiment backend pids,
+timed steps, lock snapshots, SQLSTATEs, verification runs, and the cleanup
+result. It is redacted: no DSN, password, host, project ref or key. Only a
+SHA-256 of the ref is recorded.
+
+### Running it
+
+Use a freshly migrated disposable project: seed migrations omitted, no other
+data. The project used for the manual rehearsal above holds unprefixed
+synthetic rows, so the harness refuses it by design.
+
+Run from a clean shell. First do a read-only check:
+
+```bash
+env -i PATH="$PATH" HOME="$HOME" \
+  KAPILOTO_REHEARSAL_DATABASE_URL='postgres://postgres.<ref>:<password>@<region>.pooler.supabase.com:5432/postgres' \
+  KAPILOTO_REHEARSAL_PROJECT_REF='<ref>' \
+  KAPILOTO_REHEARSAL_PG_CA_FILE='./supabase-ca.crt' \
+  npm run rehearsal:v4-m2b-real-postgres -- --check-only
+```
+
+Then repeat without `--check-only`, adding
+`--out artifacts/kapiloto-v4-m2b-rehearsal/<date>.json`. Exit codes:
+
+- `0`: pass or checked;
+- `1`: fail or inconclusive;
+- `2`: refused.
+
+### Status
+
+The harness is unit-tested offline in
+`lib/kapiloto-v4/real-postgres-rehearsal.test.ts`. The tests use PGlite and
+cover:
+
+- the target guards;
+- redaction;
+- the reviewed SQL source;
+- function identity against the migration chain;
+- the synthetic world recording through V2's existing-mapping path;
+- a single-backend database failing closed and being returned to the paused
+  state.
+
+It is pinned by `lib/kapiloto-v4/boundaries.test.ts`.
+
+**Its first real multi-backend run has not been recorded yet.** Attach that
+evidence here before treating the harness itself as rehearsed.
+
 ## Remaining limits
 
 This rehearsal intentionally does **not** claim more than it proved:

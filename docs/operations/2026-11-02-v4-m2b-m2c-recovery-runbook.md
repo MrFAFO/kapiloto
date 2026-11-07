@@ -500,7 +500,11 @@ recorded real multi-backend lock waits, M2C revoke behaviour, the 55P03
 identity-revoke timeout path, queued revoke completion, and revoke-first
 fail-closed ingest. See
 `docs/operations/2026-11-07-v4-m2b-real-postgres-rehearsal.md` for the
-evidence and remaining optional experiments.
+evidence and remaining optional experiments. The same interleavings (A2, A4,
+B1–B3) are encoded as a reusable operator harness for disposable databases
+only: `npm run rehearsal:v4-m2b-real-postgres` (see that document's
+"Reusable harness" section). It executes this runbook's M2C body and
+verification files verbatim.
 
 ## Relationship to M2B
 

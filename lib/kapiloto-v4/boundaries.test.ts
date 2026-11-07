@@ -7,6 +7,10 @@ import test from "node:test";
 import { RUNBOOK_SQL } from "./test-support/recovery-runbook";
 
 const ROOT = process.cwd();
+// The reviewed real-PostgreSQL M2B/M2C rehearsal (PR-R): operator tool + harness.
+const REHEARSAL_TOOL = "tools/kapiloto-v4-m2b-real-postgres-rehearsal.ts";
+const REHEARSAL_HARNESS = "lib/kapiloto-v4/test-support/real-postgres-rehearsal.ts";
+const IMPORT_FROM = /(?:^|\n)\s*(?:import|export)\s[^;]*?from\s+["']([^"']+)["']/g;
 const V4_MIGRATIONS = [
   /_kapiloto_v4_entities_match_ledger\.sql$/,
   /_kapiloto_v4_knowledge_prediction_registry\.sql$/,
@@ -333,6 +337,12 @@ test("no production app/script/tool/edge-function/cron path calls V4 ingest/read
     // A2-B evidence capture only: imports the V4 read-only pilot runner but has
     // no Supabase client and cannot call an ingest/identity/read RPC.
     "tools/kapiloto-v4-sportmonks-pilot.ts",
+    // Read-only Sportmonks season-roster capture: names a kapiloto-v4 artifact
+    // directory and contract, imports only node built-ins (pinned below).
+    "tools/kapiloto-v4-sportmonks-season-roster.mjs",
+    // Operator-only real-PostgreSQL M2B/M2C rehearsal against a DISPOSABLE
+    // database; pinned by the rehearsal-harness test below.
+    REHEARSAL_TOOL,
   ]);
   const runtimeRoots = ["app", "components", "scripts", "lib", "tools", "supabase/functions"];
   const jsRuntimeFiles = ["scripts", "tools"].flatMap((dir) =>
@@ -355,6 +365,9 @@ test("no production app/script/tool/edge-function/cron path calls V4 ingest/read
     reviewedPilot,
     /match_ledger_ingest_provider_fixture|provider_identity_(attest|revoke)|squad_state_inputs_as_of|match_ledger_observation_as_of|prediction_record_snapshot/,
   );
+  const roster = readFileSync(join(ROOT, "tools", "kapiloto-v4-sportmonks-season-roster.mjs"), "utf8");
+  assert.deepEqual([...new Set([...roster.matchAll(IMPORT_FROM)].map((match) => match[1]))].sort(), ["node:crypto", "node:fs/promises", "node:path"]);
+  assert.doesNotMatch(roster, /supabase|\.rpc\s*\(|postgres|service_role|match_ledger_|provider_identity_|squad_state_|prediction_record_|import\s*\(|require\s*\(/i);
 
   assert.doesNotMatch(readFileSync(join(ROOT, "vercel.json"), "utf8"), consumers);
   // Database cron jobs (pg_cron) never schedule them either.
@@ -364,6 +377,73 @@ test("no production app/script/tool/edge-function/cron path calls V4 ingest/read
       assert.doesNotMatch(match[1], consumers, file);
     }
   }
+});
+
+// PR-R: the one tool allowed to call V2 / identity RPCs is the reviewed
+// real-PostgreSQL rehearsal, and only against a DISPOSABLE database. It is
+// operator-run (no workflow, no production import), uses the reviewed M2C
+// operator SQL verbatim, and its only privilege change is the simulated M2B
+// grant, which its own cleanup revokes with that M2C body.
+test("the real-PostgreSQL M2B rehearsal is operator-only, disposable-only, and changes no privilege but the simulated M2B grant", () => {
+  const posix = (file: string) => relative(ROOT, file).replace(/\\/g, "/");
+  const read = (file: string) => readFileSync(join(ROOT, file), "utf8").replace(/\r\n/g, "\n");
+  const imports = (text: string) => [...new Set([...text.matchAll(IMPORT_FROM)].map((match) => match[1]))].sort();
+  // Comments dropped; a "//" right after ":" is a URL scheme, not a comment.
+  const code = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  const tool = read(REHEARSAL_TOOL);
+  const harness = read(REHEARSAL_HARNESS);
+
+  // Exact import surface: the pg client lives in the tool only.
+  assert.deepEqual(imports(tool), ["../lib/kapiloto-v4/test-support/real-postgres-rehearsal", "node:fs", "node:path", "pg"]);
+  assert.deepEqual(imports(harness), ["../provider-ingest", "./attestation-fixtures", "./provider-ingest-fixtures", "./recovery-runbook", "node:crypto", "node:fs", "node:path"]);
+  const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string>; dependencies: Record<string, string>; devDependencies: Record<string, string> };
+  assert.equal(pkg.dependencies.pg, undefined, "pg is a dev-only dependency");
+  assert.equal(pkg.devDependencies.pg, "8.23.1");
+  assert.deepEqual(
+    Object.entries(pkg.scripts).filter(([, command]) => /real-postgres-rehearsal|rehearsal:v4-m2b/.test(command)),
+    [["rehearsal:v4-m2b-real-postgres", `tsx ${REHEARSAL_TOOL}`]],
+  );
+
+  // Nothing but the tool (and tests) imports the harness or pg; no workflow runs it.
+  const sources = ["app", "components", "scripts", "lib", "tools", "supabase/functions"]
+    .flatMap((dir) => sourceFiles(join(ROOT, dir)))
+    .concat(["scripts", "tools"].flatMap((dir) => readdirSync(join(ROOT, dir)).filter((name) => /\.(mjs|js)$/.test(name)).map((name) => join(ROOT, dir, name))))
+    .filter((file) => !/\.test\.tsx?$/.test(file))
+    .map(posix);
+  for (const file of sources.filter((name) => name !== REHEARSAL_TOOL && name !== REHEARSAL_HARNESS)) {
+    const text = read(file);
+    assert.doesNotMatch(text, /real-postgres-rehearsal/, file);
+    assert.ok(!imports(text).includes("pg"), `${file} imports pg`);
+  }
+  const workflows = join(ROOT, ".github", "workflows");
+  for (const name of readdirSync(workflows).filter((file) => /\.ya?ml$/.test(file))) {
+    assert.doesNotMatch(read(join(".github", "workflows", name)), /real-postgres-rehearsal|rehearsal:v4-m2b|KAPILOTO_REHEARSAL_/, name);
+  }
+
+  // The tool only turns the validated target into pg connections.
+  const toolCode = code(tool);
+  assert.equal((toolCode.match(/new pg\.Client\(/g) ?? []).length, 1);
+  assert.doesNotMatch(toolCode, /connectionString|@supabase|createClient|\.rpc\s*\(|\bfetch\s*\(|child_process|SUPABASE_|service_role|\bgrant\b|\brevoke\b/i);
+
+  // The harness: no Supabase/HTTP client, no DDL, no test clock, no operator override.
+  const harnessCode = code(harness);
+  assert.doesNotMatch(
+    harnessCode,
+    /@supabase|createClient|\.rpc\s*\(|\bfetch\s*\(|child_process|with\s+grant\s+option|alter\s+default\s+privileges|security\s+definer|\bcreate\s+(or\s+replace\s+)?(function|procedure|role|trigger|table|policy)|\balter\s+(role|function|table|schema|policy)|\bdrop\s+(table|function|role|schema|policy)|\btruncate\b|kapiloto\.test_clock|kapiloto\.identity_operator|cron\.schedule/i,
+  );
+  // Its only privilege statement is the simulated M2B grant (the reviewed grant-only M2B text).
+  assert.deepEqual(
+    [...harnessCode.matchAll(/\b(?:grant|revoke)\s+[a-z_, ]+\s+on\s+(?:function|table|schema|sequence|all)\b[^"`;]*/gi)].map((match) => match[0]),
+    ["grant execute on function public.match_ledger_ingest_provider_fixture_v2(jsonb) to service_role"],
+  );
+  assert.match(harnessCode, /export const SIMULATED_M2B_GRANT = "grant execute on function public\.match_ledger_ingest_provider_fixture_v2\(jsonb\) to service_role";/);
+  // M2C is the reviewed operator SQL, read from docs/operations/sql and never copied.
+  assert.match(harnessCode, /read\(RUNBOOK_SQL\.m2cRevoke\)/);
+  assert.match(harnessCode, /read\(RUNBOOK_SQL\.m2cVerify\)/);
+  assert.doesNotMatch(harnessCode, /M2C verification PASSED: ingest RPC ownership|from public, anon, authenticated, service_role/);
+  // Once anything was written, the run always ends with that M2C body and the double verification.
+  assert.match(harnessCode, /\} finally \{\n\s+if \(ctx && writesStarted\) \{\n\s+await cleanup\(ctx, evidence\);/);
+  assert.match(harnessCode, /await session\.execute\(ctx\.sql\.m2cRevoke\);\n\s+evidence\.cleanup\.m2c_body_executed = true;\n\s+const passed = await verifyDoublePass\(/);
 });
 
 // M2C and the recovery steps are reviewed operator SQL (docs/operations/sql),
