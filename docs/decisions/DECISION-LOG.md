@@ -652,9 +652,14 @@ Decision:
   - An absent or duplicate job is always refused. Re-creating a job is never a reconciliation.
   - With desired `enabled`, an unknown command or a wrong schedule is refused. With desired `paused`, an active job is still offered `pause` whatever its command or schedule: an emergency stop only stops calls.
   - A paused job is never resumed except by the separate resume action and its own token.
-- **Independent of D-064.** Routing is reported but never acted on. A Vault-routed `concurrency_guard_v1` is in sync. The rewrite installs exactly the command D-064's migration expects. So the production order is this reconciliation first, then the D-064 rollout.
+- **Composes with D-064; never undoes it.** Routing never changes the status, and a Vault-routed `concurrency_guard_v1` is in sync. What a rewrite installs depends on whether D-064 is applied:
+  - **Before D-064:** exactly the hard-coded command D-064's migration expects. So the production order is this reconciliation first, then the D-064 rollout.
+  - **After D-064:** exactly D-064's routed worker command. D-064 counts as applied when `supabase_migrations.schema_migrations` records `20261108100000`, or `kapiloto_scheduler_target_guard_v1` under another version, or when the live-sync job already runs D-064's routed command. So reconciling a drift that recurs after D-064 never brings back a hard-coded endpoint.
+  - **How the choice is made:** deterministic, from the ledger and one command hash only; never from Vault or data. The check reports it (`rewrite_routing`). The template re-derives it under the idle-queue lock and requires the job to end with that routing. The confirm token, lock and audit row are unchanged.
+  - **Not repaired:** a hard-coded `concurrency_guard_v1` after D-064, which is D-064's documented rollback state.
+  - **Blind spot:** D-064 applied by hand without a ledger row, with live sync unscheduled afterwards. Applying D-064 through the migration tool avoids it.
 
-Implementation status: Draft PR #61 for issue #60; no production write. The read-only pre-checks were run against production by the independent review (`5816097257`, 2026-11-08):
+Implementation status: merged in PR #61 for issue #60 (`981964b`). The routed rewrite after D-064 is a follow-up in its own Draft PR, recommended by PR #59 review `5817631397` before the D-064 rollout. No production write has been made. The read-only pre-checks were run against production by the independent review (`5816097257`, 2026-11-08):
 - jobid 10, owner and database `postgres`, `scheduler_v1_single`, idle queue, `wrong_definition` → `rewrite`;
 - first run 2026-10-22 08:52:00Z;
 - the migration ledger holds only the three original worker rows. The tests run both SQL files verbatim on the real migration chain in PGlite, with mutation checks. The production pre-check, expected results, write plan, abort conditions and verification are in `docs/operations/2026-11-08-research-worker-scheduler-reconciliation.md`. The draft `supabase/drafts/005_kapiloto_scheduler_reconciliation.sql` is superseded.

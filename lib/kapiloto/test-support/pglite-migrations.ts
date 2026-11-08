@@ -113,6 +113,14 @@ create function vault.update_secret(
   update vault.secrets s set secret = coalesce(update_secret.secret, s.secret)
   where s.id = update_secret.id
 $$;
+-- The Supabase migration ledger, as the CLI keeps it: one row per applied
+-- migration, version and name taken from <version>_<name>.sql.
+create schema supabase_migrations;
+create table supabase_migrations.schema_migrations (
+  version text primary key,
+  statements text[],
+  name text
+);
 create schema extensions;
 create function extensions.digest(data text, alg text) returns bytea
   language sql immutable as $$ select sha256(convert_to(data, 'UTF8')) $$;
@@ -161,6 +169,8 @@ export async function createMigratedDatabase(
         `Migration ${file} failed in PGlite: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    const [, version, name] = /^(\d+)_(.+)\.sql$/.exec(file) ?? [];
+    await db.query("insert into supabase_migrations.schema_migrations (version, name) values ($1, $2)", [version, name]);
   }
   return db;
 }

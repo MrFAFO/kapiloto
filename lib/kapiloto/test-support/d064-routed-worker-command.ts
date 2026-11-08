@@ -1,10 +1,14 @@
 /**
- * The research-worker command as the D-064 target guard (PR #59, migration
- * 20261108100000_kapiloto_scheduler_target_guard_v1.sql at f49e537) rewrites
+ * The research-worker command as the D-064 target guard (PR #59, merged;
+ * migration 20261108100000_kapiloto_scheduler_target_guard_v1.sql) rewrites
  * it: concurrency_guard_v1 with its URL read from the Vault secret
- * kapiloto_research_worker_target_url. Copied verbatim so the D-065
- * reconciliation can be tested against it without merging PR #59 here.
- * Once both are merged, this must equal the migration's second $cron$ body.
+ * kapiloto_research_worker_target_url. Once D-064 is applied, D-065's rewrite
+ * installs exactly this command.
+ *
+ * A pinned verbatim copy, kept on purpose now that PR #59 is merged: the D-065
+ * tests require this text, the migration's second $cron$ body, the reconcile
+ * template's routed command and the check's vault_target hash to agree, so an
+ * edit to any one of them fails.
  */
 export const D064_ROUTED_WORKER_COMMAND = `
     with scheduler_state as (

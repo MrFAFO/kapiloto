@@ -17,8 +17,20 @@
 --     concurrency_guard_v1          20261020120216: fill free capacity up to two live
 --                                   attempts, slot 1 is the only finalizer (desired)
 --   routing                                 hard_coded, or vault_target after D-064;
---                                           reported only, never acted on;
---   status                                  in_sync | wrong_definition | inactive_wrong_definition |
+--                                           it never changes the status;
+--   d064_recorded                           supabase_migrations.schema_migrations records
+--                                           D-064 (20261108100000_kapiloto_scheduler_target_guard_v1),
+--                                           by version or, if the migration tool chose
+--                                           another version, by name;
+--   d064_live_sync_routed                   kapiloto-live-sync-every-2-min runs D-064's
+--                                           routed command (hash f45be91f…; D-064 applied
+--                                           without a ledger row);
+--   rewrite_routing                         what a rewrite installs: vault_target (exactly
+--                                           D-064's research-worker command) when either
+--                                           D-064 signal is true, else hard_coded (exactly
+--                                           the 20261020120216 command). So a drift after
+--                                           D-064 is never repaired to a hard-coded endpoint;
+--   status                                 in_sync | wrong_definition | inactive_wrong_definition |
 --                                           inactive | running_while_paused | absent | duplicate |
 --                                           unexpected_job_identity | unknown_definition |
 --                                           wrong_schedule | desired_state_required;
@@ -33,8 +45,11 @@
 -- only stops calls). With desired 'enabled', an unknown command or a wrong
 -- schedule is refused.
 --
--- It reads cron.job, kapiloto_research_runs and kapiloto_research_attempts only.
--- It never reads a Vault secret and never reads a job command other than this job's.
+-- It reads cron.job, supabase_migrations.schema_migrations, kapiloto_research_runs
+-- and kapiloto_research_attempts only. Of another job it reads only whether the
+-- live-sync command's hash is D-064's; it returns no command text. It never reads
+-- a Vault secret. Every Supabase project has the migration ledger; without it the
+-- query raises and nothing can be written.
 -- Its active_runs / nonterminal_attempts are an observation at read time; the
 -- reconcile template re-checks them under a table lock before a rewrite.
 
@@ -51,6 +66,22 @@ known (definition, semantics_current, routing, command_sha256) as (
     ('parallelism_v1_unconditional', false, 'hard_coded', '65b8317f539a34e8297c17e9c633a84ca2e00a43b2b2fb885edf87609c2220b3'),
     ('concurrency_guard_v1', true, 'hard_coded', 'b37670903bc0055b1cc12ae5551643d83c85c3ab5260aed6f20c646b1912d453'),
     ('concurrency_guard_v1', true, 'vault_target', 'afd9c6ea76bae2577984cbc05f1239c7d3f65a8324c130c6b725335d06655ebd')
+),
+d064 as (
+  select
+    exists (
+      select 1
+      from supabase_migrations.schema_migrations m
+      where m.version = '20261108100000'
+        or m.name = 'kapiloto_scheduler_target_guard_v1'
+    ) as d064_recorded,
+    exists (
+      select 1
+      from cron.job l
+      where l.jobname = 'kapiloto-live-sync-every-2-min'
+        and encode(sha256(convert_to(btrim(regexp_replace(l.command, '\s+', ' ', 'g')), 'UTF8')), 'hex')
+          = 'f45be91f919fe489b6b01e0987942b76790573cff900cf9b1c35febf829e096c'
+    ) as d064_live_sync_routed
 ),
 jobs as (
   select
@@ -92,6 +123,12 @@ assessed as (
     t.routing,
     o.active_runs,
     o.nonterminal_attempts,
+    d.d064_recorded,
+    d.d064_live_sync_routed,
+    case
+      when d.d064_recorded or d.d064_live_sync_routed then 'vault_target'
+      else 'hard_coded'
+    end as rewrite_routing,
     case
       when p.desired is null or p.desired not in ('enabled', 'paused') then 'desired_state_required'
       when o.job_count > 1 then 'duplicate'
@@ -110,6 +147,7 @@ assessed as (
     end as status
   from params p
   cross join observed o
+  cross join d064 d
   left join the_job t on true
 ),
 planned as (
@@ -136,7 +174,9 @@ select
     when pl.status = 'unknown_definition' then 'the command matches no reviewed definition; review it by hand'
     when pl.status = 'wrong_schedule' then 'the schedule is not */2 * * * *; review it by hand'
     when pl.action = 'refuse' then 'research work is queued or running; rewrite only on an idle queue'
-    when pl.action = 'rewrite' then 'replace the command with concurrency_guard_v1; jobid, schedule and active flag unchanged'
+    when pl.action = 'rewrite' and pl.rewrite_routing = 'vault_target'
+      then 'replace the command with D-064''s Vault-routed concurrency_guard_v1 (D-064 is applied); jobid, schedule and active flag unchanged'
+    when pl.action = 'rewrite' then 'replace the command with the hard-coded concurrency_guard_v1 (D-064 is not applied); jobid, schedule and active flag unchanged'
     when pl.action = 'pause' then 'deactivate the job (active := false); the job is kept'
     when pl.action = 'resume' then 'reactivate the job; its definition is already concurrency_guard_v1'
     else 'nothing to do'
