@@ -137,9 +137,9 @@ test("the M2C verification fails on every other path that could still execute in
       /SECURITY INVOKER function synthetic_ingest_invoker_wrapper\(jsonb\) owned by postgres references a provider ingest RPC/,
     ],
     [
-      // The harness stubs cron.job without pg_cron's command column; add it.
-      "alter table cron.job add column command text; insert into cron.job (jobid, jobname, command) values (1, 'synthetic', 'select public.match_ledger_ingest_provider_fixture_v2(''{}''::jsonb)')",
-      "delete from cron.job where jobid = 1",
+      // The harness's pg_cron stand-in stores jobs with their command text.
+      "select cron.schedule('synthetic', '* * * * *', 'select public.match_ledger_ingest_provider_fixture_v2(''{}''::jsonb)')",
+      "select cron.unschedule('synthetic')",
       /1 pg_cron job\(s\) call a provider ingest RPC/,
     ],
   ];
