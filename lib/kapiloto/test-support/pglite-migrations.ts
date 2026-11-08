@@ -29,10 +29,57 @@ create function auth.role() returns text language sql stable as $$
 $$;
 create function auth.jwt() returns jsonb language sql stable as $$ select '{}'::jsonb $$;
 create schema cron;
-create table cron.job (jobid bigint, jobname text);
-create function cron.schedule(text, text, text) returns bigint language sql as $$ select 1::bigint $$;
-create function cron.unschedule(text) returns boolean language sql as $$ select true $$;
-create function cron.unschedule(bigint) returns boolean language sql as $$ select true $$;
+-- Stateful pg_cron stand-in: the jobs a migration schedules are stored with
+-- their exact command text, as pg_cron stores them. Nothing ever runs them.
+create table cron.job (
+  jobid bigserial primary key,
+  schedule text not null,
+  command text not null,
+  nodename text not null default 'localhost',
+  nodeport integer not null default 5432,
+  database text not null default current_database(),
+  username text not null default current_user,
+  active boolean not null default true,
+  jobname text,
+  unique (jobname, username)
+);
+create function cron.schedule(job_name text, schedule text, command text) returns bigint
+  language sql as $$
+  insert into cron.job (jobname, schedule, command) values ($1, $2, $3)
+  on conflict (jobname, username)
+    do update set schedule = excluded.schedule, command = excluded.command
+  returning jobid
+$$;
+create function cron.unschedule(job_id bigint) returns boolean language plpgsql as $$
+begin
+  delete from cron.job j where j.jobid = unschedule.job_id;
+  if not found then raise exception 'could not find valid entry for job %', job_id; end if;
+  return true;
+end $$;
+create function cron.unschedule(job_name text) returns boolean language plpgsql as $$
+begin
+  delete from cron.job j where j.jobname = unschedule.job_name and j.username = current_user;
+  if not found then raise exception 'could not find valid entry for job ''%''', job_name; end if;
+  return true;
+end $$;
+create function cron.alter_job(
+  job_id bigint,
+  schedule text default null,
+  command text default null,
+  database text default null,
+  username text default null,
+  active boolean default null
+) returns void language plpgsql as $$
+begin
+  update cron.job j
+  set schedule = coalesce(alter_job.schedule, j.schedule),
+      command = coalesce(alter_job.command, j.command),
+      database = coalesce(alter_job.database, j.database),
+      username = coalesce(alter_job.username, j.username),
+      active = coalesce(alter_job.active, j.active)
+  where j.jobid = alter_job.job_id;
+  if not found then raise exception 'Job % does not exist', job_id; end if;
+end $$;
 create schema net;
 create function net.http_post(
   url text,
