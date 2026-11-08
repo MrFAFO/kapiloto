@@ -29,16 +29,31 @@
 --   schedule, owner, database and active flag. A job that does not exist (for
 --   example one paused by unscheduling it) stays absent. This migration never
 --   creates, re-creates, re-activates or deletes a job.
--- - A job is rewritten only when its current command is the one the migration
---   chain installed, compared after collapsing whitespace (so CRLF checkouts
---   and indentation do not matter). A command already in the new form is left
---   alone. Any other command means the job was changed out of band: the
---   migration raises and, being one statement, changes nothing.
+-- - A job is touched only while it is still the job the chain scheduled:
+--   its name is scheduled exactly once, it is owned by postgres in database
+--   postgres, its schedule is exactly '*/2 * * * *', and its command is the
+--   one the chain installed, compared after collapsing whitespace (so CRLF
+--   checkouts and indentation do not matter). A command already in the new
+--   form is left alone, but only after the same name, owner, database and
+--   schedule checks. The active flag is deliberately not checked: a paused job
+--   (active = false) is a supported state and stays paused.
+-- - Anything else means the job was changed out of band: the migration raises
+--   and, being one statement, changes nothing, including a job it had already
+--   rewritten earlier in the same run.
+-- - After each rewrite the job is read back. Unless it has the same jobid,
+--   schedule, owner, database and active flag, and exactly the new command,
+--   the migration raises and changes nothing.
 
 do $scheduler_target_guard$
 declare
+  -- The identity the migration chain gave both jobs (cron.schedule run as
+  -- postgres in database postgres), as production shows it.
+  c_username constant text := 'postgres';
+  c_database constant text := 'postgres';
+  c_schedule constant text := '*/2 * * * *';
   v_spec record;
   v_job record;
+  v_after record;
   v_matches integer;
   v_current text;
 begin
@@ -189,10 +204,28 @@ begin
         v_spec.jobname, v_matches;
     end if;
 
-    select j.jobid, j.command
+    select j.jobid, j.schedule, j.command, j.username, j.database, j.active
       into v_job
     from cron.job j
     where j.jobname = v_spec.jobname;
+
+    if v_job.username is distinct from c_username then
+      raise exception
+        '% (jobid %) is owned by %, not %; refusing to rewrite it. See docs/operations/2026-11-08-pg-cron-production-target-guard.md',
+        v_spec.jobname, v_job.jobid, coalesce(v_job.username, '<null>'), c_username;
+    end if;
+
+    if v_job.database is distinct from c_database then
+      raise exception
+        '% (jobid %) runs in database %, not %; refusing to rewrite it. See docs/operations/2026-11-08-pg-cron-production-target-guard.md',
+        v_spec.jobname, v_job.jobid, coalesce(v_job.database, '<null>'), c_database;
+    end if;
+
+    if v_job.schedule is distinct from c_schedule then
+      raise exception
+        '% (jobid %) has schedule ''%'', not ''%''; refusing to rewrite it. See docs/operations/2026-11-08-pg-cron-production-target-guard.md',
+        v_spec.jobname, v_job.jobid, coalesce(v_job.schedule, '<null>'), c_schedule;
+    end if;
 
     v_current := btrim(regexp_replace(v_job.command, '\s+', ' ', 'g'));
 
@@ -209,6 +242,24 @@ begin
     end if;
 
     perform cron.alter_job(job_id := v_job.jobid, command := v_spec.guarded_command);
+
+    select j.jobid, j.schedule, j.command, j.username, j.database, j.active
+      into v_after
+    from cron.job j
+    where j.jobid = v_job.jobid
+      and j.jobname = v_spec.jobname;
+
+    if not found
+        or v_after.schedule is distinct from v_job.schedule
+        or v_after.username is distinct from v_job.username
+        or v_after.database is distinct from v_job.database
+        or v_after.active is distinct from v_job.active
+        or btrim(regexp_replace(v_after.command, '\s+', ' ', 'g'))
+          <> btrim(regexp_replace(v_spec.guarded_command, '\s+', ' ', 'g')) then
+      raise exception
+        '% (jobid %) did not keep its jobid, schedule, owner, database and active flag with exactly the new command after cron.alter_job; nothing was changed',
+        v_spec.jobname, v_job.jobid;
+    end if;
 
     if not exists (
       select 1

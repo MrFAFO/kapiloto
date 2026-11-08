@@ -603,7 +603,14 @@ Reason: repository-scoped provider tokens were readable by workflow copies on hi
 Decision:
 - **Target per project.** `kapiloto-live-sync-every-2-min` and `kapiloto-research-worker-every-2-min` read their `net.http_post` URL from the Vault secrets `kapiloto_live_sync_target_url` and `kapiloto_research_worker_target_url`. They no longer use a URL hard-coded in a migration.
 - **Disarmed by default.** A job posts only when its target is exactly one `https://` URL with no whitespace. Otherwise it posts nothing. No migration creates a target, so a freshly migrated project never calls production. Production sets both targets to its current endpoints before the migration is applied there.
-- **Rewrite in place, never re-create.** Migration `20261108100000_kapiloto_scheduler_target_guard_v1.sql` changes only each job's `command`, with `cron.alter_job`. It keeps the jobid, schedule, owner, database and `active` flag. It leaves an absent job absent. It rewrites only the chain-installed command, recognised by a whitespace-normalised SHA-256, and otherwise aborts with nothing changed. The historical scheduler migrations are unchanged and pinned by hash.
+- **Rewrite in place, never re-create.** Migration `20261108100000_kapiloto_scheduler_target_guard_v1.sql` changes only each job's `command`, with `cron.alter_job`. It keeps the jobid, schedule, owner, database and `active` flag. It leaves an absent job absent. The historical scheduler migrations are unchanged and pinned by hash.
+- **Fail closed on drift.** A job is rewritten only while it is still the job the chain scheduled:
+  - its name is scheduled exactly once;
+  - its owner is `postgres` and its database is `postgres`;
+  - its schedule is exactly `*/2 * * * *`;
+  - its command is the chain-installed one, recognised by a whitespace-normalised SHA-256.
+
+  A job already in the new form is skipped only after the same name, owner, database and schedule checks. The `active` flag is deliberately not checked, because a paused job is a supported state; it is kept as it is. Each rewritten job is read back, and the migration aborts unless only its command changed. Any failed check aborts the whole migration with nothing changed, including a job already rewritten earlier in the same run.
 - **No new endpoint literals.** Migrations from the guard on must not hard-code an HTTP endpoint, and no job in a freshly migrated database may contain one. Both rules are enforced in `lib/kapiloto/scheduler-target-guard-db.test.ts`.
 - **Rejected alternative.** A bootstrap step that unschedules the jobs on non-production projects is fail-open, and nobody runs it on projects that apply migrations automatically.
 

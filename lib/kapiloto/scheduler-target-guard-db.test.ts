@@ -284,6 +284,132 @@ test("the guard refuses a command it did not install, or a duplicated job, and t
   await db.close();
 });
 
+// The identity the chain gave both jobs. A job with the chain-installed command
+// but any other owner, database or schedule was changed out of band.
+const IDENTITY_DRIFTS = [
+  { column: "username", value: "supabase_admin", refusal: "is owned by supabase_admin, not postgres" },
+  { column: "database", value: "kapiloto_staging", refusal: "runs in database kapiloto_staging, not postgres" },
+  { column: "schedule", value: "*/5 * * * *", refusal: "has schedule '*/5 * * * *', not '*/2 * * * *'" },
+] as const;
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const refusal = (row: Job, text: string) =>
+  new RegExp(escapeRegExp(`${row.jobname} (jobid ${row.jobid}) ${text}; refusing to rewrite it`));
+
+async function setColumn(db: PGlite, row: Job, column: (typeof IDENTITY_DRIFTS)[number]["column"], value: string) {
+  await db.query(`update cron.job set ${column} = $1 where jobid = $2`, [value, row.jobid]);
+}
+
+test("the guard refuses a job with an unexpected owner, database or schedule, and then changes nothing", async () => {
+  const db = await createMigratedDatabase({ exclude: GUARD_PATTERN });
+  const baseline = await jobs(db);
+  assert.deepEqual(
+    baseline.map((row) => [row.jobname, row.username, row.database, row.schedule, normalize(row.command)]),
+    [
+      [LIVE_SYNC_JOB, "postgres", "postgres", "*/2 * * * *", normalize(LEGACY.liveSync)],
+      [WORKER_JOB, "postgres", "postgres", "*/2 * * * *", normalize(LEGACY.worker)],
+    ],
+  );
+
+  // Each drift on its own, on each job, with the chain-installed command kept.
+  for (const target of baseline) {
+    for (const drift of IDENTITY_DRIFTS) {
+      const label = `${target.jobname}: ${drift.column}`;
+      await setColumn(db, target, drift.column, drift.value);
+      const drifted = await jobs(db);
+
+      await assert.rejects(db.exec(read(GUARD)), refusal(target, drift.refusal), label);
+      // One statement: nothing changed. When the worker is refused, live sync
+      // has already passed its checks and been rewritten in the same run; that
+      // rewrite is rolled back with the rest.
+      assert.deepEqual(await jobs(db), drifted, label);
+      assert.equal(normalize((await job(db, LIVE_SYNC_JOB))!.command), normalize(LEGACY.liveSync), label);
+      assert.equal(normalize((await job(db, WORKER_JOB))!.command), normalize(LEGACY.worker), label);
+
+      await setColumn(db, target, drift.column, target[drift.column]);
+      assert.deepEqual(await jobs(db), baseline, label);
+    }
+  }
+
+  // active is deliberately not checked: paused jobs with the chain's identity
+  // are rewritten in place and stay paused.
+  for (const row of baseline) {
+    await db.query("select cron.alter_job(job_id := $1, active := false)", [row.jobid]);
+  }
+  await db.exec(read(GUARD));
+  assert.deepEqual(
+    (await jobs(db)).map((row) => ({ ...row, command: normalize(row.command) })),
+    [
+      { ...baseline[0], active: false, command: normalize(GUARDED.liveSync) },
+      { ...baseline[1], active: false, command: normalize(GUARDED.worker) },
+    ],
+  );
+  await db.close();
+});
+
+test("re-running the guard still refuses an already-guarded job whose owner, database or schedule drifted", async () => {
+  const db = await createMigratedDatabase();
+  const baseline = await jobs(db);
+  assert.equal(normalize(baseline[0].command), normalize(GUARDED.liveSync));
+  assert.equal(normalize(baseline[1].command), normalize(GUARDED.worker));
+
+  for (const target of baseline) {
+    for (const drift of IDENTITY_DRIFTS) {
+      const label = `${target.jobname}: ${drift.column}`;
+      await setColumn(db, target, drift.column, drift.value);
+      const drifted = await jobs(db);
+      await assert.rejects(db.exec(read(GUARD)), refusal(target, drift.refusal), label);
+      assert.deepEqual(await jobs(db), drifted, label);
+      await setColumn(db, target, drift.column, target[drift.column]);
+    }
+  }
+
+  await db.exec(read(GUARD));
+  assert.deepEqual(await jobs(db), baseline);
+  await db.close();
+});
+
+test("the guard reads each rewritten job back and refuses unless only its command changed", async () => {
+  const db = await createMigratedDatabase({ exclude: GUARD_PATTERN });
+  const baseline = await jobs(db);
+  // A cron.alter_job that does more, or less, than replace the command.
+  const misbehaviours: Record<string, string> = {
+    "flips active": "command = alter_job.command, active = not j.active",
+    "changes the schedule": "command = alter_job.command, schedule = '* * * * *'",
+    "changes the owner": "command = alter_job.command, username = 'supabase_admin'",
+    "changes the database": "command = alter_job.command, database = 'kapiloto_staging'",
+    "changes the jobid": "command = alter_job.command, jobid = j.jobid + 1000",
+    "ignores the command": "command = j.command",
+  };
+
+  for (const [label, assignments] of Object.entries(misbehaviours)) {
+    await db.exec(`
+      create or replace function cron.alter_job(
+        job_id bigint,
+        schedule text default null,
+        command text default null,
+        database text default null,
+        username text default null,
+        active boolean default null
+      ) returns void language plpgsql as $$
+      begin
+        update cron.job j set ${assignments} where j.jobid = alter_job.job_id;
+      end $$;
+    `);
+    await assert.rejects(
+      db.exec(read(GUARD)),
+      new RegExp(
+        escapeRegExp(
+          `${LIVE_SYNC_JOB} (jobid ${baseline[0].jobid}) did not keep its jobid, schedule, owner, database and active flag with exactly the new command`,
+        ),
+      ),
+      label,
+    );
+    assert.deepEqual(await jobs(db), baseline, label);
+  }
+  await db.close();
+});
+
 // ---------------------------------------------------------------------------
 // Composition with D-065: production's real rollout order
 // ---------------------------------------------------------------------------

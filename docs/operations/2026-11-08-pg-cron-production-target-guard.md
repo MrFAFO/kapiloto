@@ -52,7 +52,15 @@ What a non-production project could do to production:
 
   Schedule, gates, slot arithmetic, headers, body and timeout are unchanged.
 - **Rewritten in place.** Jobs are rewritten with `cron.alter_job(job_id, command := …)`, which keeps the jobid, schedule, owner, database and `active` flag. The migration never calls `cron.schedule` or `cron.unschedule`. A job that is absent (for example paused by unscheduling it) stays absent, and an inactive job stays inactive.
-- **Chain-installed commands only.** A job is rewritten only when its current command, after collapsing whitespace, has the SHA-256 of the command the chain installed. A command already in the new form is skipped, so re-running the migration is safe. If the command is anything else, or the job name is scheduled more than once, the migration raises. The whole rewrite is one `DO` statement, so a raise leaves both jobs as they were.
+- **Chain-scheduled jobs only.** A job is rewritten only while all of these hold:
+  - its name is scheduled exactly once;
+  - its owner (`username`) is `postgres`;
+  - its `database` is `postgres`;
+  - its schedule is exactly `*/2 * * * *`;
+  - its command, after collapsing whitespace, has the SHA-256 of the command the chain installed.
+
+  A command already in the new form is skipped, but only after the name, owner, database and schedule checks, so re-running the migration is safe. The `active` flag is deliberately not checked: a paused job is a supported state and stays paused. If any check fails, the migration raises with a message naming the job, its jobid and the failed check. The whole rewrite is one `DO` statement, so a raise leaves both jobs as they were, even when live sync passed and was rewritten before the worker failed.
+- **Read back.** After each `cron.alter_job`, the migration reads the job again. It raises unless the job still has the same jobid, schedule, owner, database and `active` flag, and exactly the new command.
 - **Warning.** It raises a `WARNING` for each rewritten job whose target is not set on that project.
 
 ## Production-safety argument
@@ -65,7 +73,7 @@ What a non-production project could do to production:
    - round settled.
 
    A mutation check confirms the test catches drift: changing the new worker command to three slots made it fail.
-2. **Same job.** Only `command` changes. The jobid, `cron.job_run_details` history, schedule, owner, database and `active` flag stay the same, and a paused or unscheduled job stays that way (tested).
+2. **Same job.** Only `command` changes. The jobid, `cron.job_run_details` history, schedule, owner, database and `active` flag stay the same, and a paused or unscheduled job stays that way (tested). The migration reads each job back after rewriting it and aborts if anything but the command changed.
 3. **No gap if the order is followed.** Until the migration runs, nothing reads the secrets, so they can be created first with no effect. Once the migration runs, the next tick posts to the same URL.
 4. **Fail-closed if the order is not followed.** If the migration lands before the secrets, production posts nothing: no wrong calls, but live sync and the worker stop. This shows in three places:
    - the migration's `WARNING`;
@@ -73,7 +81,14 @@ What a non-production project could do to production:
    - a stalled live sync or research queue.
 
    The fix is to create the secret; it takes effect on the next 2-minute tick and needs no migration.
-5. **Out-of-band drift stops the migration.** If production's command was changed by hand, the migration aborts and changes nothing. A reviewer decides what to do next.
+5. **Out-of-band drift stops the migration.** Here, drift means any of the following on either job:
+   - its name scheduled more than once;
+   - an owner other than `postgres`;
+   - a database other than `postgres`;
+   - a schedule other than `*/2 * * * *`;
+   - a command that is neither the chain-installed one nor the new form.
+
+   On drift, the migration aborts and changes nothing, and a reviewer decides what to do next. Each case is tested on each job on its own, including a worker failure after live sync has passed. Not drift: `active = false` (kept as is) and an absent job (left absent).
 6. **No new access surface.** No table, function, grant, policy or browser-visible value. The jobs keep reading Vault as the `cron` job owner, as they already do for their auth secrets.
 
 ## Production rollout
@@ -102,7 +117,7 @@ Expect:
 - **Both:** `*/2 * * * *`, owner and database `postgres`, each job present exactly once.
 - **No target secrets yet.**
 
-If the worker still shows `6c5cafc2…`, D-065 has not been applied. Stop; the migration would refuse it.
+If the worker still shows `6c5cafc2…`, D-065 has not been applied. Stop; the migration would refuse it. Stop too if either job shows a different owner, database or schedule; the migration would refuse that as well.
 
 Record whether each job is present and active. The migration preserves exactly that state.
 
