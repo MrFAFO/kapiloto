@@ -268,8 +268,214 @@ cover:
 
 It is pinned by `lib/kapiloto-v4/boundaries.test.ts`.
 
-**Its first real multi-backend run has not been recorded yet.** Attach that
-evidence here before treating the harness itself as rehearsed.
+**The reusable harness's own first real multi-backend run has still not been
+recorded.** On 2026-11-08 neither of its connection paths was usable from the
+operator machine. The same experiments were therefore run live through the
+pg_cron fallback below, which reproduces their evidence. Attach a harness run
+here before treating the harness itself as rehearsed.
+
+## 2026-11-08 live multi-backend run (pg_cron fallback)
+
+Environment: disposable Supabase Free project `kapiloto-m2b-harness-20261107`
+(eu-central-1, PostgreSQL 17.11). It is freshly migrated (40 migrations, none
+named M2B) and holds synthetic data only. The run was operator-initiated. Its
+time window was 2026-11-08T00:30:58Z – 00:43:40Z.
+
+**Outcome: PASS.** P0, A2, A4, B1, B2 and B3 all passed:
+
+| Experiment | Outcome | Assertions |
+|---|---|---|
+| P0 | pass | 10/10 |
+| A2 | pass | 19/19 |
+| A4 | pass | 18/18 |
+| B1 | pass | 19/19 |
+| B2 | pass | 14/14 |
+| B3 | pass | 10/10 |
+
+All 30 pre-write guards passed. Cleanup left ingest paused and verified twice.
+
+### Why the fallback, not the harness
+
+- **Direct connection:** `db.<ref>.supabase.co` publishes only an AAAA record,
+  and the operator machine has no IPv6 default route. A plain TCP connect fails
+  immediately with `ENETUNREACH`. The harness guards were not loosened to work
+  around this.
+- **Session pooler:** the project's tenant lives on
+  `aws-1-eu-central-1.pooler.supabase.com:5432`. That host answers a startup
+  message for `postgres.<ref>` with a SASL request, while `aws-0` answers "tenant
+  not found". TLS verify-full against Supabase Root 2021 CA succeeds. The
+  current database password was not available to the operator session, so the
+  operator chose the pg_cron fallback instead. The earlier Supavisor
+  "password authentication failed" was therefore not re-tested. A password
+  rotation was not shown to be necessary.
+
+### How the fallback works
+
+- **Controller.** The controller reaches the database only through the
+  Supabase CLI's Management API query endpoint, pinned to the disposable
+  project ref. It runs from an empty work directory; the CLI's own cache names
+  only the disposable project. Every write script begins with a guard that
+  raises unless all of the following are zero, so production cannot pass:
+  - auth users;
+  - rounds;
+  - non-rehearsal teams, competitions, runs and team attestations;
+  - M2B migrations.
+- **Sessions.** Every session (the observer/driver O and actors A, B, C, N1,
+  N2, R) is a one-shot pg_cron job (libpq mode). All of an experiment's jobs
+  start at the same minute boundary. Two independent records show they are
+  separate PostgreSQL backends:
+  - each experiment's pids are distinct, and `pg_stat_activity` shows each pid
+    with its own `application_name`;
+  - `cron.job_run_details.job_pid` matches every session's pid (every run
+    `succeeded`).
+- **Interleavings use observed lock state only.**
+  - Each actor holds a session advisory id lock, which is how the driver maps
+    actor names to pids.
+  - The driver holds an exclusive gate lock for each step, then a READY lock.
+  - Actors wait until READY appears in `pg_locks`, then block on each gate.
+  - Every handshake polls the harness's `LOCK_SNAPSHOT_SQL` (`pg_locks` and
+    `pg_blocking_pids`) until the expected holder or waiter appears, with a 3 s
+    bound. Sleeps only pace those polls.
+- **Reused harness pieces.** Synthetic worlds are created by the harness's own
+  `createRehearsalWorld`. Guards and observer reads are the harness's SQL text,
+  extracted from its source at run time.
+- **Reviewed SQL only.**
+  - M2C is always `docs/operations/sql/kapiloto-v4-m2c-revoke-body.sql`, and
+    verification is always `docs/operations/sql/kapiloto-v4-m2c-verify.sql`,
+    both executed verbatim. The installed copies were compared byte-for-byte
+    with the files.
+  - The only privilege change is the harness's `SIMULATED_M2B_GRANT`.
+- **Pre-run change (operator-approved).** The migrations had created two
+  pg_cron jobs in the disposable project that `net.http_post` to production
+  endpoints: `kapiloto-live-sync-every-2-min` and
+  `kapiloto-research-worker-every-2-min`. Both were gated off (0 rounds, 0
+  research runs, no pg_net responses). They were unscheduled before any
+  rehearsal write. Their vault secrets were generated inside the project by
+  those migrations (`gen_random_bytes(32)`); they were not read or changed.
+
+### Results (run tag 910373)
+
+- **P0.** A `service_role` V2 call recorded through the existing mapping under
+  the world's attestation generations. An identical replay on a separate
+  backend returned `unchanged`.
+- **A2.** M2C ran while a V2 call was already inside the function.
+  - C held the canonical team-pair lock. A's V2 call held the identity
+    `ShareLock` (granted) and waited for the pair lock behind C
+    (`pg_blocking_pids` = C).
+  - The M2C body committed in 32 ms on backend B (00:35:00.592–.624Z) while A
+    was still inside V2. EXECUTE was then false for both V2 and V1.
+  - The verification at 00:35:00.661Z FAILED with exactly two problems: the
+    rehearsal's own `kapiloto_rehearsal.actor` wrapper, and
+    `backend <A> still holds the Sportmonks provider-identity ShareLock`. It
+    reported no ACL, cron or activity problem.
+  - After C committed, A's in-flight call completed `recorded` (00:35:00.99Z).
+  - Two brand-new backends then got SQLSTATE `42501`
+    (`permission denied for function match_ledger_ingest_provider_fixture_v2`).
+  - Once the wrapper was dropped, the verification PASSED twice, 11.3 s apart.
+- **A4 (M-1).** M2C ran while a V2 call waited at the identity boundary.
+  - C held the identity lock EXCLUSIVE. A waited for the identity `ShareLock`
+    (not granted, blocked by C).
+  - After the M2C body committed (EXECUTE false/false), the verification
+    FAILED: wrapper plus
+    `backend <A> is waiting for the Sportmonks provider-identity ShareLock`.
+  - C released the lock; A completed `recorded`. New backends got `42501`.
+  - The verification then PASSED twice, 11.7 s apart.
+- **B1.** A's open V2 transaction held the identity `ShareLock`.
+  - B's `provider_identity_revoke_team` queued for the identity lock EXCLUSIVE
+    (blocked by A, no `backend_xid`). The team trust state was unchanged while
+    it waited (events 1, projection 1).
+  - After 5,004 ms the revoke failed with SQLSTATE `55P03`
+    (`canceling statement due to lock timeout`). Its context was
+    `pg_advisory_xact_lock` in `private.lock_provider_identity(text,boolean)`
+    via `private.provider_identity_begin_change`. It wrote no event and left the
+    projection.
+  - After A committed:
+    - the trusted V2 read returned A's observation;
+    - the impact report showed it under the active generation.
+  - The retry on a new backend returned `revoked`. The impact report then
+    showed A's observation as latest under the revoked generation, and the V2
+    read returned `NULL`.
+- **B2.** The impact report taken before the barrier could not see A's
+  uncommitted observation.
+  - B's revoke queued behind A, then completed `revoked` once A committed.
+  - A's observation was first seen at 00:41:00.127576Z, before the revoke event
+    was recorded at 00:41:00.228614Z.
+  - The impact report shows it latest under the revoked generation, and the V2
+    read returned `NULL`.
+- **B3.** B's revoke executed and its open transaction held the identity lock
+  EXCLUSIVE. A's V2 call queued for the `ShareLock` behind B.
+  - After B committed, A returned `quarantined` / `team_attestation_missing`.
+  - Footprint: 0 observations, exactly 1 new quarantined ingest item, no active
+    projection.
+
+### Cleanup and final state
+
+Cleanup ran in this order:
+
+1. All rehearsal jobs were unscheduled.
+2. The `kapiloto_rehearsal` schema was dropped.
+3. The reviewed M2C body ran.
+4. The verification PASSED twice, at 00:43:20.75Z and 00:43:32.54Z.
+
+A separate read-only check afterwards confirmed the paused state:
+
+- **Privileges:**
+  - `service_role` can execute neither V2 nor V1;
+  - `anon` and `authenticated` cannot execute V2.
+- **Fallback leftovers:**
+  - no fallback schema;
+  - 0 cron jobs;
+  - 0 rehearsal sessions;
+  - 0 identity locks.
+- **Verification:** the reviewed verify file passes.
+- **Unchanged guard counts:**
+  - 0 auth users;
+  - 0 rounds;
+  - 0 M2B migrations;
+  - 0 pg_net responses.
+
+The synthetic rows remain: 12 prefixed teams, 6 marked runs and 5
+observations. They carry the harness's own prefix and run marker, so they do
+not block a later harness run on this project.
+
+### Evidence
+
+Evidence lives in `docs/operations/evidence/2026-11-08-v4-m2b-pgcron-fallback/`:
+
+- **`evidence.json`** — guards, function identity, per-experiment pids, cron
+  run records, handshake snapshots, actor results with SQLSTATEs and context,
+  verification runs, and cleanup.
+  - SHA-256 `87899adcf1fb6460d4af04ae11ea8d5242bf8ae297e38c49c4e0e961dff9493a`
+    (LF line endings).
+  - It contains no DSN, password, host, project ref, key or vault value; only a
+    SHA-256 of the ref is recorded.
+- **`install.sql`** — the fallback's database objects, with
+  `sql_sources.install` = `524c794e…`.
+- **`controller.ts.txt`** — the controller as run, with its two project-ref
+  string constants replaced by `"<disposable-project-ref>"` and
+  `"<production-project-ref>"` (SHA-256 `8e71987f…`). Putting the two refs
+  back reproduces `sql_sources.controller_run_ts` = `5c875c88…`. It is stored
+  as text: it is not part of the build, and it imports the harness from the
+  session worktree layout.
+
+### How the fallback differs from the harness
+
+- **One transaction per session.** Each session runs in one pg_cron
+  transaction. The results it records become visible only when it commits, and
+  every result is evaluated after the driver finishes.
+- **C ends by committing, not rolling back.** In A4, C commits instead of
+  rolling back. C writes nothing, so either way only releases the identity
+  lock.
+- **Retries and fresh calls use new backends.**
+  - B1's retry is a new backend, not the same session.
+  - "New V2 call after M2C" is shown on two brand-new backends. The harness also
+    retries on the session whose earlier call completed.
+- **The wrapper is visible to the verification.** The fallback's actor
+  function calls V2 by name, so the verification during A2/A4 also lists it. It
+  is dropped before every PASS run. It is not hidden from the verifier.
+- **The M2C body runs inside the M2C actor's transaction.** That transaction
+  otherwise only waits for its gate and records its result. Cleanup's M2C ran
+  alone, through the Management API.
 
 ## Remaining limits
 
@@ -289,7 +495,13 @@ This rehearsal intentionally does **not** claim more than it proved:
 
 ## Verdict
 
-**Real PostgreSQL rehearsal gate: PASS WITH THE PR-R FIXES.**
+**Real PostgreSQL rehearsal gate: PASS WITH THE PR-R FIXES.** The 2026-11-08
+pg_cron fallback run reproduced P0, A2, A4, B1, B2 and B3 live on separate
+backends and passed.
+
+**Reusable harness live run: still owed.** It needs a direct connection from
+an IPv6-capable network, or the session pooler with the disposable project's
+current database password.
 
 **M2B production activation: still NO-GO** until H-2, H-3, the reviewed
 allowlist/runtime assertions and the separate grant-only migration are closed.

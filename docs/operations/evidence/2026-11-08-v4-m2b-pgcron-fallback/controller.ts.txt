@@ -1,0 +1,907 @@
+/**
+ * Kapiloto V4 M2B/M2C REAL-PostgreSQL rehearsal — pg_cron FALLBACK controller.
+ * DISPOSABLE Supabase project kapiloto-m2b-harness-20261107 only.
+ *
+ * Why a fallback: the reusable harness (tools/kapiloto-v4-m2b-real-postgres-rehearsal.ts)
+ * needs a direct or session-pooler DSN. From this machine the direct host is
+ * IPv6-only with no IPv6 route (ENETUNREACH), and the operator chose this
+ * pg_cron path instead of supplying a session-pooler password.
+ *
+ * Shape:
+ *   - the controller talks to the database only through the Supabase CLI's
+ *     Management API query endpoint, pinned to the disposable project ref, from
+ *     an empty work directory (it cannot fall back to the linked production
+ *     project). Every write script starts with the disposable guard, which
+ *     production cannot pass;
+ *   - the actors (A, B, C, ...) and the observer/driver O are one-shot pg_cron
+ *     jobs, all scheduled for the same minute: each is its own PostgreSQL
+ *     backend (pg_cron libpq mode), and pg_cron's job_run_details records its pid;
+ *   - interleavings use observed lock state only (install.sql);
+ *   - synthetic worlds come from the harness's own createRehearsalWorld; M2C is
+ *     always docs/operations/sql/kapiloto-v4-m2c-revoke-body.sql and the
+ *     verification docs/operations/sql/kapiloto-v4-m2c-verify.sql, verbatim;
+ *     the only privilege change is the harness's SIMULATED_M2B_GRANT;
+ *   - cleanup always drops the fallback objects, runs the M2C body and a
+ *     double verification PASS.
+ */
+import { createHash, randomInt } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
+
+import {
+  APPLICATION_NAME_PREFIX,
+  HARNESS_ID,
+  LOCK_SNAPSHOT_SQL,
+  REHEARSED_FUNCTIONS,
+  SIMULATED_M2B_GRANT,
+  SYNTHETIC_NAME_PREFIX,
+  Session,
+  assertEvidenceRedacted,
+  createRehearsalWorld,
+  expectedFunctionSource,
+  loadReviewedM2cSql,
+  redactEvidence,
+  type RawConnection,
+} from "../pr58/lib/kapiloto-v4/test-support/real-postgres-rehearsal";
+
+const FALLBACK_ID = "kapiloto-v4-m2b-pgcron-fallback-v1";
+const REF = "<disposable-project-ref>";
+const PROJECT_NAME = "kapiloto-m2b-harness-20261107";
+const PRODUCTION_REF = "<production-project-ref>";
+const HERE = dirname(resolve(process.argv[1]));
+const ROOT = resolve(HERE, "..", "pr58");
+const WORKDIR = resolve(HERE, "..", "sb-disposable");
+const QUERY_DIR = resolve(HERE, "queries");
+const CLI_JS = join(process.env.LOCALAPPDATA ?? "", "npm-cache", "_npx", "b96a6bd565c470ce", "node_modules", "supabase", "dist", "supabase.js");
+const OUT = resolve(ROOT, "artifacts", "kapiloto-v4-m2b-rehearsal", "2026-11-08-pgcron-fallback.json");
+const V2 = "public.match_ledger_ingest_provider_fixture_v2(jsonb)";
+const V1 = "public.match_ledger_ingest_provider_fixture(jsonb)";
+const DOUBLE_PASS_GAP_MS = 6_500;
+
+const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const t0 = Date.now();
+const log = (msg: string) => process.stdout.write(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}\n`);
+
+// ---------------------------------------------------------------------------
+// SQL sources: reviewed files verbatim, harness SQL extracted from its source.
+// ---------------------------------------------------------------------------
+
+const harnessSource = readFileSync(join(ROOT, "lib", "kapiloto-v4", "test-support", "real-postgres-rehearsal.ts"), "utf8");
+function extract(re: RegExp, what: string): string {
+  const m = re.exec(harnessSource);
+  if (!m) throw new Error(`could not extract ${what} from the harness source`);
+  return m[1];
+}
+const UTC_TEMPLATE = "`to_char((${expr}) at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')`";
+if (!harnessSource.includes(`const utc = (expr: string) => ${UTC_TEMPLATE};`)) throw new Error("harness utc() changed");
+const utc = (expr: string) => `to_char((${expr}) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+const SQL = {
+  ...loadReviewedM2cSql(ROOT),
+  role: extract(/const ROLE_SQL = `([\s\S]*?)`;/, "ROLE_SQL").replace("${V2}", V2),
+  disposable: extract(/const DISPOSABLE_GUARD_SQL = `([\s\S]*?)`;/, "DISPOSABLE_GUARD_SQL"),
+  privileges: extract(/const PRIVILEGES_SQL = `([\s\S]*?)`;/, "PRIVILEGES_SQL"),
+  teamTrust: extract(/async function teamTrustState[\s\S]*?`([\s\S]*?)`/, "teamTrustState"),
+  impact: extract(/async function observationImpact[\s\S]*?`([\s\S]*?)`/, "observationImpact"),
+  trustedRead: extract(/async function trustedRead[\s\S]*?"(select [^"]*)"/, "trustedRead"),
+  items: extract(/const itemsBefore = [\s\S]*?"(select [^"]*)"/, "B3 items"),
+  footprint: extract(/const footprint = [\s\S]*?`([\s\S]*?)`/, "B3 footprint"),
+  order: extract(/const order = [\s\S]*?`([\s\S]*?)`/, "B2 order")
+    .replace('${utc("o.first_seen_at")}', utc("o.first_seen_at"))
+    .replace('${utc("e.recorded_at")}', utc("e.recorded_at")),
+  install: readFileSync(join(HERE, "install.sql"), "utf8"),
+};
+for (const [name, text] of Object.entries(SQL)) {
+  if (name !== "install" && /\$\{/.test(text)) throw new Error(`unexpanded template in ${name}`);
+}
+function extractInstall(re: RegExp): string {
+  const m = re.exec(SQL.install);
+  if (!m) throw new Error("actor DDL not found in install.sql");
+  return m[1];
+}
+const ACTOR_FUNCTION_DDL = extractInstall(/(create function kapiloto_rehearsal\.actor[\s\S]*?\$actor\$;)/);
+
+// ---------------------------------------------------------------------------
+// The only database channel: Supabase CLI -> Management API, disposable ref only.
+// ---------------------------------------------------------------------------
+
+class CliFailure extends Error {
+  constructor(readonly sqlstate: string | null, message: string) {
+    super(message);
+  }
+}
+
+let queryCounter = 0;
+function cli(sqlText: string, label: string): Array<Record<string, unknown>> {
+  // The CLI caches the target in <workdir>/supabase/.temp/linked-project.json; it must only ever be the disposable project.
+  if (existsSync(join(WORKDIR, "supabase", ".temp", "project-ref"))) throw new Error("the CLI work directory must not be linked (supabase/.temp/project-ref)");
+  const cached = join(WORKDIR, "supabase", ".temp", "linked-project.json");
+  if (existsSync(cached)) {
+    const meta = JSON.parse(readFileSync(cached, "utf8")) as { ref?: string; name?: string };
+    if (meta.ref !== REF || meta.name !== PROJECT_NAME) throw new Error("the CLI's cached project is not the disposable rehearsal project");
+  }
+  mkdirSync(QUERY_DIR, { recursive: true });
+  queryCounter += 1;
+  const file = join(QUERY_DIR, `${String(queryCounter).padStart(4, "0")}-${label.replace(/[^A-Za-z0-9_-]+/g, "_").slice(0, 60)}.sql`);
+  writeFileSync(file, sqlText, "utf8");
+  const r = spawnSync(
+    process.execPath,
+    [CLI_JS, "db", "query", "--linked", "--project-ref", REF, "--workdir", WORKDIR, "--agent", "no", "--output-format", "json", "-f", file],
+    { encoding: "utf8", timeout: 150_000, cwd: WORKDIR, windowsHide: true },
+  );
+  const out = (r.stdout ?? "").trim();
+  if (r.status !== 0) {
+    let message = out || (r.stderr ?? "").trim() || `CLI exited ${r.status}`;
+    try {
+      message = (JSON.parse(out) as { error?: { message?: string } }).error?.message ?? message;
+    } catch {
+      /* keep raw */
+    }
+    const m = /ERROR:\s+([0-9A-Z]{5}):\s*([\s\S]*?)(?:\\n|"|$)/.exec(message);
+    throw new CliFailure(m ? m[1] : null, m ? m[2] : message.slice(0, 500));
+  }
+  return JSON.parse(out) as Array<Record<string, unknown>>;
+}
+
+function lit(value: unknown): string {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("non-finite numeric parameter");
+    return String(value);
+  }
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) return `ARRAY[${value.map(lit).join(", ")}]`;
+  if (typeof value === "string") {
+    if (value.includes("\u0000")) throw new Error("NUL in parameter");
+    return `'${value.replace(/'/g, "''")}'`;
+  }
+  throw new Error(`unsupported parameter type ${typeof value}`);
+}
+const inline = (sql: string, params: unknown[]) => sql.replace(/\$(\d+)/g, (_m, n: string) => lit(params[Number(n) - 1]));
+
+/** Production cannot pass: it has users, rounds and non-rehearsal rows. Every write script starts with it. */
+const GUARD = `do $kapiloto_rehearsal_guard$
+begin
+  if (select count(*) from auth.users) > 0
+     or (select count(*) from public.rounds) > 0
+     or exists (select 1 from public.teams where canonical_name not like ${lit(`${SYNTHETIC_NAME_PREFIX}%`)})
+     or exists (select 1 from public.competitions where canonical_name not like ${lit(`${SYNTHETIC_NAME_PREFIX}%`)})
+     or exists (select 1 from public.provider_ingest_runs where scope->>'kapiloto_rehearsal' is distinct from ${lit(HARNESS_ID)})
+     or exists (select 1 from private.provider_team_identity_attestation_events e
+                where not exists (select 1 from public.teams t where t.id = e.team_id and t.canonical_name like ${lit(`${SYNTHETIC_NAME_PREFIX}%`)}))
+     or exists (select 1 from supabase_migrations.schema_migrations where coalesce(name, '') ilike '%m2b%')
+  then
+    raise exception 'kapiloto rehearsal fallback guard: not the empty disposable rehearsal database';
+  end if;
+end;
+$kapiloto_rehearsal_guard$;
+`;
+
+const write = (sql: string, label: string) => cli(`${GUARD}\n${sql}`, label);
+const read = (sql: string, label: string) => cli(sql, label);
+const one = <T>(rows: Array<Record<string, unknown>>): T => {
+  if (rows.length !== 1) throw new Error(`expected one row, got ${rows.length}`);
+  return rows[0] as T;
+};
+
+/** A harness Session whose every statement is one guarded Management API call (autocommit). */
+const cliRaw: RawConnection = {
+  async query(sql: string, params: unknown[] = []) {
+    return write(inline(sql, params), "world");
+  },
+  takeNotices: () => [],
+  close: async () => undefined,
+};
+const worldSession = new Session("W", 0, "management-api", cliRaw);
+
+// ---------------------------------------------------------------------------
+// Evidence.
+// ---------------------------------------------------------------------------
+
+type Assertion = { name: string; passed: boolean; observed?: unknown };
+type VerifyRun = { at: string; passed: boolean; message: string; via: string };
+type Experiment = {
+  id: string;
+  title: string;
+  outcome: "pass" | "fail" | "inconclusive";
+  sessions: Record<string, number>;
+  world?: { provider_fixture_id: string; run_id: string };
+  schedule?: { cron: string; jobs: Array<{ name: string; jobid: number }> };
+  cron_runs?: unknown;
+  driver_evidence?: unknown;
+  actor_results?: unknown;
+  handshakes: unknown[];
+  verify_runs: VerifyRun[];
+  assertions: Assertion[];
+  error?: { kind: string; message: string; observed?: unknown };
+};
+
+const evidence = {
+  rehearsal: FALLBACK_ID,
+  approach: "pg_cron fallback: Management API controller; actors and observer are one-shot pg_cron jobs (separate PostgreSQL backends)",
+  world_builder: `${HARNESS_ID} createRehearsalWorld`,
+  outcome: "fail" as "pass" | "fail" | "inconclusive" | "refused",
+  started_at: new Date().toISOString(),
+  finished_at: null as string | null,
+  target: { kind: "supabase-management-api+pg_cron", project_name: PROJECT_NAME, project_ref_sha256: sha256(REF) },
+  why_fallback: {
+    direct: "db.<ref>.supabase.co has only an AAAA record; this machine has no IPv6 default route (connect ENETUNREACH)",
+    session_pooler: "tenant found on aws-1-eu-central-1 (SASL offered); the current database password was not available to the operator session; operator chose the pg_cron fallback",
+  },
+  run_tag: null as string | null,
+  server: null as Record<string, unknown> | null,
+  sql_sources: {} as Record<string, string>,
+  function_identity: [] as unknown[],
+  guards: [] as Assertion[],
+  pre_run_changes: [
+    "operator-approved: cron.unschedule of 'kapiloto-live-sync-every-2-min' and 'kapiloto-research-worker-every-2-min' (migration-created jobs that would post to production endpoints; both inert: 0 rounds, 0 research runs)",
+  ],
+  experiments: [] as Experiment[],
+  cleanup: {
+    ran: false,
+    terminated_pids: [] as number[],
+    unscheduled_jobs: 0,
+    fallback_objects_dropped: false,
+    m2c_body_executed: false,
+    verify_runs: [] as VerifyRun[],
+    final_privileges: null as { v2_service_role: boolean; v1_service_role: boolean } | null,
+    leftover_cron_jobs: null as number | null,
+    error: undefined as string | undefined,
+  },
+  error: undefined as { kind: string; message: string } | undefined,
+};
+
+for (const [name, text] of Object.entries(SQL)) evidence.sql_sources[name] = sha256(text);
+evidence.sql_sources.lock_snapshot = sha256(LOCK_SNAPSHOT_SQL);
+evidence.sql_sources.simulated_m2b_grant = sha256(SIMULATED_M2B_GRANT);
+evidence.sql_sources.controller_run_ts = sha256(readFileSync(join(HERE, "run.ts"), "utf8"));
+
+class AssertionFailure extends Error {
+  constructor(readonly observed: unknown, message: string) {
+    super(message);
+  }
+}
+class InconclusiveRun extends Error {}
+
+function checker(ex: Experiment) {
+  return (name: string, passed: boolean, observed?: unknown) => {
+    ex.assertions.push({ name, passed, ...(observed === undefined ? {} : { observed }) });
+    if (!passed) throw new AssertionFailure(observed, name);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Verification via the Management API (reviewed file, verbatim, alone).
+// ---------------------------------------------------------------------------
+
+function serverNow(): string {
+  return String(one<{ now: string }>(read(`select ${utc("pg_catalog.clock_timestamp()")} as now`, "now")).now);
+}
+
+function verifyOnce(): VerifyRun {
+  const at = serverNow();
+  try {
+    cli(SQL.m2cVerify, "m2c-verify");
+    return { at, passed: true, message: "no exception: M2C verification PASSED", via: "management-api" };
+  } catch (error) {
+    return { at, passed: false, message: (error as Error).message, via: "management-api" };
+  }
+}
+
+async function verifyDoublePass(runs: VerifyRun[], attempts = 1): Promise<boolean> {
+  let first: VerifyRun | null = null;
+  for (let i = 0; i < attempts; i += 1) {
+    first = verifyOnce();
+    runs.push(first);
+    if (first.passed) break;
+    await sleep(1_000);
+  }
+  if (!first?.passed) return false;
+  await sleep(DOUBLE_PASS_GAP_MS);
+  const second = verifyOnce();
+  runs.push(second);
+  return second.passed && Date.parse(second.at) - Date.parse(first.at) >= DOUBLE_PASS_GAP_MS;
+}
+
+function privileges(): { v2: boolean; v1: boolean } {
+  return one<{ v2: boolean; v1: boolean }>(read(inline(SQL.privileges, [V2, V1]), "privileges"));
+}
+
+// ---------------------------------------------------------------------------
+// Guards (read-only), mirroring the harness's runGuards.
+// ---------------------------------------------------------------------------
+
+function runGuards(): boolean {
+  const guard = (name: string, passed: boolean, observed?: unknown) => {
+    evidence.guards.push({ name, passed, ...(observed === undefined ? {} : { observed }) });
+    return passed;
+  };
+  const role = one<Record<string, unknown>>(read(SQL.role, "role"));
+  evidence.server = { server_version: role.server_version, server_version_num: role.server_version_num, isolation: role.isolation, current_user: role.current_user };
+  let ok = guard("connected as the V2 owner (the only role that can make the simulated grant)", role.current_user === role.v2_owner && role.session_user === role.current_user, { current_user: role.current_user, v2_owner: role.v2_owner });
+  ok = guard("the connecting role can SET ROLE service_role (the production ingest path)", role.can_become_service_role === true) && ok;
+  ok = guard("PostgreSQL 15 or later, READ COMMITTED by default", Number(role.server_version_num) >= 150000 && role.isolation === "read committed", { server_version_num: role.server_version_num, isolation: role.isolation }) && ok;
+
+  const data = one<Record<string, number>>(read(inline(SQL.disposable, [`${SYNTHETIC_NAME_PREFIX}%`, HARNESS_ID]), "disposable-guard"));
+  for (const [key, count] of Object.entries(data)) ok = guard(`disposable database: ${key} = 0`, Number(count) === 0, count) && ok;
+
+  const m2b = one<{ n: number }>(read("select count(*)::int as n from supabase_migrations.schema_migrations where coalesce(name, '') ilike '%m2b%'", "m2b-history"));
+  ok = guard("no M2B migration in the migration history", Number(m2b.n) === 0, m2b.n) && ok;
+  const others = one<{ n: number }>(read(inline("select count(*)::int as n from pg_catalog.pg_stat_activity where application_name like $1", [`${APPLICATION_NAME_PREFIX}%`]), "other-sessions"));
+  ok = guard("no other rehearsal session is connected", Number(others.n) === 0, others.n) && ok;
+  const cron = one<{ jobs: number; ingest_jobs: number; schema: boolean; ext: string | null }>(read(
+    `select (select count(*) from cron.job)::int as jobs,
+            (select count(*) from cron.job where command ilike '%match_ledger_ingest_provider_fixture%')::int as ingest_jobs,
+            pg_catalog.to_regnamespace('kapiloto_rehearsal') is not null as schema,
+            (select extversion from pg_extension where extname = 'pg_cron') as ext`, "cron-state"));
+  ok = guard("pg_cron is installed (fallback backends)", cron.ext !== null, cron.ext) && ok;
+  ok = guard("no pg_cron job exists before the rehearsal (none calls an ingest RPC)", Number(cron.jobs) === 0 && Number(cron.ingest_jobs) === 0, cron) && ok;
+  ok = guard("no leftover kapiloto_rehearsal schema", cron.schema === false) && ok;
+
+  const migrationsDir = join(ROOT, "supabase", "migrations");
+  const rows = read(
+    `select f.sig, p.prosrc, p.prosecdef, pg_catalog.pg_get_userbyid(p.proowner)::text as owner, coalesce(p.proconfig, '{}') as config
+     from unnest(${lit(REHEARSED_FUNCTIONS.map((fn) => fn.signature))}::text[]) as f(sig)
+     left join pg_catalog.pg_proc p on p.oid = pg_catalog.to_regprocedure(f.sig)`,
+    "function-identity",
+  ) as Array<{ sig: string; prosrc: string | null; prosecdef: boolean | null; owner: string | null; config: string[] }>;
+  for (const fn of REHEARSED_FUNCTIONS) {
+    const row = rows.find((r) => r.sig === fn.signature);
+    const expected = expectedFunctionSource(migrationsDir, fn.schema, fn.name);
+    const prosrcSha = row?.prosrc ? sha256(row.prosrc.replace(/\r\n/g, "\n")) : null;
+    const expectedSha = expected === null ? null : sha256(expected.replace(/\r\n/g, "\n"));
+    const config = row?.config ?? [];
+    evidence.function_identity.push({ signature: fn.signature, prosrc_sha256: prosrcSha, expected_sha256: expectedSha, matches_checkout: prosrcSha !== null && prosrcSha === expectedSha, owner: row?.owner ?? null, security_definer: row?.prosecdef ?? null, config });
+    ok = guard(`${fn.signature} is this checkout's migration text`, prosrcSha !== null && prosrcSha === expectedSha) && ok;
+    if (fn.lockTimeout) ok = guard(`${fn.signature} keeps lock_timeout=${fn.lockTimeout}`, config.includes(`lock_timeout=${fn.lockTimeout}`), config) && ok;
+  }
+  const acl = privileges();
+  ok = guard("ingest is paused at start: service_role can execute neither V2 nor V1", !acl.v2 && !acl.v1, acl) && ok;
+  const baseline = verifyOnce();
+  ok = guard("the reviewed M2C verification PASSES at start", baseline.passed, baseline.message) && ok;
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Experiments: actor scripts, driver programs, assertions (mirroring the harness).
+// ---------------------------------------------------------------------------
+
+type Op = { op: string; arg?: Record<string, unknown> };
+type Spec = {
+  id: string;
+  title: string;
+  actors: Record<string, Op[]>;
+  driver: Op[];
+  m2c: boolean;
+  evaluate: (ctx: EvalCtx) => void;
+};
+type ResultRow = { actor: string; seq: number; op: string; ok: boolean | null; sqlstate: string | null; message: string | null; where_: string | null; value: any; pid: number; app: string; started_at: string; finished_at: string };
+type EvRow = { seq: number; kind: string; label: string; ok: boolean; data: any; at: string; pid: number };
+type World = Awaited<ReturnType<typeof createRehearsalWorld>>;
+type EvalCtx = {
+  check: (name: string, passed: boolean, observed?: unknown) => void;
+  w: World;
+  pids: Record<string, number>;
+  result: (actor: string, op: string) => ResultRow | undefined;
+  results: (actor: string, op: string) => ResultRow[];
+  observed: (name: string) => any[][];
+  handshake: (labelStart: string) => EvRow | undefined;
+  ev: (kind: string) => EvRow[];
+};
+
+const gate = (g: string): Op => ({ op: "gate", arg: { gate: g } });
+const release = (g: string): Op => ({ op: "release", arg: { gate: g } });
+const await_ = (actor: string, timeout_s = 12): Op => ({ op: "await", arg: { actor, timeout_s } });
+const handshake = (label: string, pred: string): Op => ({ op: "handshake", arg: { label, pred } });
+const observe = (name: string): Op => ({ op: "observe", arg: { name } });
+const P = (name: string) => `($2->>'${name}')::int`;
+const holds = (actor: string, label: string, mode: string, granted: boolean) => `kapiloto_rehearsal.holds($1, ${P(actor)}, '${label}', '${mode}', ${granted})`;
+const blocked = (actor: string, by: string) => `kapiloto_rehearsal.blocked($1, ${P(actor)}, ${P(by)})`;
+const v2Actor = (g: string): Op[] => [gate(g), { op: "role" }, { op: "v2" }, { op: "reset_role" }];
+
+const WRAPPER_PROBLEM = "SECURITY INVOKER function kapiloto_rehearsal.actor(text,text,text) owned by postgres references a provider ingest RPC";
+
+function expectRecorded(ctx: EvalCtx, label: string, row: ResultRow | undefined) {
+  ctx.check(`${label}: V2 call returned`, row?.ok === true, row ? { sqlstate: row.sqlstate, message: row.message } : "no result");
+  const v = row!.value;
+  ctx.check(`${label}: recorded through the existing mapping under the world's attestation generations`,
+    v?.status === "recorded" && v?.fixture_resolution === "existing_mapping" && v?.fixture_id === ctx.w.fixtureId &&
+      v?.attestation_generations?.league === ctx.w.generations.league &&
+      v?.attestation_generations?.team_home === ctx.w.generations.team_home &&
+      v?.attestation_generations?.team_away === ctx.w.generations.team_away,
+    v);
+  return v;
+}
+function expectWaiterStillInWindow(row: ResultRow | undefined) {
+  if (row && row.ok === false && row.sqlstate === "55P03") throw new InconclusiveRun(`the waiting call hit its 5s function lock_timeout before the interleaving completed: ${row.message}`);
+}
+function expectRefusedAfterM2c(ctx: EvalCtx) {
+  for (const n of ["N1", "N2"]) {
+    const r = ctx.result(n, "v2");
+    ctx.check(`${n}: a V2 call on a brand-new backend after M2C committed is refused with 42501`, r?.ok === false && r?.sqlstate === "42501", r ? { sqlstate: r.sqlstate, message: r.message } : "no result");
+  }
+}
+
+const SPECS: Spec[] = [
+  {
+    id: "P0",
+    title: "preflight: a direct service_role V2 call records; an identical replay is unchanged",
+    actors: { A: v2Actor("a1"), R: v2Actor("r1") },
+    driver: [release("a1"), await_("A"), release("r1"), await_("R")],
+    m2c: false,
+    evaluate(ctx) {
+      expectRecorded(ctx, "preflight", ctx.result("A", "v2"));
+      const replay = ctx.result("R", "v2");
+      ctx.check("identical replay (a separate backend) is unchanged", replay?.ok === true && replay.value?.status === "unchanged", replay?.value ?? replay?.message);
+    },
+  },
+  {
+    id: "A2",
+    title: "M2C while V2 is already inside the function: the in-flight call completes, new calls get 42501, drain verified by the identity lock",
+    actors: {
+      C: [gate("c1"), { op: "hold", arg: { key: "pair" } }, gate("c2")],
+      A: v2Actor("a1"),
+      B: [gate("b1"), { op: "m2c" }],
+      N1: v2Actor("n1"),
+      N2: v2Actor("n2"),
+    },
+    driver: [
+      release("c1"),
+      handshake("C holds the unordered canonical team-pair advisory lock", holds("C", "pair", "ExclusiveLock", true)),
+      release("a1"),
+      handshake("A inside V2: identity ShareLock granted, team-pair lock waiting behind C",
+        `${holds("A", "identity", "ShareLock", true)} and ${holds("A", "pair", "ExclusiveLock", false)} and ${blocked("A", "C")} and ${holds("C", "pair", "ExclusiveLock", true)}`),
+      release("b1"),
+      await_("B"),
+      { op: "privileges" },
+      handshake("after M2C, A is still inside V2 waiting behind C", `${holds("A", "identity", "ShareLock", true)} and ${holds("A", "pair", "ExclusiveLock", false)}`),
+      { op: "verify" },
+      release("c2"),
+      await_("C"),
+      await_("A"),
+      release("n1"),
+      await_("N1"),
+      release("n2"),
+      await_("N2"),
+    ],
+    m2c: true,
+    evaluate(ctx) {
+      const m2c = ctx.result("B", "m2c");
+      ctx.check("M2C revoke body committed without waiting for the in-flight ingest", m2c?.ok === true, m2c ? { sqlstate: m2c.sqlstate, message: m2c.message, ms: Date.parse(m2c.finished_at) - Date.parse(m2c.started_at) } : "no result");
+      const acl = ctx.ev("privileges")[0]?.data;
+      ctx.check("after M2C service_role can execute neither V2 nor V1", acl?.v2 === false && acl?.v1 === false, acl);
+      const during = ctx.ev("verify")[0]?.data;
+      const expected = `M2C verification FAILED: ${WRAPPER_PROBLEM}; backend ${ctx.pids.A} still holds the Sportmonks provider-identity ShareLock; a V2 ingest call is still in flight`;
+      ctx.check("M2C verification FAILS while A holds the identity ShareLock; the only other problem is the rehearsal's own actor wrapper (no ACL, cron or activity problem)",
+        during?.passed === false && during?.message === expected, { message: during?.message, expected });
+      const a = ctx.result("A", "v2");
+      expectWaiterStillInWindow(a);
+      expectRecorded(ctx, "in-flight call after M2C", a);
+      ctx.check("A's in-flight call finished only after C released the pair lock (after M2C committed)",
+        Date.parse(a!.finished_at) > Date.parse(m2c!.finished_at), { a_finished: a!.finished_at, m2c_finished: m2c!.finished_at });
+      expectRefusedAfterM2c(ctx);
+    },
+  },
+  {
+    id: "A4",
+    title: "M2C verification FAILS on a V2 call waiting for the provider-identity ShareLock (M-1)",
+    actors: {
+      C: [gate("c1"), { op: "hold", arg: { key: "identity" } }, gate("c2")],
+      A: v2Actor("a1"),
+      B: [gate("b1"), { op: "m2c" }],
+      N1: v2Actor("n1"),
+      N2: v2Actor("n2"),
+    },
+    driver: [
+      release("c1"),
+      handshake("C holds the Sportmonks provider-identity lock EXCLUSIVE", holds("C", "identity", "ExclusiveLock", true)),
+      release("a1"),
+      handshake("A passed EXECUTE and waits for the identity ShareLock behind C",
+        `${holds("A", "identity", "ShareLock", false)} and ${blocked("A", "C")} and ${holds("C", "identity", "ExclusiveLock", true)}`),
+      release("b1"),
+      await_("B"),
+      { op: "privileges" },
+      { op: "verify" },
+      release("c2"),
+      await_("C"),
+      await_("A"),
+      release("n1"),
+      await_("N1"),
+      release("n2"),
+      await_("N2"),
+    ],
+    m2c: true,
+    evaluate(ctx) {
+      const m2c = ctx.result("B", "m2c");
+      ctx.check("M2C revoke body committed while A waits at the identity boundary", m2c?.ok === true, m2c ? { sqlstate: m2c.sqlstate, message: m2c.message } : "no result");
+      const acl = ctx.ev("privileges")[0]?.data;
+      ctx.check("after M2C service_role can execute neither V2 nor V1", acl?.v2 === false && acl?.v1 === false, acl);
+      const during = ctx.ev("verify")[0]?.data;
+      const expected = `M2C verification FAILED: ${WRAPPER_PROBLEM}; backend ${ctx.pids.A} is waiting for the Sportmonks provider-identity ShareLock; a V2 ingest call already passed its EXECUTE check and is waiting at the identity boundary`;
+      ctx.check("M2C verification FAILS on the WAITING ShareLock request; the only other problem is the rehearsal's own actor wrapper",
+        during?.passed === false && during?.message === expected, { message: during?.message, expected });
+      const a = ctx.result("A", "v2");
+      expectWaiterStillInWindow(a);
+      expectRecorded(ctx, "waiting call after M2C", a);
+      expectRefusedAfterM2c(ctx);
+    },
+  },
+  {
+    id: "B1",
+    title: "identity revoke queued behind an in-flight ingest fails cleanly with 55P03, then succeeds on retry",
+    actors: {
+      A: [...v2Actor("a1"), gate("a2")],
+      B: [gate("b1"), { op: "role" }, { op: "revoke" }, { op: "reset_role" }],
+      R: [gate("r1"), { op: "role" }, { op: "revoke" }, { op: "reset_role" }],
+    },
+    driver: [
+      release("a1"),
+      handshake("A's open transaction holds the identity ShareLock (V2 returned; A waits at its commit gate)",
+        `${holds("A", "identity", "ShareLock", true)} and ${holds("A", "gate:a2", "ShareLock", false)}`),
+      observe("team_trust"),
+      release("b1"),
+      handshake("B waits for the identity lock EXCLUSIVE behind A, before any write", `${holds("B", "identity", "ExclusiveLock", false)} and ${blocked("B", "A")}`),
+      observe("team_trust"),
+      await_("B", 15),
+      observe("team_trust"),
+      release("a2"),
+      await_("A"),
+      observe("trusted_read"),
+      observe("impact"),
+      release("r1"),
+      await_("R"),
+      observe("impact"),
+      observe("trusted_read"),
+    ],
+    m2c: false,
+    evaluate(ctx) {
+      const ingest = expectRecorded(ctx, "in-flight ingest", ctx.result("A", "v2"));
+      const [before, during, after] = ctx.observed("team_trust").map((rows) => rows[0]);
+      const queued = ctx.handshake("B waits for the identity lock EXCLUSIVE");
+      const bRow = (queued?.data?.snapshot ?? []).find((row: any) => row.pid === ctx.pids.B && row.label === "identity");
+      ctx.check("the queued revoke has no transaction id yet (nothing written)", bRow?.backend_xid === null || bRow?.backend_xid === undefined, bRow);
+      ctx.check("while queued: no new revoke event, projection still present", JSON.stringify(during) === JSON.stringify(before) && before?.projection === 1, { before, during });
+      const b = ctx.result("B", "revoke");
+      ctx.check("the queued revoke failed with SQLSTATE 55P03 at the identity lock",
+        b?.ok === false && b.sqlstate === "55P03" && /lock_provider_identity/.test(b.where_ ?? ""), b ? { sqlstate: b.sqlstate, where: b.where_, message: b.message } : "no result");
+      ctx.check("the failed revoke wrote no event and left the projection", JSON.stringify(after) === JSON.stringify(before), { before, after });
+      const [read1, read2] = ctx.observed("trusted_read").map((rows) => rows[0]?.id ?? null);
+      ctx.check("after A commits the trusted V2 read returns A's observation", read1 === ingest.observation_id, { read1, observation_id: ingest.observation_id });
+      const [impact1, impact2] = ctx.observed("impact");
+      ctx.check("impact report: A's observation under the ACTIVE generation", impact1.some((row) => row.observation_id === ingest.observation_id && row.generation_state === "active"), impact1);
+      const retry = ctx.result("R", "revoke");
+      ctx.check("the retried revoke (a new execution, after drain) succeeds", retry?.ok === true && retry.value?.status === "revoked", retry?.value ?? retry?.message);
+      ctx.check("impact report: A's observation is now under a REVOKED generation", impact2.some((row) => row.observation_id === ingest.observation_id && row.generation_state === "revoked" && row.is_latest_version), impact2);
+      ctx.check("the trusted V2 read no longer returns the observation", read2 === null, read2);
+    },
+  },
+  {
+    id: "B2",
+    title: "identity revoke queued behind an in-flight ingest completes after the ingest commits; impact report and V2 read reflect it",
+    actors: {
+      A: [...v2Actor("a1"), gate("a2")],
+      B: [gate("b1"), { op: "role" }, { op: "revoke" }, { op: "reset_role" }],
+    },
+    driver: [
+      release("a1"),
+      handshake("A's open transaction holds the identity ShareLock (V2 returned; A waits at its commit gate)",
+        `${holds("A", "identity", "ShareLock", true)} and ${holds("A", "gate:a2", "ShareLock", false)}`),
+      observe("impact"),
+      release("b1"),
+      handshake("B waits for the identity lock EXCLUSIVE behind A", `${holds("B", "identity", "ExclusiveLock", false)} and ${blocked("B", "A")}`),
+      release("a2"),
+      await_("A"),
+      await_("B"),
+      observe("impact"),
+      observe("order"),
+      observe("trusted_read"),
+    ],
+    m2c: false,
+    evaluate(ctx) {
+      const recorded = expectRecorded(ctx, "in-flight ingest", ctx.result("A", "v2"));
+      const [preBarrier, impact] = ctx.observed("impact");
+      ctx.check("before the barrier the impact report cannot see A's uncommitted observation", !preBarrier.some((row) => row.observation_id === recorded.observation_id), preBarrier);
+      const revoked = ctx.result("B", "revoke");
+      if (revoked?.ok === false && revoked.sqlstate === "55P03") throw new InconclusiveRun("the queued revoke timed out before A committed");
+      ctx.check("the queued revoke completed after A committed", revoked?.ok === true && revoked.value?.status === "revoked", revoked?.value ?? revoked?.message);
+      ctx.check("impact report: A's observation, latest version, under the REVOKED generation",
+        impact.some((row) => row.observation_id === recorded.observation_id && row.is_latest_version && row.generation_state === "revoked"), impact);
+      const order = ctx.observed("order")[0]?.[0];
+      ctx.check("A's observation was first seen before the revoke event was recorded", order?.before === true, order);
+      const read2 = ctx.observed("trusted_read")[0]?.[0]?.id ?? null;
+      ctx.check("the trusted V2 read no longer returns the observation", read2 === null, read2);
+    },
+  },
+  {
+    id: "B3",
+    title: "ingest queued behind an identity revoke fails closed (team_attestation_missing) once the revoke commits",
+    actors: {
+      B: [gate("b1"), { op: "role" }, { op: "revoke" }, { op: "reset_role" }, gate("b2")],
+      A: v2Actor("a1"),
+    },
+    driver: [
+      release("b1"),
+      handshake("B's open revoke holds the identity lock EXCLUSIVE (revoke returned; B waits at its commit gate)",
+        `${holds("B", "identity", "ExclusiveLock", true)} and ${holds("B", "gate:b2", "ShareLock", false)}`),
+      observe("items"),
+      release("a1"),
+      handshake("A passed EXECUTE and waits for the identity ShareLock behind B", `${holds("A", "identity", "ShareLock", false)} and ${blocked("A", "B")}`),
+      release("b2"),
+      await_("B"),
+      await_("A"),
+      observe("footprint"),
+    ],
+    m2c: false,
+    evaluate(ctx) {
+      const revoked = ctx.result("B", "revoke");
+      ctx.check("the revoke executed", revoked?.ok === true && revoked.value?.status === "revoked", revoked?.value ?? revoked?.message);
+      const itemsBefore = Number(ctx.observed("items")[0]?.[0]?.n);
+      const result = ctx.result("A", "v2");
+      expectWaiterStillInWindow(result);
+      ctx.check("the queued ingest re-read trust after the barrier and quarantined team_attestation_missing",
+        result?.ok === true && result.value?.status === "quarantined" && result.value?.reason_code === "team_attestation_missing", result?.value ?? result?.message);
+      const footprint = ctx.observed("footprint")[0]?.[0];
+      ctx.check("fail closed: no observation, exactly one quarantine audit item, no active projection",
+        footprint?.observations === 0 && footprint?.items === itemsBefore + 1 && footprint?.quarantined === 1 && footprint?.projection === 0, { footprint, itemsBefore });
+    },
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Orchestration.
+// ---------------------------------------------------------------------------
+
+function chooseRunTag(): string {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const tag = String(randomInt(100_000, 1_000_000));
+    const used = one<{ n: number }>(read(inline(
+      `select ((select count(*) from public.provider_team_mappings where provider_team_id like $1)
+             + (select count(*) from public.provider_competition_mappings where provider_competition_id like $1)
+             + (select count(*) from public.provider_fixture_mappings where provider_fixture_id like $1)
+             + (select count(*) from public.provider_player_mappings where provider_player_id like $2))::int as n`,
+      [`20${tag}%`, `1${tag}%`]), "run-tag"));
+    if (Number(used.n) === 0) return tag;
+  }
+  throw new Error("could not choose an unused synthetic id range");
+}
+
+function install(): void {
+  const texts: Array<[string, string]> = [
+    ["m2c_revoke", SQL.m2cRevoke],
+    ["m2c_verify", SQL.m2cVerify],
+    ["lock_snapshot", LOCK_SNAPSHOT_SQL],
+    ["sig:v2", V2],
+    ["sig:v1", V1],
+    ["observe:team_trust", SQL.teamTrust],
+    ["observe:impact", SQL.impact],
+    ["observe:trusted_read", SQL.trustedRead],
+    ["observe:items", SQL.items],
+    ["observe:footprint", SQL.footprint],
+    ["observe:order", SQL.order],
+  ];
+  const inserts = texts.map(([name, body]) => `insert into kapiloto_rehearsal.sqltext (name, body) values (${lit(name)}, ${lit(body)});`).join("\n");
+  write(`${SQL.install}\n${inserts}\nselect count(*)::int as n from kapiloto_rehearsal.sqltext;`, "install");
+  const check = read("select (select body from kapiloto_rehearsal.sqltext where name = 'm2c_revoke') as revoke, (select body from kapiloto_rehearsal.sqltext where name = 'm2c_verify') as verify", "install-check");
+  const row = one<{ revoke: string; verify: string }>(check);
+  if (row.revoke !== SQL.m2cRevoke || row.verify !== SQL.m2cVerify) throw new Error("installed M2C text differs from docs/operations/sql");
+}
+
+async function runExperiment(spec: Spec, runTag: string, index: number): Promise<Experiment> {
+  const ex: Experiment = { id: spec.id, title: spec.title, outcome: "fail", sessions: {}, handshakes: [], verify_runs: [], assertions: [] };
+  evidence.experiments.push(ex);
+  const check = checker(ex);
+  try {
+    log(`${spec.id}: creating synthetic world`);
+    const w = await createRehearsalWorld(worldSession, runTag, index, spec.id);
+    ex.world = { provider_fixture_id: w.providerFixtureId, run_id: w.runId };
+    const params = { fixture_id: w.fixtureId, run_id: w.runId, provider_home_team_id: w.providerHomeTeamId };
+    const keys = { identity: "kapiloto_v4_provider_identity:sportmonks", pair: w.pairKey, fixture: w.fixtureKey };
+    const revocation = {
+      provider: "sportmonks",
+      provider_team_id: w.providerHomeTeamId,
+      expected_team_id: w.homeTeamId,
+      reason: "synthetic real-PostgreSQL rehearsal revocation",
+      revoked_by: "synthetic rehearsal operator",
+    };
+    if (!harnessSource.includes('reason: "synthetic real-PostgreSQL rehearsal revocation"')) throw new Error("harness revocation payload changed");
+    const scriptRows: string[] = [];
+    for (const [actor, ops] of Object.entries({ ...spec.actors, O: spec.driver })) {
+      ops.forEach((op, i) => scriptRows.push(`(${lit(spec.id)}, ${lit(actor)}, ${i + 1}, ${lit(op.op)}, ${lit(JSON.stringify(op.arg ?? {}))}::jsonb)`));
+    }
+    write(
+      `insert into kapiloto_rehearsal.world (exp, payload, revocation, keys, params) values (${lit(spec.id)}, ${lit(JSON.stringify(w.payload))}::jsonb, ${lit(JSON.stringify(revocation))}::jsonb, ${lit(JSON.stringify(keys))}::jsonb, ${lit(JSON.stringify(params))}::jsonb);
+       insert into kapiloto_rehearsal.script (exp, actor, seq, op, arg) values ${scriptRows.join(",\n")};
+       select 1 as ok;`,
+      `${spec.id}-world-script`,
+    );
+
+    write(`${SIMULATED_M2B_GRANT};\nselect 1 as ok;`, `${spec.id}-simulated-grant`);
+    const grant = privileges();
+    check("simulated M2B grant opened V2 to service_role only; V1 stays revoked", grant.v2 && !grant.v1, grant);
+
+    // Every backend starts at the same minute boundary (pg_cron, GMT).
+    const nowEpoch = Number(one<{ e: number }>(read("select extract(epoch from pg_catalog.clock_timestamp())::float8 as e", "epoch")).e);
+    const start = new Date(Math.ceil((nowEpoch + 20) / 60) * 60 * 1000);
+    const cronExpr = `${start.getUTCMinutes()} ${start.getUTCHours()} ${start.getUTCDate()} ${start.getUTCMonth() + 1} *`;
+    const jobs: Array<[string, string]> = [[`kapiloto-rehearsal-${runTag}-${spec.id}-O`, `select kapiloto_rehearsal.driver(${lit(runTag)}, ${lit(spec.id)})`]];
+    for (const actor of Object.keys(spec.actors)) jobs.push([`kapiloto-rehearsal-${runTag}-${spec.id}-${actor}`, `select kapiloto_rehearsal.actor(${lit(runTag)}, ${lit(spec.id)}, ${lit(actor)})`]);
+    const scheduled = one<{ jobs: Array<{ name: string; jobid: number }> }>(write(
+      `select json_agg(json_build_object('name', v.n, 'jobid', cron.schedule(v.n, ${lit(cronExpr)}, v.c)) order by v.n) as jobs
+       from (values ${jobs.map(([n, c]) => `(${lit(n)}, ${lit(c)})`).join(", ")}) as v(n, c);`,
+      `${spec.id}-schedule`,
+    ));
+    ex.schedule = { cron: `${cronExpr} (GMT; start ${start.toISOString()})`, jobs: scheduled.jobs };
+    const jobIds = scheduled.jobs.map((j) => Number(j.jobid));
+    log(`${spec.id}: ${jobIds.length} one-shot pg_cron jobs scheduled for ${start.toISOString()}`);
+
+    // Wait for the driver and every actor to commit (bounded).
+    const deadline = start.getTime() + 120_000;
+    let status: { done: number; ended: number } = { done: 0, ended: 0 };
+    while (Date.now() < deadline) {
+      await sleep(2_000);
+      status = one<{ done: number; ended: number }>(read(
+        `select (select count(*) from kapiloto_rehearsal.evidence where run_tag = ${lit(runTag)} and exp = ${lit(spec.id)} and kind = 'done')::int as done,
+                (select count(distinct actor) from kapiloto_rehearsal.result where run_tag = ${lit(runTag)} and exp = ${lit(spec.id)} and op = 'end')::int as ended`,
+        `${spec.id}-poll`));
+      if (Number(status.done) === 1 && Number(status.ended) === Object.keys(spec.actors).length) break;
+    }
+    const unscheduled = one<{ n: number }>(write(
+      `select count(cron.unschedule(jobid))::int as n from cron.job where jobname like ${lit(`kapiloto-rehearsal-${runTag}-${spec.id}-%`)};`, `${spec.id}-unschedule`));
+    log(`${spec.id}: driver done=${status.done}, actors ended=${status.ended}/${Object.keys(spec.actors).length}; unscheduled ${unscheduled.n}`);
+
+    const collected = one<{ c: { evidence: EvRow[] | null; results: ResultRow[] | null; runs: unknown[] | null } }>(read(
+      `select json_build_object(
+         'evidence', (select json_agg(e order by e.seq) from kapiloto_rehearsal.evidence e where e.run_tag = ${lit(runTag)} and e.exp = ${lit(spec.id)}),
+         'results', (select json_agg(r order by r.actor, r.seq) from kapiloto_rehearsal.result r where r.run_tag = ${lit(runTag)} and r.exp = ${lit(spec.id)}),
+         'runs', (select json_agg(json_build_object('jobid', d.jobid, 'runid', d.runid, 'job_pid', d.job_pid, 'status', d.status, 'return_message', d.return_message,
+                    'start_time', ${utc("d.start_time")}, 'end_time', ${utc("d.end_time")}) order by d.jobid)
+                  from cron.job_run_details d where d.jobid = any(${lit(jobIds)}::bigint[]))
+       ) as c`, `${spec.id}-collect`)).c;
+    const evRows = collected.evidence ?? [];
+    const resRows = collected.results ?? [];
+    ex.driver_evidence = evRows;
+    ex.actor_results = resRows;
+    ex.cron_runs = collected.runs;
+
+    const done = evRows.find((e) => e.kind === "done");
+    check("the driver (observer) completed its program", done?.ok === true, done?.label ?? "driver did not finish");
+    const sessionsEv = evRows.find((e) => e.kind === "sessions");
+    const pids = (sessionsEv?.data?.pids ?? {}) as Record<string, number>;
+    ex.sessions = pids;
+    const pidList = Object.values(pids).map(Number);
+    check("every session is a distinct PostgreSQL backend", pidList.length === Object.keys(spec.actors).length + 1 && new Set(pidList).size === pidList.length, pids);
+    const activity = (sessionsEv?.data?.activity ?? []) as Array<{ pid: number; application_name: string }>;
+    check("pg_stat_activity shows each session pid with its own application_name",
+      Object.entries(pids).every(([name, pid]) => activity.some((a) => a.pid === pid && a.application_name === `${APPLICATION_NAME_PREFIX}${runTag}:${spec.id}-${name}`)), activity);
+    const runs = (collected.runs ?? []) as Array<{ jobid: number; job_pid: number; status: string }>;
+    const jobPid = new Map(scheduled.jobs.map((j) => [j.name.split("-").pop() as string, runs.find((r) => Number(r.jobid) === Number(j.jobid))?.job_pid]));
+    check("pg_cron job_run_details independently records each session's backend pid (one run per job, all succeeded)",
+      runs.length === jobIds.length && runs.every((r) => r.status === "succeeded") && Object.entries(pids).every(([name, pid]) => Number(jobPid.get(name)) === Number(pid)), runs);
+    for (const e of evRows.filter((r) => r.kind === "handshake")) ex.handshakes.push({ label: e.label, at: e.at, ...(e.data ?? {}) });
+    for (const e of evRows.filter((r) => r.kind === "verify")) ex.verify_runs.push({ at: e.data?.at, passed: e.data?.passed, message: e.data?.message, via: "driver backend (pg_cron)" });
+    const resultsOf = (actor: string, op: string) => resRows.filter((r) => r.actor === actor && r.op === op);
+    for (const actor of Object.keys(spec.actors)) {
+      const end = resRows.find((r) => r.actor === actor && r.op === "end");
+      const gates = resRows.filter((r) => r.actor === actor && (r.op === "gate" || r.op === "role" || r.op === "reset_role" || r.op === "hold"));
+      check(`${actor}: ran its whole script (gates, role switches and lock holds succeeded)`, end?.ok === true && gates.every((g) => g.ok === true), resRows.filter((r) => r.actor === actor).map((r) => ({ op: r.op, ok: r.ok, sqlstate: r.sqlstate, message: r.message })));
+    }
+    spec.evaluate({
+      check,
+      w,
+      pids,
+      result: (actor, op) => resultsOf(actor, op)[0],
+      results: resultsOf,
+      observed: (name) => evRows.filter((e) => e.kind === "observe" && e.label === name).map((e) => (e.data ?? []) as any[]),
+      handshake: (labelStart) => evRows.find((e) => e.kind === "handshake" && e.label.startsWith(labelStart)),
+      ev: (kind) => evRows.filter((e) => e.kind === kind),
+    });
+
+    if (spec.m2c) {
+      // The actor wrapper is the only object referencing V2: drop it, then prove drain twice.
+      write("drop function kapiloto_rehearsal.actor(text, text, text);\nselect 1 as ok;", `${spec.id}-drop-actor`);
+      const passed = await verifyDoublePass(ex.verify_runs);
+      check("M2C verification PASSES twice at least the gap apart after drain (fallback actor wrapper dropped)", passed, ex.verify_runs);
+      write(`${ACTOR_FUNCTION_DDL}\nrevoke all on function kapiloto_rehearsal.actor(text, text, text) from public;\nselect 1 as ok;`, `${spec.id}-recreate-actor`);
+    }
+    ex.outcome = "pass";
+  } catch (error) {
+    if (error instanceof InconclusiveRun) {
+      ex.outcome = "inconclusive";
+      ex.error = { kind: "inconclusive", message: error.message };
+    } else if (error instanceof AssertionFailure) {
+      ex.outcome = "fail";
+      ex.error = { kind: "assertion_failed", message: error.message, observed: error.observed };
+    } else {
+      ex.outcome = "fail";
+      ex.error = { kind: "error", message: (error as Error).message };
+    }
+  }
+  log(`${spec.id}: ${ex.outcome}${ex.error ? ` (${ex.error.message})` : ""}`);
+  return ex;
+}
+
+async function cleanup(runTag: string | null): Promise<void> {
+  const c = evidence.cleanup;
+  c.ran = true;
+  try {
+    if (runTag) {
+      const t = read(inline(
+        `select pid from pg_catalog.pg_stat_activity where application_name like $1 and pid <> pg_catalog.pg_backend_pid() and pg_catalog.pg_terminate_backend(pid)`,
+        [`${APPLICATION_NAME_PREFIX}${runTag}:%`]), "cleanup-terminate");
+      c.terminated_pids = t.map((r) => Number(r.pid));
+      const u = one<{ n: number }>(read(`select count(cron.unschedule(jobid))::int as n from cron.job where jobname like ${lit(`kapiloto-rehearsal-${runTag}-%`)}`, "cleanup-unschedule"));
+      c.unscheduled_jobs = Number(u.n);
+    }
+    read("set lock_timeout = '10s';\ndrop schema if exists kapiloto_rehearsal cascade;\nselect 1 as ok;", "cleanup-drop-schema");
+    c.fallback_objects_dropped = true;
+    cli(SQL.m2cRevoke, "cleanup-m2c-revoke-body");
+    c.m2c_body_executed = true;
+    const passed = await verifyDoublePass(c.verify_runs, 10);
+    const acl = privileges();
+    c.final_privileges = { v2_service_role: acl.v2, v1_service_role: acl.v1 };
+    c.leftover_cron_jobs = Number(one<{ n: number }>(read("select count(*)::int as n from cron.job", "cleanup-cron-count")).n);
+    if (!passed || acl.v2 || acl.v1) c.error = "final M2C verification did not PASS twice; run docs/operations/sql/kapiloto-v4-m2c-revoke-body.sql and the verification manually on the disposable project";
+  } catch (error) {
+    c.error = `cleanup failed (${(error as Error).message}); run docs/operations/sql/kapiloto-v4-m2c-revoke-body.sql and the verification manually on the disposable project`;
+  }
+}
+
+async function main(): Promise<number> {
+  let runTag: string | null = null;
+  let wrote = false;
+  try {
+    log("guards (read-only)");
+    if (!runGuards()) {
+      evidence.outcome = "refused";
+      log(`refused: ${evidence.guards.filter((g) => !g.passed).map((g) => g.name).join(" | ")}`);
+      return 2;
+    }
+    if (process.argv.includes("--guards-only")) {
+      log(`guards passed (${evidence.guards.length}); --guards-only: nothing written`);
+      process.stdout.write(`${JSON.stringify({ guards: evidence.guards.map((g) => [g.passed, g.name]), function_identity: evidence.function_identity.map((f: any) => [f.matches_checkout, f.signature]), sql_sources: evidence.sql_sources }, null, 1)}\n`);
+      return 0;
+    }
+    runTag = chooseRunTag();
+    evidence.run_tag = runTag;
+    log(`run tag ${runTag}; installing fallback objects`);
+    wrote = true;
+    install();
+    let outcome: "pass" | "fail" | "inconclusive" = "pass";
+    for (const [index, spec] of SPECS.entries()) {
+      const ex = await runExperiment(spec, runTag, index);
+      if (ex.outcome !== "pass") {
+        outcome = ex.outcome;
+        break;
+      }
+    }
+    evidence.outcome = outcome;
+  } catch (error) {
+    evidence.outcome = "fail";
+    evidence.error = { kind: "error", message: (error as Error).message };
+    log(`error: ${(error as Error).message}`);
+  } finally {
+    if (wrote) {
+      log("cleanup: terminate, unschedule, drop fallback objects, M2C body, double verify");
+      await cleanup(runTag);
+      if (evidence.cleanup.error) {
+        evidence.outcome = "fail";
+        log(`cleanup error: ${evidence.cleanup.error}`);
+      }
+    }
+    evidence.finished_at = new Date().toISOString();
+    const secrets = [REF, PRODUCTION_REF, `db.${REF}.supabase.co`];
+    const redacted = redactEvidence(evidence, secrets);
+    const serialized = `${JSON.stringify(redacted, null, 2)}\n`;
+    assertEvidenceRedacted(serialized, secrets);
+    mkdirSync(dirname(OUT), { recursive: true });
+    writeFileSync(OUT, serialized, "utf8");
+    log(`evidence ${OUT} sha256=${sha256(serialized)} outcome=${evidence.outcome}`);
+  }
+  return evidence.outcome === "pass" ? 0 : 1;
+}
+
+main().then((code) => {
+  process.exitCode = code;
+});
