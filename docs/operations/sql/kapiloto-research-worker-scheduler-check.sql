@@ -6,6 +6,10 @@
 --
 -- Returns one row describing `kapiloto-research-worker-every-2-min`:
 --   job_count / jobid / active / schedule   what cron.job holds;
+--   username / database                     the job's identity; anything other than owner
+--                                           postgres in database postgres is
+--                                           unexpected_job_identity and blocks every write,
+--                                           a pause included;
 --   command_sha256                          SHA-256 of the whitespace-collapsed command;
 --   definition                              which reviewed command it is, or 'unknown':
 --     scheduler_v1_single           20261020112327: one request per tick, always finalizing
@@ -16,18 +20,30 @@
 --                                           reported only, never acted on;
 --   status                                  in_sync | wrong_definition | inactive_wrong_definition |
 --                                           inactive | running_while_paused | absent | duplicate |
---                                           unknown_definition | wrong_schedule | desired_state_required;
+--                                           unexpected_job_identity | unknown_definition |
+--                                           wrong_schedule | desired_state_required;
 --   action                                  none | rewrite | pause | resume | refuse;
 --   confirm_token                           what the reconcile template requires to perform
 --                                           `action`; it binds the action to this exact jobid,
 --                                           command hash and active flag.
 --
+-- Precedence: a missing desired state, a duplicate, an absent job and an
+-- unexpected identity are decided first. With desired 'paused', an active job
+-- is then offered `pause` whatever its command or schedule (an emergency stop
+-- only stops calls). With desired 'enabled', an unknown command or a wrong
+-- schedule is refused.
+--
 -- It reads cron.job, kapiloto_research_runs and kapiloto_research_attempts only.
 -- It never reads a Vault secret and never reads a job command other than this job's.
+-- Its active_runs / nonterminal_attempts are an observation at read time; the
+-- reconcile template re-checks them under a table lock before a rewrite.
 
 -- >>> worker scheduler state (shared verbatim with kapiloto-research-worker-scheduler-reconcile.sql)
 with params as (
-  select nullif(btrim(current_setting('kapiloto_scheduler.desired', true)), '') as desired
+  select
+    nullif(btrim(current_setting('kapiloto_scheduler.desired', true)), '') as desired,
+    'postgres'::text as expected_username,
+    'postgres'::text as expected_database
 ),
 known (definition, semantics_current, routing, command_sha256) as (
   values
@@ -42,6 +58,7 @@ jobs as (
     j.schedule,
     j.active,
     j.username,
+    j.database,
     encode(sha256(convert_to(btrim(regexp_replace(j.command, '\s+', ' ', 'g')), 'UTF8')), 'hex') as command_sha256
   from cron.job j
   where j.jobname = 'kapiloto-research-worker-every-2-min'
@@ -69,6 +86,7 @@ assessed as (
     t.active,
     t.schedule,
     t.username,
+    t.database,
     t.command_sha256,
     case when o.job_count = 1 then coalesce(t.definition, 'unknown') end as definition,
     t.routing,
@@ -79,6 +97,8 @@ assessed as (
       when o.job_count > 1 then 'duplicate'
       when o.job_count = 0 and p.desired = 'paused' then 'in_sync'
       when o.job_count = 0 then 'absent'
+      when t.username is distinct from p.expected_username
+        or t.database is distinct from p.expected_database then 'unexpected_job_identity'
       when p.desired = 'paused' and t.active then 'running_while_paused'
       when p.desired = 'paused' then 'in_sync'
       when t.definition is null then 'unknown_definition'
@@ -112,6 +132,7 @@ select
     when pl.status = 'desired_state_required' then 'set kapiloto_scheduler.desired to enabled or paused'
     when pl.status = 'duplicate' then 'more than one job has this name; resolve by hand'
     when pl.status = 'absent' then 'the job does not exist; re-creating it is a separately reviewed action, never a reconciliation'
+    when pl.status = 'unexpected_job_identity' then 'the job is not owned by postgres in database postgres; nothing is written, a pause included; review it by hand'
     when pl.status = 'unknown_definition' then 'the command matches no reviewed definition; review it by hand'
     when pl.status = 'wrong_schedule' then 'the schedule is not */2 * * * *; review it by hand'
     when pl.action = 'refuse' then 'research work is queued or running; rewrite only on an idle queue'

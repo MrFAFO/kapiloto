@@ -54,6 +54,8 @@ type State = {
   jobid: number | null;
   active: boolean | null;
   schedule: string | null;
+  username: string | null;
+  database: string | null;
   command_sha256: string | null;
   definition: string | null;
   routing: string | null;
@@ -148,6 +150,27 @@ test("the check is one read-only query and the template's only writes are alter_
   }
 });
 
+test("a rewrite is ordered: READ COMMITTED check, idle-queue SHARE lock, re-derived state, then the write", () => {
+  const code = RECONCILE.replace(/\r\n/g, "\n").replace(/--[^\n]*/g, "").replace(/\$cron\$[\s\S]*?\$cron\$/g, "''");
+  const locks = [...code.matchAll(/\block\s+table\b[^;]*;/gi)].map((m) => m[0].replace(/\s+/g, " "));
+  assert.deepEqual(locks, ["lock table public.kapiloto_research_runs, public.kapiloto_research_attempts in share mode;"]);
+  const at = (needle: string) => {
+    const index = code.indexOf(needle);
+    assert.ok(index >= 0, needle);
+    return index;
+  };
+  const rewriteBranch = at("if v_before.action = 'rewrite' then");
+  const isolation = at("current_setting('transaction_isolation') <> 'read committed'");
+  const timeout = at("perform set_config('lock_timeout', '2s', true);");
+  const lock = at("lock table public.kapiloto_research_runs");
+  const relock = at("select s.* into v_locked from (");
+  const recheck = at("v_locked.confirm_token is distinct from v_before.confirm_token");
+  const write = at("perform cron.alter_job(job_id := v_before.jobid, command := v_desired_command);");
+  const pause = at("perform cron.alter_job(job_id := v_before.jobid, active := false);");
+  assert.ok(at("if v_confirm is distinct from v_before.confirm_token then") < rewriteBranch, "token checked before any lock");
+  assert.ok(rewriteBranch < isolation && isolation < timeout && timeout < lock && lock < relock && relock < recheck && recheck < write && write < pause);
+});
+
 test("the check and the template derive state from the same query, and the template installs exactly the chain's concurrency guard", () => {
   const region = (sql: string) => {
     const text = sql.replace(/\r\n/g, "\n");
@@ -158,7 +181,7 @@ test("the check and the template derive state from the same query, and the templ
   };
   const shared = region(CHECK);
   const reconcileText = RECONCILE.replace(/\r\n/g, "\n");
-  assert.equal(reconcileText.split(shared).length - 1, 2, "both template evaluations use the check's query verbatim");
+  assert.equal(reconcileText.split(shared).length - 1, 3, "before, under the idle-queue lock and after: the check's query verbatim");
   assert.equal(normalize(DESIRED_IN_TEMPLATE), normalize(BODY.guard));
   assert.equal(commandSha(DESIRED_IN_TEMPLATE), D064_ACCEPTED_WORKER_SHA256);
 });
@@ -408,6 +431,8 @@ test("the confirmed rewrite installs the chain's concurrency guard in place, aud
   assert.equal(audit.entity_id, WORKER_JOB);
   assert.equal(audit.metadata.action, "rewrite");
   assert.equal(audit.metadata.decision, "D-065");
+  assert.equal(audit.metadata.idle_queue_locked, true);
+  assert.deepEqual([audit.metadata.before.username, audit.metadata.before.database], ["postgres", "postgres"]);
   assert.equal(audit.metadata.reason, "issue #60");
   assert.equal(audit.metadata.before.definition, "scheduler_v1_single");
   assert.equal(audit.metadata.after.definition, "concurrency_guard_v1");
@@ -443,6 +468,105 @@ test("a rewrite waits for an idle research queue, while a pause is always possib
   assert.equal(worker.active, false);
   assert.equal(commandSha(String(worker.command)), PRODUCTION_WORKER_SHA256, "pause keeps the command");
   await db.close();
+});
+
+type LockRow = { relation: string; mode: string; granted: boolean };
+const RESEARCH_TABLES = ["kapiloto_research_attempts", "kapiloto_research_runs"];
+
+/** Runs the template and reads this backend's research-table locks before the transaction ends. */
+async function reconcileAndInspectLocks(db: PGlite, params: Params) {
+  return db.transaction(async (tx) => {
+    for (const [key, value] of Object.entries(params)) {
+      await tx.query("select set_config($1, $2, true)", [`kapiloto_scheduler.${key}`, value]);
+    }
+    await tx.exec(RECONCILE);
+    const locks = await tx.query<LockRow>(
+      `select c.relname as relation, l.mode, l.granted
+       from pg_locks l join pg_class c on c.oid = l.relation
+       where l.locktype = 'relation' and l.pid = pg_backend_pid()
+         and c.relnamespace = 'public'::regnamespace and c.relname = any($1)
+       order by c.relname, l.mode`,
+      [RESEARCH_TABLES],
+    );
+    const timeout = (await tx.query<{ lock_timeout: string }>("select current_setting('lock_timeout') as lock_timeout")).rows[0];
+    return { locks: locks.rows, lockTimeout: timeout.lock_timeout };
+  });
+}
+
+test("the rewrite holds a SHARE lock on research runs and attempts until commit; pause and resume take none", async () => {
+  const db = await productionDrift();
+  const rewrite = await check(db, "enabled");
+  const held = await reconcileAndInspectLocks(db, { desired: "enabled", confirm: rewrite.confirm_token!, reason: "issue #60" });
+  // SHARE conflicts with the ROW EXCLUSIVE lock of every INSERT/UPDATE/DELETE,
+  // so no run or attempt can appear or change status before this commits.
+  assert.deepEqual(
+    held.locks.filter((l) => l.mode === "ShareLock").map((l) => [l.relation, l.granted]),
+    RESEARCH_TABLES.map((t) => [t, true]),
+  );
+  assert.equal(held.lockTimeout, "2s");
+  assert.equal((await check(db, "enabled")).status, "in_sync");
+
+  const pause = await check(db, "paused");
+  const paused = await reconcileAndInspectLocks(db, { desired: "paused", confirm: pause.confirm_token!, reason: "incident" });
+  assert.deepEqual(paused.locks.filter((l) => l.mode !== "AccessShareLock"), [], "an emergency pause never waits for research writers");
+  const resume = await check(db, "enabled");
+  const resumed = await reconcileAndInspectLocks(db, { desired: "enabled", confirm: resume.confirm_token!, reason: "approved" });
+  assert.deepEqual(resumed.locks.filter((l) => l.mode !== "AccessShareLock"), []);
+  const audit = (await snapshot(db)).audit.map((a) => [a.metadata.action, a.metadata.idle_queue_locked]);
+  assert.deepEqual(audit, [["rewrite", true], ["pause", false], ["resume", false]]);
+  await db.close();
+});
+
+test("a rewrite outside READ COMMITTED is refused before taking the lock, and nothing changes", async () => {
+  const db = await productionDrift();
+  const state = await check(db, "enabled");
+  const before = await snapshot(db);
+  for (const level of ["repeatable read", "serializable"]) {
+    await assert.rejects(
+      db.transaction(async (tx) => {
+        await tx.exec(`set transaction isolation level ${level}`);
+        for (const [key, value] of Object.entries({ desired: "enabled", confirm: state.confirm_token!, reason: "issue #60" })) {
+          await tx.query("select set_config($1, $2, true)", [`kapiloto_scheduler.${key}`, value]);
+        }
+        await tx.exec(RECONCILE);
+      }),
+      new RegExp(`run in READ COMMITTED \\(got ${level}\\)`),
+    );
+  }
+  assert.deepEqual(await snapshot(db), before);
+  await db.close();
+});
+
+test("a job owned by another role or in another database is unexpected_job_identity and is never written, not even paused", async () => {
+  for (const [column, value] of [["username", "other_owner"], ["database", "other_db"]] as const) {
+    for (const command of [BODY.guard, BODY.single]) {
+      const db = await createMigratedDatabase();
+      await setWorkerCommand(db, command);
+      const jobid = await workerJobId(db);
+      await db.query(`select cron.alter_job(job_id := $1, ${column} := $2)`, [jobid, value]);
+      for (const desired of ["enabled", "paused"]) {
+        const state = await check(db, desired);
+        assert.equal(state[column], value);
+        assert.deepEqual([state.status, state.action, state.confirm_token], ["unexpected_job_identity", "refuse", null], `${column} ${desired}`);
+      }
+      const before = await snapshot(db);
+      // Even a token minted for the job's otherwise-valid state is refused.
+      const asIfExpected = { jobid, command_sha256: commandSha(command), active: true };
+      for (const [desired, confirm] of [
+        ["enabled", tokenFor(asIfExpected, "rewrite")],
+        ["paused", tokenFor(asIfExpected, "pause")],
+        ["enabled", undefined],
+      ] as const) {
+        await assert.rejects(
+          reconcile(db, { desired, ...(confirm ? { confirm } : {}), reason: "r" }),
+          /refusing \(unexpected_job_identity\)/,
+          `${column} ${desired}`,
+        );
+      }
+      assert.deepEqual(await snapshot(db), before);
+      await db.close();
+    }
+  }
 });
 
 test("absent, duplicate and unknown jobs are refused by the template and nothing changes", async () => {
