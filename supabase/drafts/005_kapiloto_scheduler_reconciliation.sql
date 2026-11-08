@@ -1,3 +1,7 @@
+-- SUPERSEDED by D-065: use docs/operations/sql/kapiloto-research-worker-scheduler-check.sql
+-- and kapiloto-research-worker-scheduler-reconcile.sql. Kept for history only; never
+-- promote it. Under D-064 no scheduler command may hard-code an HTTP endpoint.
+--
 -- DRAFT — NOT A MIGRATION. Do not move into supabase/migrations until reviewed.
 --
 -- Kapiloto scheduler drift detection and explicit, idempotent repair.
@@ -32,11 +36,9 @@ create table if not exists private.kapiloto_scheduler_desired_state (
 revoke all on table private.kapiloto_scheduler_desired_state
 from public, anon, authenticated;
 
--- Seed with the guarded worker command from
--- 20261108100000_kapiloto_scheduler_target_guard_v1.sql (D-064), copied
--- verbatim when this draft is promoted. Never seed the body of an earlier
--- scheduler migration: those hard-code the production endpoint. Desired
--- state: PAUSED.
+-- Seed with the concurrency-guard command from
+-- 20261020120216_kapiloto_research_worker_concurrency_guard_v1.sql,
+-- copied verbatim when this draft is promoted. Desired state: PAUSED.
 insert into private.kapiloto_scheduler_desired_state (
   jobname, desired_enabled, schedule, command, paused_reason
 )
@@ -44,7 +46,7 @@ values (
   'kapiloto-research-worker-every-2-min',
   false,
   '*/2 * * * *',
-  '<<copy the worker $cron$ body from 20261108100000 verbatim>>',
+  '<<copy the $cron$ body from 20261020120216 verbatim>>',
   'Incident 264201: paused pending Sol provider/schema fixes.'
 )
 on conflict (jobname) do nothing;

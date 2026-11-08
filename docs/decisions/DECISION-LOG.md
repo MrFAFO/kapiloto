@@ -603,10 +603,57 @@ Reason: repository-scoped provider tokens were readable by workflow copies on hi
 Decision:
 - **Target per project.** `kapiloto-live-sync-every-2-min` and `kapiloto-research-worker-every-2-min` read their `net.http_post` URL from the Vault secrets `kapiloto_live_sync_target_url` and `kapiloto_research_worker_target_url`. They no longer use a URL hard-coded in a migration.
 - **Disarmed by default.** A job posts only when its target is exactly one `https://` URL with no whitespace. Otherwise it posts nothing. No migration creates a target, so a freshly migrated project never calls production. Production sets both targets to its current endpoints before the migration is applied there.
-- **Rewrite in place, never re-create.** Migration `20261108100000_kapiloto_scheduler_target_guard_v1.sql` changes only each job's `command`, with `cron.alter_job`. It keeps the jobid, schedule, owner and `active` flag. It leaves an absent job absent. It rewrites only the chain-installed command, recognised by a whitespace-normalised SHA-256, and otherwise aborts with nothing changed. The historical scheduler migrations are unchanged and pinned by hash.
+- **Rewrite in place, never re-create.** Migration `20261108100000_kapiloto_scheduler_target_guard_v1.sql` changes only each job's `command`, with `cron.alter_job`. It keeps the jobid, schedule, owner, database and `active` flag. It leaves an absent job absent. It rewrites only the chain-installed command, recognised by a whitespace-normalised SHA-256, and otherwise aborts with nothing changed. The historical scheduler migrations are unchanged and pinned by hash.
 - **No new endpoint literals.** Migrations from the guard on must not hard-code an HTTP endpoint, and no job in a freshly migrated database may contain one. Both rules are enforced in `lib/kapiloto/scheduler-target-guard-db.test.ts`.
 - **Rejected alternative.** A bootstrap step that unschedules the jobs on non-production projects is fail-open, and nobody runs it on projects that apply migrations automatically.
 
-Implementation status: Draft PR, not merged and not applied anywhere. Production rollout requires the user's approval in chat: create the two secrets, then apply the migration, then verify. It is described in `docs/operations/2026-11-08-pg-cron-production-target-guard.md` together with the safety argument and the disarm step for a project restored from production.
+Implementation status: Draft PR #59, not merged and not applied anywhere.
+
+The migration rewrites the research worker only from `concurrency_guard_v1`, hash `b37670903bc0…d453`. Production currently runs the historical single-call body, `6c5cafc2…` (D-065), so the migration would refuse it by design.
+
+Production rollout, each step with the user's approval in chat:
+1. D-065's reconciliation W1–W4, which brings the worker to `concurrency_guard_v1`.
+2. This PR's pre-check: worker `b3767090…`, live sync `c9c29676…`, no target secrets.
+3. Create the two secrets.
+4. Apply the migration.
+5. Verify. This includes the D-065 check reporting the worker as `concurrency_guard_v1` / `vault_target` / `in_sync`.
+
+Details are in `docs/operations/2026-11-08-pg-cron-production-target-guard.md`, together with the safety argument and the disarm step for a project restored from production.
 
 Reason: on 2026-11-08 the M2B/M2C rehearsal project (PR #58) was found running both jobs against production endpoints every 2 minutes. They were gated off only because that project had no rounds or research runs. A freshly migrated project's requests would be rejected by production's secret checks. A project restored from production, however, carries production's secrets and would drive production's live sync and worker from its own state.
+
+## D-065 — The research-worker scheduler is `concurrency_guard_v1`; drift is reconciled only by reviewed, confirmed operator SQL
+Decision:
+- **Intended definition.** `kapiloto-research-worker-every-2-min` runs exactly the command of `20261020120216_kapiloto_research_worker_concurrency_guard_v1.sql`, on `*/2 * * * *`, active.
+  - That command fills free capacity up to two live attempts and makes slot 1 the only finalizer.
+  - The single-call body of `20261020112327` is not an intended state: it has no concurrency bound, and one new attempt per tick misses the 30-minute poll window. The same goes for the unconditional two-call body of `20261020114109`.
+  - Finalization correctness does not depend on the choice. The DB finalization claim fences duplicates, and every definition sends a finalizing request. Demand workers never do.
+- **Drift check and repair are separate.**
+  - `docs/operations/sql/kapiloto-research-worker-scheduler-check.sql` is a single read-only query.
+  - `kapiloto-research-worker-scheduler-reconcile.sql` is a write template that re-derives the same state with the same query.
+  - Neither is a migration, and neither adds a table, function or grant.
+- **Explicit and fail-closed.**
+  - The desired state (`enabled` or `paused`) is an explicit argument.
+  - The only writes are one `cron.alter_job` on the existing job (rewrite the command, pause, or resume) and one `admin_audit_log` row.
+  - A write requires a token bound to the observed jobid, command hash and active flag. Without a token the template is a dry run.
+  - A job not owned by `postgres` in database `postgres` is `unexpected_job_identity` and is never written, not even paused.
+  - A rewrite needs an idle research queue, enforced atomically:
+    - it requires READ COMMITTED;
+    - it takes `LOCK TABLE kapiloto_research_runs, kapiloto_research_attempts IN SHARE MODE` with a 2 s `lock_timeout`;
+    - it re-derives the state under the lock and requires the same token before `alter_job`.
+  - Pause and resume take no lock.
+  - An absent or duplicate job is always refused. Re-creating a job is never a reconciliation.
+  - With desired `enabled`, an unknown command or a wrong schedule is refused. With desired `paused`, an active job is still offered `pause` whatever its command or schedule: an emergency stop only stops calls.
+  - A paused job is never resumed except by the separate resume action and its own token.
+- **Independent of D-064.** Routing is reported but never acted on. A Vault-routed `concurrency_guard_v1` is in sync. The rewrite installs exactly the command D-064's migration expects. So the production order is this reconciliation first, then the D-064 rollout.
+
+Implementation status: Draft PR #61 for issue #60; no production write. The read-only pre-checks were run against production by the independent review (`5816097257`, 2026-11-08):
+- jobid 10, owner and database `postgres`, `scheduler_v1_single`, idle queue, `wrong_definition` → `rewrite`;
+- first run 2026-10-22 08:52:00Z;
+- the migration ledger holds only the three original worker rows. The tests run both SQL files verbatim on the real migration chain in PGlite, with mutation checks. The production pre-check, expected results, write plan, abort conditions and verification are in `docs/operations/2026-11-08-research-worker-scheduler-reconciliation.md`. The draft `supabase/drafts/005_kapiloto_scheduler_reconciliation.sql` is superseded.
+
+Reason:
+- On 2026-11-08 production was found running the historical single-call body, although history records both later worker migrations as applied. Its normalized SHA-256 is exactly the `20261020112327` body.
+- During incident 264201 the same job had been absent.
+- It was re-created out of band, not through a migration tool, between 2026-10-21 01:07Z and 2026-10-22 08:52Z. No commit, file or session transcript records who did it or how.
+- Out-of-band scheduler changes must become detectable, deliberate and audited, and must never resume work silently.

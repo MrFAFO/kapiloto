@@ -1,6 +1,10 @@
 # pg_cron production target guard (D-064)
 
-Status: proposed in a Draft PR. Not merged and not applied anywhere. Production is unchanged.
+Status: proposed in Draft PR #59. Not merged and not applied anywhere. Production is unchanged.
+
+Production rollout depends on D-065 (PR #61, merged):
+- **Production's worker today.** It runs the historical single-call body `6c5cafc2…`, which this migration refuses by design.
+- **Order.** D-065's reconciliation W1–W4 must first bring it to `concurrency_guard_v1` (`b3767090…`), with approval, as described in `2026-11-08-research-worker-scheduler-reconciliation.md`. The rollout below starts only after that.
 
 ## Problem
 
@@ -61,7 +65,7 @@ What a non-production project could do to production:
    - round settled.
 
    A mutation check confirms the test catches drift: changing the new worker command to three slots made it fail.
-2. **Same job.** Only `command` changes. The jobid, `cron.job_run_details` history, schedule, owner and `active` flag stay the same, and a paused or unscheduled job stays that way (tested).
+2. **Same job.** Only `command` changes. The jobid, `cron.job_run_details` history, schedule, owner, database and `active` flag stay the same, and a paused or unscheduled job stays that way (tested).
 3. **No gap if the order is followed.** Until the migration runs, nothing reads the secrets, so they can be created first with no effect. Once the migration runs, the next tick posts to the same URL.
 4. **Fail-closed if the order is not followed.** If the migration lands before the secrets, production posts nothing: no wrong calls, but live sync and the worker stop. This shows in three places:
    - the migration's `WARNING`;
@@ -76,13 +80,16 @@ What a non-production project could do to production:
 
 Not done. Every production write needs the user's explicit approval in chat. Run as `postgres` with `supabase db query --linked`.
 
+**0. D-065 first.** Complete D-065's W1–W4. Its V1 must show the worker `in_sync` with `concurrency_guard_v1`, hard-coded routing, sha `b37670903bc0055b1cc12ae5551643d83c85c3ab5260aed6f20c646b1912d453`, jobid 10, active.
+
 **1. Read-only pre-check.**
 
 ```sql
-select jobid, jobname, schedule, active, username,
-       md5(regexp_replace(btrim(command), '\s+', ' ', 'g')) as command_md5
+select jobid, jobname, schedule, active, username, database,
+       encode(sha256(convert_to(btrim(regexp_replace(command, '\s+', ' ', 'g')), 'UTF8')), 'hex') as command_sha256
 from cron.job
-where jobname in ('kapiloto-live-sync-every-2-min', 'kapiloto-research-worker-every-2-min');
+where jobname in ('kapiloto-live-sync-every-2-min', 'kapiloto-research-worker-every-2-min')
+order by jobid;
 
 select name
 from vault.secrets
@@ -90,8 +97,12 @@ where name in ('kapiloto_live_sync_target_url', 'kapiloto_research_worker_target
 ```
 
 Expect:
-- each job present at most once;
-- no target secrets yet.
+- **Live sync:** jobid 3, `command_sha256 = c9c296763980744b0d3e6426817f7819b0f9c088871c6b4e105ccc97eba90107`.
+- **Worker:** jobid 10, `command_sha256 = b37670903bc0055b1cc12ae5551643d83c85c3ab5260aed6f20c646b1912d453`.
+- **Both:** `*/2 * * * *`, owner and database `postgres`, each job present exactly once.
+- **No target secrets yet.**
+
+If the worker still shows `6c5cafc2…`, D-065 has not been applied. Stop; the migration would refuse it.
 
 Record whether each job is present and active. The migration preserves exactly that state.
 
@@ -132,13 +143,17 @@ Expect:
 - `has_literal_url = false` and `reads_target = true`;
 - the two URLs exactly as in step 2.
 
+Then run D-065's read-only check with desired `enabled`. Expect the worker as `concurrency_guard_v1` / `vault_target` / `in_sync`, action `none`, jobid 10, owner and database `postgres`.
+
 When a gate is next open, `net._http_response` shows the usual status codes. `pg_net` keeps responses for about six hours.
 
-**Rollback.** No rollback of the migration is needed to restore the endpoints: they come from the secrets. To return a job to its historical command anyway:
+**Rollback.** No rollback of the migration is needed to restore the endpoints: they come from the secrets. To return a job to its pre-D-064 command anyway, each with a separate approval:
 
 ```sql
 select cron.alter_job(job_id := <jobid>, command := <the $cron$ body of the historical migration>);
 ```
+
+Use the body of `20261020101804` for live sync and of `20261020120216` (`concurrency_guard_v1`) for the worker. Never use `20261020112327` or `20261020114109`: D-065 rules them out as intended definitions.
 
 ## Non-production projects
 
@@ -159,10 +174,13 @@ select cron.alter_job(job_id := <jobid>, command := <the $cron$ body of the hist
 
 ## Re-enabling a job later
 
-If a job is absent (unscheduled) and is scheduled again, use the command from `20261108100000_kapiloto_scheduler_target_guard_v1.sql`. Never use the body of a historical scheduler migration: it hard-codes production. `supabase/drafts/005_kapiloto_scheduler_reconciliation.sql` points there.
+- **Re-creating an absent job** is a separately reviewed action; D-065's reconciliation never does it. If it is ever done, use the command from `20261108100000_kapiloto_scheduler_target_guard_v1.sql`. Never use the body of a historical scheduler migration: it hard-codes production.
+- **Pausing and resuming** go through D-065's reviewed template, which uses the `active` flag and leaves the routed command untouched.
+- **`supabase/drafts/005_kapiloto_scheduler_reconciliation.sql`** is superseded by D-065 and must not be promoted.
 
 ## Residual risks
 
 - **A copy of production carries the targets,** because Vault data is part of the database. The disarm step above is mandatory after a restore. Vault's encryption key may also prevent decryption in another project, which would leave the target `NULL` and the jobs inert, but this guard does not rely on that.
 - **A human can set production URLs on the wrong project.** Only the documentation prevents this.
 - **Skipping step 2 stops production's live sync and worker** until the secrets are created. The failure is fail-closed and visible.
+- **D-065's rewrite installs the hard-coded `concurrency_guard_v1` body.** In the documented order that is harmless, because D-064 then routes it. Its rewrite applies only to a job running a historical body. After D-064 that can happen only if someone changed the job out of band again. If that ever happens, re-route the command by hand (an approved `cron.alter_job` with D-064's worker body) before relying on the target secrets. Teaching D-065 to install the routed form is a possible follow-up; this PR leaves D-065 unchanged.

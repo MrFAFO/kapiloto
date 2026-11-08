@@ -283,3 +283,87 @@ test("the guard refuses a command it did not install, or a duplicated job, and t
   assert.deepEqual(await jobs(db), duplicated);
   await db.close();
 });
+
+// ---------------------------------------------------------------------------
+// Composition with D-065: production's real rollout order
+// ---------------------------------------------------------------------------
+
+const OPERATOR_SQL = join(process.cwd(), "docs", "operations", "sql");
+const D065_CHECK = readFileSync(join(OPERATOR_SQL, "kapiloto-research-worker-scheduler-check.sql"), "utf8");
+const D065_RECONCILE = readFileSync(join(OPERATOR_SQL, "kapiloto-research-worker-scheduler-reconcile.sql"), "utf8");
+const HISTORICAL_SINGLE_CALL = cronBodies("20261020112327_kapiloto_research_worker_scheduler_v1.sql").at(-1)!;
+// D-065: the only worker command D-064 accepts, and what D-065 installs.
+const CONCURRENCY_GUARD_SHA256 = "b37670903bc0055b1cc12ae5551643d83c85c3ab5260aed6f20c646b1912d453";
+
+type D065State = { definition: string | null; routing: string | null; status: string; action: string; confirm_token: string | null; command_sha256: string };
+
+async function d065Check(db: PGlite): Promise<D065State> {
+  return db.transaction(async (tx) => {
+    await tx.exec("set transaction read only");
+    await tx.query("select set_config('kapiloto_scheduler.desired', 'enabled', true)");
+    return (await tx.query<D065State>(D065_CHECK)).rows[0];
+  });
+}
+
+async function d065Reconcile(db: PGlite, confirm: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.query(
+      `select set_config('kapiloto_scheduler.desired', 'enabled', true),
+              set_config('kapiloto_scheduler.confirm', $1, true),
+              set_config('kapiloto_scheduler.reason', 'issue #60', true)`,
+      [confirm],
+    );
+    await tx.exec(D065_RECONCILE);
+  });
+}
+
+test("after D-065 reconciles production's drifted worker, D-064 routes exactly concurrency_guard_v1 and keeps the job", async () => {
+  // Production today: the chain up to D-065, with the worker drifted back to
+  // the historical single-call body by an out-of-band action.
+  const db = await createMigratedDatabase({ exclude: GUARD_PATTERN });
+  const drifted = (await job(db, WORKER_JOB))!;
+  await db.query("select cron.alter_job(job_id := $1, command := $2)", [drifted.jobid, HISTORICAL_SINGLE_CALL]);
+  const production = await jobs(db);
+
+  // D-064 alone refuses the drift and changes nothing.
+  await assert.rejects(
+    db.exec(read(GUARD)),
+    new RegExp(`${WORKER_JOB} \\(jobid ${drifted.jobid}\\) has a command this migration did not install`),
+  );
+  assert.deepEqual(await jobs(db), production);
+
+  // D-065 W3: the confirmed rewrite installs concurrency_guard_v1, hard-coded.
+  const plan = await d065Check(db);
+  assert.deepEqual([plan.definition, plan.status, plan.action], ["scheduler_v1_single", "wrong_definition", "rewrite"]);
+  await d065Reconcile(db, plan.confirm_token!);
+  const reconciled = (await job(db, WORKER_JOB))!;
+  assert.equal(sha256(normalize(reconciled.command)), CONCURRENCY_GUARD_SHA256);
+  assert.equal(normalize(reconciled.command), normalize(LEGACY.worker));
+
+  // D-064 then routes exactly that definition, in place.
+  await db.exec(read(GUARD));
+  const after = await jobs(db);
+  const routed = after.find((row) => row.jobname === WORKER_JOB)!;
+  const before = production.find((row) => row.jobname === WORKER_JOB)!;
+  assert.deepEqual(
+    { ...routed, command: normalize(routed.command) },
+    { ...before, command: normalize(GUARDED.worker) },
+    "jobid, schedule, owner, database and active flag preserved",
+  );
+  const liveSync = after.find((row) => row.jobname === LIVE_SYNC_JOB)!;
+  assert.equal(normalize(liveSync.command), normalize(GUARDED.liveSync));
+
+  // D-065's read-only check sees the routed worker as correct.
+  const final = await d065Check(db);
+  assert.deepEqual([final.definition, final.routing, final.status, final.action], ["concurrency_guard_v1", "vault_target", "in_sync", "none"]);
+
+  // Disarmed until production creates its target; then it posts what concurrency_guard_v1 posted.
+  await recordHttpPosts(db);
+  await openBothGates(db);
+  assert.deepEqual(await posts(db, routed.command), []);
+  await setTarget(db, WORKER_TARGET, PRODUCTION_WORKER_URL);
+  const routedPosts = await posts(db, routed.command);
+  assert.equal(routedPosts.length, 1);
+  assert.deepEqual(routedPosts, await posts(db, LEGACY.worker));
+  await db.close();
+});
