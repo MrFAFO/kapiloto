@@ -18,6 +18,9 @@ const V4_MIGRATIONS = [
   /_kapiloto_v4_identity_attestations\.sql$/,
   /_kapiloto_v4_attestation_aware_consumer_reads\.sql$/,
 ];
+// Reviewed non-V4 migrations allowed after the V4 foundation (they touch no V4
+// object): the D-064 pg_cron target guard.
+const POST_V4_NON_V4_MIGRATIONS = [/_kapiloto_scheduler_target_guard_v1\.sql$/];
 const IDENTITY_ATTESTATIONS_MIGRATION = /_kapiloto_v4_identity_attestations\.sql$/;
 const ATTESTATION_AWARE_READS_MIGRATION = /_kapiloto_v4_attestation_aware_consumer_reads\.sql$/;
 // The one deliberate exception to "no trigger on a V3 table" (D-057): a
@@ -108,8 +111,18 @@ test("the V4 migrations are the latest, in order, and strictly additive", () => 
     return matches[0];
   });
   // 1A, 1B, 1C, 1D, 1E-A1, 1E-A2-A, D-057, Stage 1 M2A and
-  // the attestation-aware consumer reads in order, with nothing after them.
-  assert.deepEqual(files.slice(-v4.length), v4);
+  // the attestation-aware consumer reads in order, with nothing between or
+  // after them except reviewed non-V4 migrations that touch no V4 object.
+  const tail = files.slice(files.indexOf(v4[0]));
+  const nonV4 = tail.filter((file) => POST_V4_NON_V4_MIGRATIONS.some((pattern) => pattern.test(file)));
+  assert.deepEqual(tail.filter((file) => !nonV4.includes(file)), v4);
+  for (const file of nonV4) {
+    const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
+    assert.doesNotMatch(sql, /kapiloto_v4|match_ledger|provider_identity|prediction_record/, file);
+    for (const table of [...V4_TABLES, ...V4_PRIVATE_TABLES]) {
+      assert.doesNotMatch(sql, new RegExp(`\\b(public|private)\\.${table}\\b`), `${file} touches V4 table ${table}`);
+    }
+  }
   for (const file of v4) {
     const sql = readFileSync(join(dir, file), "utf8").toLowerCase();
 

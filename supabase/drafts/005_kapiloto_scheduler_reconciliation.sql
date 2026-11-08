@@ -1,3 +1,7 @@
+-- SUPERSEDED by D-065: use docs/operations/sql/kapiloto-research-worker-scheduler-check.sql
+-- and kapiloto-research-worker-scheduler-reconcile.sql. Kept for history only; never
+-- promote it. Under D-064 no scheduler command may hard-code an HTTP endpoint.
+--
 -- DRAFT — NOT A MIGRATION. Do not move into supabase/migrations until reviewed.
 --
 -- Kapiloto scheduler drift detection and explicit, idempotent repair.

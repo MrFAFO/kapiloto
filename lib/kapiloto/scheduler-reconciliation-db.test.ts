@@ -292,8 +292,9 @@ test("a freshly migrated project is in sync; no desired state means no action", 
   const state = await check(db, "enabled");
   assert.equal(state.job_count, 1);
   assert.equal(state.definition, "concurrency_guard_v1");
-  assert.equal(state.routing, "hard_coded");
-  assert.equal(state.command_sha256, D064_ACCEPTED_WORKER_SHA256);
+  // The chain ends with the D-064 target guard, which routes the worker through Vault.
+  assert.equal(state.routing, "vault_target");
+  assert.equal(state.command_sha256, commandSha(BODY.routed));
   assert.equal(state.status, "in_sync");
   assert.equal(state.action, "none");
   assert.equal(state.confirm_token, null);

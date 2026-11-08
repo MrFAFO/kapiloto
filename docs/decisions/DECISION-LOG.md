@@ -599,6 +599,36 @@ Implementation status: PR #55 merged as `ab7ad6bce26824db3fa571543de8e8ee48e3277
 
 Reason: repository-scoped provider tokens were readable by workflow copies on historical branches, and 14-day raw artifacts in a public repository created unnecessary exposure. The protected Environment narrows who can receive the secret, while short artifact retention minimizes provider-data exposure without removing the immediate audit trail.
 
+## D-064 — pg_cron jobs read their HTTP target from a per-project Vault secret
+Decision:
+- **Target per project.** `kapiloto-live-sync-every-2-min` and `kapiloto-research-worker-every-2-min` read their `net.http_post` URL from the Vault secrets `kapiloto_live_sync_target_url` and `kapiloto_research_worker_target_url`. They no longer use a URL hard-coded in a migration.
+- **Disarmed by default.** A job posts only when its target is exactly one `https://` URL with no whitespace. Otherwise it posts nothing. No migration creates a target, so a freshly migrated project never calls production. Production sets both targets to its current endpoints before the migration is applied there.
+- **Rewrite in place, never re-create.** Migration `20261108100000_kapiloto_scheduler_target_guard_v1.sql` changes only each job's `command`, with `cron.alter_job`. It keeps the jobid, schedule, owner, database and `active` flag. It leaves an absent job absent. The historical scheduler migrations are unchanged and pinned by hash.
+- **Fail closed on drift.** A job is rewritten only while it is still the job the chain scheduled:
+  - its name is scheduled exactly once;
+  - its owner is `postgres` and its database is `postgres`;
+  - its schedule is exactly `*/2 * * * *`;
+  - its command is the chain-installed one, recognised by a whitespace-normalised SHA-256.
+
+  A job already in the new form is skipped only after the same name, owner, database and schedule checks. The `active` flag is deliberately not checked, because a paused job is a supported state; it is kept as it is. Each rewritten job is read back, and the migration aborts unless only its command changed. Any failed check aborts the whole migration with nothing changed, including a job already rewritten earlier in the same run.
+- **No new endpoint literals.** Migrations from the guard on must not hard-code an HTTP endpoint, and no job in a freshly migrated database may contain one. Both rules are enforced in `lib/kapiloto/scheduler-target-guard-db.test.ts`.
+- **Rejected alternative.** A bootstrap step that unschedules the jobs on non-production projects is fail-open, and nobody runs it on projects that apply migrations automatically.
+
+Implementation status: Draft PR #59, not merged and not applied anywhere.
+
+The migration rewrites the research worker only from `concurrency_guard_v1`, hash `b37670903bc0…d453`. Production currently runs the historical single-call body, `6c5cafc2…` (D-065), so the migration would refuse it by design.
+
+Production rollout, each step with the user's approval in chat:
+1. D-065's reconciliation W1–W4, which brings the worker to `concurrency_guard_v1`.
+2. This PR's pre-check: worker `b3767090…`, live sync `c9c29676…`, no target secrets.
+3. Create the two secrets.
+4. Apply the migration.
+5. Verify. This includes the D-065 check reporting the worker as `concurrency_guard_v1` / `vault_target` / `in_sync`.
+
+Details are in `docs/operations/2026-11-08-pg-cron-production-target-guard.md`, together with the safety argument and the disarm step for a project restored from production.
+
+Reason: on 2026-11-08 the M2B/M2C rehearsal project (PR #58) was found running both jobs against production endpoints every 2 minutes. They were gated off only because that project had no rounds or research runs. A freshly migrated project's requests would be rejected by production's secret checks. A project restored from production, however, carries production's secrets and would drive production's live sync and worker from its own state.
+
 ## D-065 — The research-worker scheduler is `concurrency_guard_v1`; drift is reconciled only by reviewed, confirmed operator SQL
 Decision:
 - **Intended definition.** `kapiloto-research-worker-every-2-min` runs exactly the command of `20261020120216_kapiloto_research_worker_concurrency_guard_v1.sql`, on `*/2 * * * *`, active.
