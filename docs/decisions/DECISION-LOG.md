@@ -598,3 +598,15 @@ Decision:
 Implementation status: PR #55 merged as `ab7ad6bce26824db3fa571543de8e8ee48e32776`; environment migration verified by workflow run `42231162147` attempt 2. The one-day retention change is carried by the follow-up PR that records this decision.
 
 Reason: repository-scoped provider tokens were readable by workflow copies on historical branches, and 14-day raw artifacts in a public repository created unnecessary exposure. The protected Environment narrows who can receive the secret, while short artifact retention minimizes provider-data exposure without removing the immediate audit trail.
+
+## D-064 — pg_cron jobs read their HTTP target from a per-project Vault secret
+Decision:
+- **Target per project.** `kapiloto-live-sync-every-2-min` and `kapiloto-research-worker-every-2-min` read their `net.http_post` URL from the Vault secrets `kapiloto_live_sync_target_url` and `kapiloto_research_worker_target_url`. They no longer use a URL hard-coded in a migration.
+- **Disarmed by default.** A job posts only when its target is exactly one `https://` URL with no whitespace. Otherwise it posts nothing. No migration creates a target, so a freshly migrated project never calls production. Production sets both targets to its current endpoints before the migration is applied there.
+- **Rewrite in place, never re-create.** Migration `20261108100000_kapiloto_scheduler_target_guard_v1.sql` changes only each job's `command`, with `cron.alter_job`. It keeps the jobid, schedule, owner and `active` flag. It leaves an absent job absent. It rewrites only the chain-installed command, recognised by a whitespace-normalised SHA-256, and otherwise aborts with nothing changed. The historical scheduler migrations are unchanged and pinned by hash.
+- **No new endpoint literals.** Migrations from the guard on must not hard-code an HTTP endpoint, and no job in a freshly migrated database may contain one. Both rules are enforced in `lib/kapiloto/scheduler-target-guard-db.test.ts`.
+- **Rejected alternative.** A bootstrap step that unschedules the jobs on non-production projects is fail-open, and nobody runs it on projects that apply migrations automatically.
+
+Implementation status: Draft PR, not merged and not applied anywhere. Production rollout requires the user's approval in chat: create the two secrets, then apply the migration, then verify. It is described in `docs/operations/2026-11-08-pg-cron-production-target-guard.md` together with the safety argument and the disarm step for a project restored from production.
+
+Reason: on 2026-11-08 the M2B/M2C rehearsal project (PR #58) was found running both jobs against production endpoints every 2 minutes. They were gated off only because that project had no rounds or research runs. A freshly migrated project's requests would be rejected by production's secret checks. A project restored from production, however, carries production's secrets and would drive production's live sync and worker from its own state.

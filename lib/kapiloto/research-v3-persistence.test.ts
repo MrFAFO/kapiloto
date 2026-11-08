@@ -17,6 +17,7 @@ import {
 import { groundAndJudge, v3Card, v3Output } from "./test-support/research-v3-fixtures";
 
 const V3_MIGRATION = /kapiloto_research_v3_tactical/;
+const SCHEDULER_TARGET_GUARD = /_kapiloto_scheduler_target_guard_v1\.sql$/;
 
 async function analyses(seed: SeededRound) {
   const [first, ...rest] = seed.fixtures;
@@ -83,6 +84,16 @@ test("new V3 migration exists and earlier migration files are untouched", () => 
   // V3 stays the latest migration that touches Kapiloto research persistence.
   for (const later of files.slice(files.indexOf(v3[0]) + 1)) {
     const laterSql = readFileSync(join(process.cwd(), "supabase", "migrations", later), "utf8");
+    if (SCHEDULER_TARGET_GUARD.test(later)) {
+      // D-064 rewrites only the research worker's pg_cron command, whose
+      // read-only gate names research tables. It defines, writes and grants nothing.
+      assert.doesNotMatch(
+        laterSql.replace(/--[^\n]*/g, ""),
+        /\b(alter\s+table|create|drop|insert\s+into|update|delete\s+from|truncate|grant|revoke)\b/i,
+        `${later} must not alter V3 research persistence`,
+      );
+      continue;
+    }
     assert.doesNotMatch(
       laterSql,
       /\bkapiloto_(analyses|factors|factor_evidence|evidence|research_|materialize|source_registry|fixture_|round_research_state)/i,
