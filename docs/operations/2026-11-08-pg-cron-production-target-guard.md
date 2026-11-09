@@ -1,6 +1,6 @@
 # pg_cron production target guard (D-064)
 
-Status: proposed in Draft PR #59. Not merged and not applied anywhere. Production is unchanged.
+Status: merged in PR #59 (`f42ccd7`). Not applied in production; production is unchanged. On 2026-11-09 a read-only D-065 check (PR #63 review `5824119967`) showed `d064_recorded = false` and `d064_live_sync_routed = false` in production: no D-064 ledger row, and live sync not running D-064's routed command.
 
 Production rollout depends on D-065 (PR #61, merged):
 - **Production's worker today.** It runs the historical single-call body `6c5cafc2…`, which this migration refuses by design.
@@ -136,7 +136,7 @@ select vault.create_secret(
 );
 ```
 
-**3. Apply the migration** through the normal path after the PR is merged: the migration tool, so that `supabase_migrations.schema_migrations` records it. D-065's rewrite reads that record. If it raises "has a command this migration did not install", stop: production's job differs from the chain and needs review. Nothing has changed at that point.
+**3. Apply the migration** through the normal path, the migration tool, so that `supabase_migrations.schema_migrations` records it. D-065's rewrite reads that record. If it raises "has a command this migration did not install", stop: production's job differs from the chain and needs review. Nothing has changed at that point.
 
 **4. Verify.**
 

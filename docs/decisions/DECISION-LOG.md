@@ -614,13 +614,13 @@ Decision:
 - **No new endpoint literals.** Migrations from the guard on must not hard-code an HTTP endpoint, and no job in a freshly migrated database may contain one. Both rules are enforced in `lib/kapiloto/scheduler-target-guard-db.test.ts`.
 - **Rejected alternative.** A bootstrap step that unschedules the jobs on non-production projects is fail-open, and nobody runs it on projects that apply migrations automatically.
 
-Implementation status: Draft PR #59, not merged and not applied anywhere.
+Implementation status: merged in PR #59 (`f42ccd7`); not applied in production. The 2026-11-09 read-only D-065 check (PR #63 review `5824119967`) showed no D-064 ledger row and live sync not yet routed.
 
 The migration rewrites the research worker only from `concurrency_guard_v1`, hash `b37670903bc0…d453`. Production currently runs the historical single-call body, `6c5cafc2…` (D-065), so the migration would refuse it by design.
 
 Production rollout, each step with the user's approval in chat:
 1. D-065's reconciliation W1–W4, which brings the worker to `concurrency_guard_v1`.
-2. This PR's pre-check: worker `b3767090…`, live sync `c9c29676…`, no target secrets.
+2. The D-064 runbook's pre-check: worker `b3767090…`, live sync `c9c29676…`, no target secrets.
 3. Create the two secrets.
 4. Apply the migration.
 5. Verify. This includes the D-065 check reporting the worker as `concurrency_guard_v1` / `vault_target` / `in_sync`.
@@ -659,10 +659,14 @@ Decision:
   - **Not repaired:** a hard-coded `concurrency_guard_v1` after D-064, which is D-064's documented rollback state.
   - **Blind spot:** D-064 applied by hand without a ledger row, with live sync unscheduled afterwards. Applying D-064 through the migration tool avoids it.
 
-Implementation status: merged in PR #61 for issue #60 (`981964b`). The routed rewrite after D-064 is a follow-up in its own Draft PR, recommended by PR #59 review `5817631397` before the D-064 rollout. No production write has been made. The read-only pre-checks were run against production by the independent review (`5816097257`, 2026-11-08):
+Implementation status: merged in PR #61 for issue #60 (`981964b`). The routed rewrite after D-064 is Draft PR #63, recommended by PR #59 review `5817631397` before the D-064 rollout. No production write has been made. The read-only pre-checks were run against production by the independent review (`5816097257`, 2026-11-08):
 - jobid 10, owner and database `postgres`, `scheduler_v1_single`, idle queue, `wrong_definition` → `rewrite`;
 - first run 2026-10-22 08:52:00Z;
-- the migration ledger holds only the three original worker rows. The tests run both SQL files verbatim on the real migration chain in PGlite, with mutation checks. The production pre-check, expected results, write plan, abort conditions and verification are in `docs/operations/2026-11-08-research-worker-scheduler-reconciliation.md`. The draft `supabase/drafts/005_kapiloto_scheduler_reconciliation.sql` is superseded.
+- the migration ledger holds only the three original worker rows.
+
+On 2026-11-09, review `5824119967` re-ran P1 read-only with PR #63's check. It observed `d064_recorded = false`, `d064_live_sync_routed = false` and `rewrite_routing = hard_coded`, with the worker still `scheduler_v1_single`, action `rewrite`, and an idle queue.
+
+The tests run both SQL files verbatim on the real migration chain in PGlite, with mutation checks. The production pre-check, expected results, write plan, abort conditions and verification are in `docs/operations/2026-11-08-research-worker-scheduler-reconciliation.md`. The draft `supabase/drafts/005_kapiloto_scheduler_reconciliation.sql` is superseded.
 
 Reason:
 - On 2026-11-08 production was found running the historical single-call body, although history records both later worker migrations as applied. Its normalized SHA-256 is exactly the `20261020112327` body.
