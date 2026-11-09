@@ -1,6 +1,10 @@
 # Research-worker scheduler reconciliation (D-065, issue #60)
 
-Status: proposed in Draft PR #61. Not merged. No production write has been made; no job, secret or row was changed anywhere. The read-only pre-checks P1–P3 were run against production by the independent review of 2026-11-08 (PR #61 review `5816097257`); their results are recorded below.
+Status: merged in PR #61 (`981964b`). D-064 (PR #59) is merged too, as `f42ccd7`. The follow-up that makes the rewrite install D-064's routed command once D-064 is applied (section C, "Composition with D-064") is Draft PR #63, not merged. No production write has been made; no job, secret or row was changed anywhere. Read-only checks against production:
+- P1–P3 by the independent review of 2026-11-08 (PR #61 review `5816097257`);
+- P1 again on 2026-11-09 with PR #63's check (review `5824119967`).
+
+Their results are recorded below.
 
 Reviewed operator SQL (never migrations):
 - `docs/operations/sql/kapiloto-research-worker-scheduler-check.sql`: read-only drift check;
@@ -20,7 +24,8 @@ Tests: `lib/kapiloto/scheduler-reconciliation-db.test.ts` runs both files verbat
 | 2026-10-21 | `f1cf5b3` | `supabase/drafts/005_kapiloto_scheduler_reconciliation.sql` was added: desired state seeded as PAUSED (incident 264201), command left as a placeholder. |
 | 2026-10-24 | `5f986cb` | Local migration files were renamed to production's recorded versions. At that time production history matched the repository for all three worker migrations (29 matches, no extra worker rows). |
 | 2026-11-08 | independent PR #59 review | Production has the job **active**. Its whitespace-normalized SHA-256 is `6c5cafc2bee207442366050772e437ccdb225c97bb52253d137857b2f44c9252`. 0 active research runs, 0 queued or running attempts. |
-| 2026-11-08 | P1 (this PR's check SQL), production, review `5816097257` | jobid 10, active, `*/2 * * * *`, owner `postgres`, database `postgres`, `scheduler_v1_single`, sha `6c5cafc2…`, 0 runs, 0 attempts → `wrong_definition`, action `rewrite`. |
+| 2026-11-08 | P1 (PR #61's check SQL), production, review `5816097257` | jobid 10, active, `*/2 * * * *`, owner `postgres`, database `postgres`, `scheduler_v1_single`, sha `6c5cafc2…`, 0 runs, 0 attempts → `wrong_definition`, action `rewrite`. |
+| 2026-11-09 | P1 (PR #63's check SQL at `c73a127`), production, review `5824119967` | `d064_recorded = false`, `d064_live_sync_routed = false`, `rewrite_routing = hard_coded`. Worker still `scheduler_v1_single`, action `rewrite`, 0 active runs and 0 non-terminal attempts. |
 | 2026-11-08 | P3, production, review `5816097257` | The migration ledger has exactly the three original worker rows (`20261020112327`, `20261020114109`, `20261020120216`), with no additional or re-applied worker row. |
 | 2026-11-08 | computed here, pinned by test | `6c5cafc2…` is exactly the normalized `$cron$` body of `20261020112327_kapiloto_research_worker_scheduler_v1.sql`. The live command is that file's text, not a later definition and not a hand-written variant. |
 | — | grep of `app`, `lib`, `scripts`, `tools`, `supabase/functions` | No application code calls `cron.schedule`, `cron.unschedule` or `cron.alter_job`. Only migrations, the unused draft and tests do. |
@@ -79,14 +84,19 @@ The PGlite test pins the behaviour of each definition: what it posts with no act
 ## C. Reconciliation design
 
 **Two operations, one state query.**
-- **The check** is one `SELECT`. It reads only the worker job's row in `cron.job` and the counts of queued/running research runs and attempts. It never reads Vault or any other job's command, and the test runs it inside a `READ ONLY` transaction.
+- **The check** is one `SELECT`. It reads:
+  - the worker job's row in `cron.job`;
+  - the counts of queued/running research runs and attempts;
+  - for D-064 detection only, whether `supabase_migrations.schema_migrations` records D-064 and whether the live-sync job's command hash is D-064's routed one.
+
+  It returns no command text and never reads Vault. The test runs it inside a `READ ONLY` transaction. Every Supabase project has the migration ledger; without it the query raises, so nothing can be written.
 - **The template** is one `DO` block. It derives the state with the check's query, copied verbatim, three times: before acting, again under the idle-queue lock (rewrite only), and after the write. A test pins that all three copies are byte-identical to the check's query.
 
 **Desired state is explicit.** Both take `kapiloto_scheduler.desired` = `enabled` or `paused`. Anything else gives `desired_state_required`, and the template does nothing.
 
 **Job identity.** The expected identity is owner `postgres` in database `postgres`, which production P1 and P2 confirm. A job with the right name but another owner or database is `unexpected_job_identity`, and the template writes nothing to it, not even a pause. A post-condition also requires owner and database to be unchanged after every write.
 
-**Classification.** The command is hashed after collapsing whitespace and matched against the reviewed definitions: `scheduler_v1_single`, `parallelism_v1_unconditional`, `concurrency_guard_v1` hard-coded, and `concurrency_guard_v1` routed through Vault (D-064, from PR #59 at `f49e537`). Anything else is `unknown`.
+**Classification.** The command is hashed after collapsing whitespace and matched against the reviewed definitions: `scheduler_v1_single`, `parallelism_v1_unconditional`, `concurrency_guard_v1` hard-coded, and `concurrency_guard_v1` routed through Vault (D-064's worker command, from `20261108100000`). Anything else is `unknown`.
 
 Precedence, top to bottom:
 1. `desired_state_required`, `duplicate`, `absent` and `unexpected_job_identity` are decided first, for either desired state.
@@ -106,7 +116,7 @@ Precedence, top to bottom:
 | active, `concurrency_guard_v1` (either routing) | `in_sync` | `running_while_paused` → pause |
 
 **Writes.** Each one is a single `cron.alter_job` on the existing jobid, plus one `admin_audit_log` row with group `NULL`, so no group admin can read it:
-- **rewrite** changes `command` only;
+- **rewrite** changes `command` only, to `concurrency_guard_v1` in the check's `rewrite_routing` (see "Composition with D-064");
 - **pause** sets `active := false`;
 - **resume** sets `active := true`.
 
@@ -128,7 +138,7 @@ It never schedules, unschedules or creates a job, never changes schedule, owner 
    - none can be claimed.
 
    Waiting writers proceed after commit, a matter of milliseconds. While the template is itself waiting for the lock (at most 2 s), new writers queue behind it.
-3. **Re-check under the lock.** It derives the state again and requires the same `rewrite` token. If anything changed (a run appeared, the job changed), it raises and nothing changes.
+3. **Re-check under the lock.** It derives the state again and requires the same `rewrite` token and the same `rewrite_routing`. If anything changed (a run appeared, the job changed, D-064 became visible), it raises and nothing changes.
 4. **Write.** `cron.alter_job` runs while the lock is held, and the audit row records `idle_queue_locked: true`.
 
 If the lock is not granted within 2 s, the statement fails and nothing changes. Pause and resume take no lock, so an emergency stop never waits for research writers.
@@ -142,17 +152,29 @@ Proof and its limit:
 - A rewrite keeps the job's current `active` flag.
 - Resuming is its own action with its own token, offered only when the definition is already correct.
 
-**Independent of D-064.**
-- Routing is reported but never acted on, and the files contain no Vault reference outside the installed command.
-- A routed command is `in_sync` and left alone.
-- The rewrite installs exactly the command PR #59 accepts, so the two compose in either merge order.
+**Composition with D-064.** D-064 (`20261108100000_kapiloto_scheduler_target_guard_v1`) routes the worker's URL through the Vault secret `kapiloto_research_worker_target_url`. A rewrite must not undo that.
+- **Routing never changes the status.** A routed `concurrency_guard_v1` is `in_sync` and left alone, and the files contain no Vault reference outside the installed commands.
+- **What a rewrite installs depends on whether D-064 is applied.** The check reports it in three columns:
+
+  | column | meaning |
+  |---|---|
+  | `d064_recorded` | `supabase_migrations.schema_migrations` has version `20261108100000`, or name `kapiloto_scheduler_target_guard_v1` under the version the migration tool chose |
+  | `d064_live_sync_routed` | `kapiloto-live-sync-every-2-min` runs D-064's routed command, normalized SHA-256 `f45be91f919fe489b6b01e0987942b76790573cff900cf9b1c35febf829e096c` (D-064 applied without a ledger row) |
+  | `rewrite_routing` | `vault_target` when either is true, otherwise `hard_coded` |
+
+  - **`hard_coded`:** before D-064, production today. The rewrite installs exactly the `$cron$` body of `20261020120216`, sha `b3767090…`, which D-064's migration accepts and then routes.
+  - **`vault_target`:** after D-064. The rewrite installs exactly D-064's research-worker command, sha `afd9c6ea76bae2577984cbc05f1239c7d3f65a8324c130c6b725335d06655ebd`. It posts only while the target secret holds an `https://` URL. So reconciling a drift that recurs after D-064 never brings back a hard-coded endpoint, and D-064's migration stays a no-op on a re-run.
+- **Deterministic and checked twice.** The decision uses only the ledger and the live-sync command hash. Vault secrets, data and project identity play no part. The template derives it again under the idle-queue lock and raises if it changed. A post-condition requires the job to end with the routing it chose.
+- **The token is unchanged.** It still binds action, jobid, command hash and active flag, not the routing. The routing is shown in the check (`rewrite_routing` and `detail`), in the dry-run notice and in the audit row's `after.routing`. On a drifted worker, applying D-064 through its migration raises and records nothing. So between W1 and W3 the routing can change only through a by-hand ledger row or live-sync rewrite, and either change selects the routed form.
+- **Not repaired: a hard-coded `concurrency_guard_v1` after D-064.** That is D-064's documented rollback (`2026-11-08-pg-cron-production-target-guard.md`), so it stays `in_sync`.
+- **Residual.** If D-064 was applied by hand without a ledger row and live sync was then unscheduled, the project looks like one before D-064, and a rewrite installs the hard-coded guard. Apply D-064 through the migration tool, which records it, to rule this out.
 
 **Relation to the 2026-10-21 draft.** It keeps the draft's separation of read-only drift detection from confirmed repair, and its rule that pausing changes desired state rather than deleting the job. It does not promote the draft:
 - **No persistent desired-state table and no `SECURITY DEFINER` functions.** That avoids new privileges and new RLS surface. Desired state is an explicit argument, and the audit row records it durably.
 - **Pause and resume use `active`, not `unschedule`.**
 - **A token bound to the observed state.** It replaces a fixed per-job string.
 
-The draft can be deleted after this PR and PR #59 are merged; it is left unedited here to avoid a conflict with PR #59, which changes its comment.
+PR #59 and PR #61 are both merged. Draft 005 now starts with a header, added by PR #59, that marks it superseded by D-065. It is kept for history and must never be promoted. Deleting it is a separate cleanup; this runbook does not depend on it.
 
 ## D. Production plan (not executed; every write needs explicit user approval in chat)
 
@@ -193,13 +215,17 @@ select encode(sha256(convert_to(btrim(regexp_replace(command, '\s+', ' ', 'g')),
 from cron.job where jobname = 'kapiloto-live-sync-every-2-min';
 ```
 
-### Expected results, confirmed by the 2026-11-08 read-only run
+### Expected results, confirmed by the read-only runs of 2026-11-08 and 2026-11-09
 
-The review ran P1 with the check as of `571bab8`. The current check adds the `database` column and the `unexpected_job_identity` status. Re-run it at W1; with the identity P2 confirmed, the expected row is unchanged.
+The two P1 runs used different versions of the check:
+- **2026-11-08**, review `5816097257`: the check as of `571bab8`.
+- **2026-11-09**, review `5824119967`: this check as of `c73a127`. It adds the `database` column, the `unexpected_job_identity` status, and the D-064 columns `d064_recorded`, `d064_live_sync_routed` and `rewrite_routing`. It observed `false`, `false`, `hard_coded`: production has not applied D-064. The worker was still `scheduler_v1_single` with action `rewrite` on an idle queue.
+
+Re-run it at W1. With the identity P2 confirmed, the expected values are those below.
 
 **P1:**
 
-| column | expected (observed 2026-11-08) |
+| column | expected (observed 2026-11-08 unless marked) |
 |---|---|
 | `job_count` | 1 |
 | `jobid` | 10 |
@@ -210,6 +236,8 @@ The review ran P1 with the check as of `571bab8`. The current check adds the `da
 | `routing` | `hard_coded` |
 | `command_sha256` | `6c5cafc2…9252` |
 | `active_runs`, `nonterminal_attempts` | 0 |
+| `d064_recorded`, `d064_live_sync_routed` | false, false (D-064 not applied; observed 2026-11-09, review `5824119967`) |
+| `rewrite_routing` | `hard_coded` (observed 2026-11-09, review `5824119967`) |
 | `status` | `wrong_definition` |
 | `action` | `rewrite` |
 | `confirm_token` | `rewrite:kapiloto-research-worker-every-2-min:jobid=10:sha=6c5cafc2bee20744:active=true` |
@@ -236,9 +264,9 @@ The review ran P1 with the check as of `571bab8`. The current check adds the `da
           set_config('kapiloto_scheduler.reason', 'issue #60 (D-065): restore concurrency_guard_v1', true);
    ```
 
-   followed by the template text, in the default READ COMMITTED isolation. Expect `APPLIED rewrite on jobid 10; now status=in_sync definition=concurrency_guard_v1 active=true`.
+   followed by the template text, in the default READ COMMITTED isolation. Expect `APPLIED rewrite on jobid 10; now status=in_sync definition=concurrency_guard_v1 active=t routing=hard_coded`. `supabase db query` does not show NOTICEs; V1 and V2 are the evidence.
 
-   During this execution, writes to research runs and attempts wait on its `SHARE` lock: at most 2 s while it acquires the lock, then milliseconds until it commits. No research run is expected at this point; this PR does not create one.
+   During this execution, writes to research runs and attempts wait on its `SHARE` lock: at most 2 s while it acquires the lock, then milliseconds until it commits. No research run is expected at this point; this reconciliation does not create one.
 4. **W4.** Run the verification below.
 
 ### Abort conditions
@@ -249,7 +277,8 @@ Nothing changes in any of these cases.
   - `job_count ≠ 1`, or a jobid other than 10;
   - inactive, or a wrong schedule;
   - an owner or database other than `postgres` (`unexpected_job_identity`);
-  - any queued or running research work.
+  - any queued or running research work;
+  - before D-064: `rewrite_routing` other than `hard_coded`, or either D-064 column true. That means the ledger or live sync shows D-064 although its rollout has not happened.
 
   Stop and report.
 - **The W2 token differs from the W1 token:** the state changed in between. Restart at W1.
@@ -265,7 +294,7 @@ Nothing changes in any of these cases.
 
 **V1.** P1 again. Expect:
 - `status = in_sync`;
-- `definition = concurrency_guard_v1`;
+- `definition = concurrency_guard_v1`, `routing = hard_coded`;
 - `command_sha256 = b37670903bc0055b1cc12ae5551643d83c85c3ab5260aed6f20c646b1912d453`;
 - jobid 10;
 - `active = true`;
@@ -287,36 +316,40 @@ Expect `rewrite`, before `6c5cafc2…`, after `b3767090…`, and `metadata->>'id
 
 **V3.** P4 unchanged.
 
-**V4.** PR #59's read-only pre-check now matches both jobs.
+**V4.** D-064's read-only pre-check (step 1 of `2026-11-08-pg-cron-production-target-guard.md`) now matches both jobs.
 
 ### Rollback
 
 - **Emergency stop.** Run the template with desired `paused` and the `pause:` token from P1 run with desired `paused`. The job and command are kept.
 - **Going back to the single-call body** is deliberately not offered: it is not a reviewed desired definition. If ever required, a separately approved `select cron.alter_job(job_id := <N>, command := <the $cron$ body of 20261020112327>);`.
 
+### A drift that recurs after D-064
+
+Use the same P1, W1–W4 and abort conditions, with these differences:
+- **P1 / W1.** Expect `d064_recorded = true` once D-064 went through the migration tool. `d064_live_sync_routed` is true while live sync is scheduled. Expect `rewrite_routing = vault_target`, and a `detail` that names the Vault-routed `concurrency_guard_v1`. Stop if it shows `hard_coded`: the project does not look like one where D-064 is applied.
+- **W3.** Expect `APPLIED rewrite on jobid <N>; now status=in_sync definition=concurrency_guard_v1 active=t routing=vault_target`, or `status=inactive` for a paused job, which stays paused.
+- **V1.** `routing = vault_target` and `command_sha256 = afd9c6ea76bae2577984cbc05f1239c7d3f65a8324c130c6b725335d06655ebd`, exactly D-064's worker command.
+- **V2.** After sha `afd9c6ea…`, and `metadata->'after'->>'routing' = 'vault_target'`.
+- **Then** run D-064's verify query (`2026-11-08-pg-cron-production-target-guard.md`, step 4). It expects `has_literal_url = false`, `reads_target = true`, and the target secret holding the production URL. Without the secret the routed worker posts nothing.
+
 ## Ordering with PR #59 (D-064)
 
-1. **Merge either PR first.** Neither applies anything in production. This PR adds no migration.
-
-   How the two branches interact:
-   - Both carry byte-identical changes to `lib/kapiloto/test-support/pglite-migrations.ts` and `lib/kapiloto-v4/m2c-pause-db.test.ts`, so those merge cleanly.
-   - Both append to `docs/decisions/DECISION-LOG.md`, a trivial conflict.
-   - Only PR #59 edits draft 005.
+1. **Both PRs are merged** (`981964b`, then `f42ccd7`). Neither applied anything in production, and D-065 adds no migration. As of PR #63, the PGlite harness also keeps Supabase's migration ledger, one row per applied file, so excluding the D-064 file models a project before D-064.
 2. **Production, with approval:** this plan, W1–W4.
-3. **Production, with approval:** PR #59's rollout.
+3. **Production, with approval:** D-064's rollout (`2026-11-08-pg-cron-production-target-guard.md`).
    1. Re-run its pre-check: the worker is now `b3767090…` and live sync `c9c29676…`.
    2. Create the two Vault target secrets.
    3. Apply `20261108100000`.
    4. Verify.
-4. **Afterwards,** P1 shows `concurrency_guard_v1` / `vault_target` / `in_sync`.
+4. **Afterwards,** P1 shows `concurrency_guard_v1` / `vault_target` / `in_sync`, with `rewrite_routing = vault_target`. If the worker drifts again, the rewrite restores D-064's routed command (see "A drift that recurs after D-064").
 
 Applying D-064 before step 2 is safe but blocked: its migration raises on the drifted worker command and changes nothing.
 
-Once both PRs are in one tree, `scheduler-reconciliation-db.test.ts` also asserts that its D-064 fixture equals the migration's worker body.
+Both PRs are merged. `scheduler-reconciliation-db.test.ts` asserts, unconditionally, that four things agree: its pinned D-064 fixture, the migration's worker body, the template's routed command and the check's `vault_target` hash. `scheduler-target-guard-db.test.ts` runs both orders: the drift, D-065, then D-064 (production's order), and a drift that recurs after D-064, repaired by D-065 to the routed command.
 
 ## Remaining blockers
 
 - The production write (W1–W4) needs the user's explicit approval in chat.
-- PR #59 stays NO-GO for production rollout until W4 passes.
+- D-064's production rollout (PR #59, merged as `f42ccd7`, not applied) stays NO-GO until W4 passes.
 - Who re-created the job, and with which tool, remains unproven. P2 and P3 have narrowed the window and ruled out a migration tool; nothing else in the repository or local transcripts records it.
 - The idle-queue lock's effect on other backends is argued from PostgreSQL's lock semantics, not rehearsed against a multi-backend server. The PR #58 real-PostgreSQL harness could add that rehearsal if wanted.

@@ -14,7 +14,8 @@
 -- from an earlier state (another jobid, command or active flag) is refused.
 -- The only writes are one cron.alter_job call on the existing job and one
 -- admin_audit_log row:
---   rewrite  command := concurrency_guard_v1 (jobid, schedule, active unchanged);
+--   rewrite  command := concurrency_guard_v1 in the check's rewrite_routing
+--            (jobid, schedule, active unchanged; see below);
 --   pause    active := false (the job is kept, never unscheduled);
 --   resume   active := true, only when desired is 'enabled', the job is
 --            inactive and its definition is already concurrency_guard_v1.
@@ -28,7 +29,8 @@
 -- Idle-queue guard (rewrite only), enforced, not just observed: the template
 -- requires READ COMMITTED, takes
 --   LOCK TABLE public.kapiloto_research_runs, public.kapiloto_research_attempts IN SHARE MODE
--- with lock_timeout 2s, then re-derives the state and requires the same token.
+-- with lock_timeout 2s, then re-derives the state and requires the same token
+-- and the same rewrite_routing.
 -- SHARE conflicts with the ROW EXCLUSIVE lock every INSERT/UPDATE/DELETE takes,
 -- so no research run or attempt can be created or change status between that
 -- re-check and commit; writers wait (milliseconds) and continue afterwards.
@@ -36,9 +38,19 @@
 -- raises and nothing changes. Pause and resume take no lock: an emergency stop
 -- never waits for research writers.
 --
--- The rewrite installs exactly the scheduled command body of
--- 20261020120216_kapiloto_research_worker_concurrency_guard_v1.sql, which is
--- the command D-064 (PR #59) expects before it routes the target through Vault.
+-- What a rewrite installs (D-064 routes the worker's URL through Vault):
+--   vault_target  once D-064 is applied: the migration ledger records
+--                 20261108100000_kapiloto_scheduler_target_guard_v1 (by version
+--                 or by name), or the live-sync job already runs D-064's routed
+--                 command. It installs exactly that migration's research-worker
+--                 command, which reads its URL from the Vault secret
+--                 kapiloto_research_worker_target_url and posts nothing without
+--                 it. A drift after D-064 is never repaired to a hard-coded
+--                 endpoint.
+--   hard_coded    otherwise: exactly the scheduled command body of
+--                 20261020120216_kapiloto_research_worker_concurrency_guard_v1.sql,
+--                 the command D-064's migration expects before it routes the
+--                 target.
 
 do $scheduler_reconcile$
 declare
@@ -47,7 +59,10 @@ declare
   v_before record;
   v_locked record;
   v_after record;
-  v_desired_command constant text := $cron$
+  v_install_routing text;
+  v_desired_command text;
+  -- rewrite_routing = hard_coded: 20261020120216_kapiloto_research_worker_concurrency_guard_v1.sql.
+  v_hard_coded_command constant text := $cron$
     with scheduler_state as (
       select
         exists (
@@ -120,6 +135,89 @@ declare
     cross join lateral generate_series(1, c.slots) as worker_slot(slot_no)
     where c.slots > 0;
   $cron$;
+  -- rewrite_routing = vault_target: the research-worker command of
+  -- 20261108100000_kapiloto_scheduler_target_guard_v1.sql (D-064).
+  v_routed_command constant text := $cron$
+    with scheduler_state as (
+      select
+        exists (
+          select 1
+          from public.kapiloto_research_runs r
+          where r.status in ('queued', 'running')
+        ) as has_active_run,
+        exists (
+          select 1
+          from public.kapiloto_research_attempts a
+          join public.kapiloto_research_runs r on r.id = a.run_id
+          where a.status = 'queued'
+            and a.available_at <= now()
+            and r.status in ('queued', 'running')
+        ) as has_available_queue,
+        exists (
+          select 1
+          from public.kapiloto_research_attempts a
+          join public.kapiloto_research_runs r on r.id = a.run_id
+          where a.status = 'running'
+            and a.lease_expires_at < now()
+            and r.status in ('queued', 'running')
+        ) as has_expired_running,
+        exists (
+          select 1
+          from public.kapiloto_research_attempts a
+          join public.kapiloto_research_runs r on r.id = a.run_id
+          where a.status in ('queued', 'running')
+            and r.status in ('queued', 'running')
+        ) as has_nonterminal_attempt,
+        (
+          select count(*)::integer
+          from public.kapiloto_research_attempts a
+          join public.kapiloto_research_runs r on r.id = a.run_id
+          where a.status = 'running'
+            and a.lease_expires_at > now()
+            and r.status in ('queued', 'running')
+        ) as live_running
+    ),
+    capacity as (
+      select case
+        when not has_active_run then 0
+        when has_available_queue or has_expired_running
+          then greatest(0, 2 - live_running)
+        when not has_nonterminal_attempt and live_running = 0
+          then 1
+        else 0
+      end as slots
+      from scheduler_state
+    ),
+    target as (
+      select s.decrypted_secret as url
+      from vault.decrypted_secrets s
+      where s.name = 'kapiloto_research_worker_target_url'
+        and s.decrypted_secret ~ '^https://[^[:space:]]+$'
+      limit 1
+    )
+    select net.http_post(
+      url := t.url,
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'Authorization',
+        'Bearer ' || (
+          select decrypted_secret
+          from vault.decrypted_secrets
+          where name = 'kapiloto_research_worker_secret'
+          limit 1
+        )
+      ),
+      body := jsonb_build_object(
+        'finalizeRuns',
+        worker_slot.slot_no = 1
+      ),
+      timeout_milliseconds := 30000
+    )
+    from capacity c
+    cross join target t
+    cross join lateral generate_series(1, c.slots) as worker_slot(slot_no)
+    where c.slots > 0;
+  $cron$;
 begin
   select s.* into v_before from (
 -- >>> worker scheduler state (shared verbatim with kapiloto-research-worker-scheduler-reconcile.sql)
@@ -135,6 +233,22 @@ known (definition, semantics_current, routing, command_sha256) as (
     ('parallelism_v1_unconditional', false, 'hard_coded', '65b8317f539a34e8297c17e9c633a84ca2e00a43b2b2fb885edf87609c2220b3'),
     ('concurrency_guard_v1', true, 'hard_coded', 'b37670903bc0055b1cc12ae5551643d83c85c3ab5260aed6f20c646b1912d453'),
     ('concurrency_guard_v1', true, 'vault_target', 'afd9c6ea76bae2577984cbc05f1239c7d3f65a8324c130c6b725335d06655ebd')
+),
+d064 as (
+  select
+    exists (
+      select 1
+      from supabase_migrations.schema_migrations m
+      where m.version = '20261108100000'
+        or m.name = 'kapiloto_scheduler_target_guard_v1'
+    ) as d064_recorded,
+    exists (
+      select 1
+      from cron.job l
+      where l.jobname = 'kapiloto-live-sync-every-2-min'
+        and encode(sha256(convert_to(btrim(regexp_replace(l.command, '\s+', ' ', 'g')), 'UTF8')), 'hex')
+          = 'f45be91f919fe489b6b01e0987942b76790573cff900cf9b1c35febf829e096c'
+    ) as d064_live_sync_routed
 ),
 jobs as (
   select
@@ -176,6 +290,12 @@ assessed as (
     t.routing,
     o.active_runs,
     o.nonterminal_attempts,
+    d.d064_recorded,
+    d.d064_live_sync_routed,
+    case
+      when d.d064_recorded or d.d064_live_sync_routed then 'vault_target'
+      else 'hard_coded'
+    end as rewrite_routing,
     case
       when p.desired is null or p.desired not in ('enabled', 'paused') then 'desired_state_required'
       when o.job_count > 1 then 'duplicate'
@@ -194,6 +314,7 @@ assessed as (
     end as status
   from params p
   cross join observed o
+  cross join d064 d
   left join the_job t on true
 ),
 planned as (
@@ -220,7 +341,9 @@ select
     when pl.status = 'unknown_definition' then 'the command matches no reviewed definition; review it by hand'
     when pl.status = 'wrong_schedule' then 'the schedule is not */2 * * * *; review it by hand'
     when pl.action = 'refuse' then 'research work is queued or running; rewrite only on an idle queue'
-    when pl.action = 'rewrite' then 'replace the command with concurrency_guard_v1; jobid, schedule and active flag unchanged'
+    when pl.action = 'rewrite' and pl.rewrite_routing = 'vault_target'
+      then 'replace the command with D-064''s Vault-routed concurrency_guard_v1 (D-064 is applied); jobid, schedule and active flag unchanged'
+    when pl.action = 'rewrite' then 'replace the command with the hard-coded concurrency_guard_v1 (D-064 is not applied); jobid, schedule and active flag unchanged'
     when pl.action = 'pause' then 'deactivate the job (active := false); the job is kept'
     when pl.action = 'resume' then 'reactivate the job; its definition is already concurrency_guard_v1'
     else 'nothing to do'
@@ -234,9 +357,10 @@ from planned pl
 -- <<< worker scheduler state
   ) s;
 
-  raise notice 'kapiloto scheduler: desired=% jobs=% jobid=% active=% definition=% routing=% runs=% attempts=% status=% action=%',
+  raise notice 'kapiloto scheduler: desired=% jobs=% jobid=% active=% definition=% routing=% runs=% attempts=% status=% action=% rewrite_routing=% (d064_recorded=% d064_live_sync_routed=%)',
     v_before.desired, v_before.job_count, v_before.jobid, v_before.active, v_before.definition,
-    v_before.routing, v_before.active_runs, v_before.nonterminal_attempts, v_before.status, v_before.action;
+    v_before.routing, v_before.active_runs, v_before.nonterminal_attempts, v_before.status, v_before.action,
+    v_before.rewrite_routing, v_before.d064_recorded, v_before.d064_live_sync_routed;
 
   if v_before.action = 'none' then
     raise notice 'kapiloto scheduler: in sync; nothing changed';
@@ -287,6 +411,22 @@ known (definition, semantics_current, routing, command_sha256) as (
     ('concurrency_guard_v1', true, 'hard_coded', 'b37670903bc0055b1cc12ae5551643d83c85c3ab5260aed6f20c646b1912d453'),
     ('concurrency_guard_v1', true, 'vault_target', 'afd9c6ea76bae2577984cbc05f1239c7d3f65a8324c130c6b725335d06655ebd')
 ),
+d064 as (
+  select
+    exists (
+      select 1
+      from supabase_migrations.schema_migrations m
+      where m.version = '20261108100000'
+        or m.name = 'kapiloto_scheduler_target_guard_v1'
+    ) as d064_recorded,
+    exists (
+      select 1
+      from cron.job l
+      where l.jobname = 'kapiloto-live-sync-every-2-min'
+        and encode(sha256(convert_to(btrim(regexp_replace(l.command, '\s+', ' ', 'g')), 'UTF8')), 'hex')
+          = 'f45be91f919fe489b6b01e0987942b76790573cff900cf9b1c35febf829e096c'
+    ) as d064_live_sync_routed
+),
 jobs as (
   select
     j.jobid,
@@ -327,6 +467,12 @@ assessed as (
     t.routing,
     o.active_runs,
     o.nonterminal_attempts,
+    d.d064_recorded,
+    d.d064_live_sync_routed,
+    case
+      when d.d064_recorded or d.d064_live_sync_routed then 'vault_target'
+      else 'hard_coded'
+    end as rewrite_routing,
     case
       when p.desired is null or p.desired not in ('enabled', 'paused') then 'desired_state_required'
       when o.job_count > 1 then 'duplicate'
@@ -345,6 +491,7 @@ assessed as (
     end as status
   from params p
   cross join observed o
+  cross join d064 d
   left join the_job t on true
 ),
 planned as (
@@ -371,7 +518,9 @@ select
     when pl.status = 'unknown_definition' then 'the command matches no reviewed definition; review it by hand'
     when pl.status = 'wrong_schedule' then 'the schedule is not */2 * * * *; review it by hand'
     when pl.action = 'refuse' then 'research work is queued or running; rewrite only on an idle queue'
-    when pl.action = 'rewrite' then 'replace the command with concurrency_guard_v1; jobid, schedule and active flag unchanged'
+    when pl.action = 'rewrite' and pl.rewrite_routing = 'vault_target'
+      then 'replace the command with D-064''s Vault-routed concurrency_guard_v1 (D-064 is applied); jobid, schedule and active flag unchanged'
+    when pl.action = 'rewrite' then 'replace the command with the hard-coded concurrency_guard_v1 (D-064 is not applied); jobid, schedule and active flag unchanged'
     when pl.action = 'pause' then 'deactivate the job (active := false); the job is kept'
     when pl.action = 'resume' then 'reactivate the job; its definition is already concurrency_guard_v1'
     else 'nothing to do'
@@ -386,9 +535,19 @@ from planned pl
     ) s;
 
     if v_locked.action is distinct from 'rewrite'
-       or v_locked.confirm_token is distinct from v_before.confirm_token then
-      raise exception 'kapiloto scheduler: state changed before the idle-queue lock was held (now status %, action %, runs %, attempts %); nothing changed',
-        v_locked.status, v_locked.action, v_locked.active_runs, v_locked.nonterminal_attempts;
+       or v_locked.confirm_token is distinct from v_before.confirm_token
+       or v_locked.rewrite_routing is distinct from v_before.rewrite_routing then
+      raise exception 'kapiloto scheduler: state changed before the idle-queue lock was held (now status %, action %, runs %, attempts %, rewrite_routing %); nothing changed',
+        v_locked.status, v_locked.action, v_locked.active_runs, v_locked.nonterminal_attempts, v_locked.rewrite_routing;
+    end if;
+
+    v_install_routing := v_locked.rewrite_routing;
+    v_desired_command := case v_install_routing
+      when 'vault_target' then v_routed_command
+      when 'hard_coded' then v_hard_coded_command
+    end;
+    if v_desired_command is null then
+      raise exception 'kapiloto scheduler: no reviewed command for rewrite_routing %; nothing changed', v_install_routing;
     end if;
 
     perform cron.alter_job(job_id := v_before.jobid, command := v_desired_command);
@@ -415,6 +574,22 @@ known (definition, semantics_current, routing, command_sha256) as (
     ('concurrency_guard_v1', true, 'hard_coded', 'b37670903bc0055b1cc12ae5551643d83c85c3ab5260aed6f20c646b1912d453'),
     ('concurrency_guard_v1', true, 'vault_target', 'afd9c6ea76bae2577984cbc05f1239c7d3f65a8324c130c6b725335d06655ebd')
 ),
+d064 as (
+  select
+    exists (
+      select 1
+      from supabase_migrations.schema_migrations m
+      where m.version = '20261108100000'
+        or m.name = 'kapiloto_scheduler_target_guard_v1'
+    ) as d064_recorded,
+    exists (
+      select 1
+      from cron.job l
+      where l.jobname = 'kapiloto-live-sync-every-2-min'
+        and encode(sha256(convert_to(btrim(regexp_replace(l.command, '\s+', ' ', 'g')), 'UTF8')), 'hex')
+          = 'f45be91f919fe489b6b01e0987942b76790573cff900cf9b1c35febf829e096c'
+    ) as d064_live_sync_routed
+),
 jobs as (
   select
     j.jobid,
@@ -455,6 +630,12 @@ assessed as (
     t.routing,
     o.active_runs,
     o.nonterminal_attempts,
+    d.d064_recorded,
+    d.d064_live_sync_routed,
+    case
+      when d.d064_recorded or d.d064_live_sync_routed then 'vault_target'
+      else 'hard_coded'
+    end as rewrite_routing,
     case
       when p.desired is null or p.desired not in ('enabled', 'paused') then 'desired_state_required'
       when o.job_count > 1 then 'duplicate'
@@ -473,6 +654,7 @@ assessed as (
     end as status
   from params p
   cross join observed o
+  cross join d064 d
   left join the_job t on true
 ),
 planned as (
@@ -499,7 +681,9 @@ select
     when pl.status = 'unknown_definition' then 'the command matches no reviewed definition; review it by hand'
     when pl.status = 'wrong_schedule' then 'the schedule is not */2 * * * *; review it by hand'
     when pl.action = 'refuse' then 'research work is queued or running; rewrite only on an idle queue'
-    when pl.action = 'rewrite' then 'replace the command with concurrency_guard_v1; jobid, schedule and active flag unchanged'
+    when pl.action = 'rewrite' and pl.rewrite_routing = 'vault_target'
+      then 'replace the command with D-064''s Vault-routed concurrency_guard_v1 (D-064 is applied); jobid, schedule and active flag unchanged'
+    when pl.action = 'rewrite' then 'replace the command with the hard-coded concurrency_guard_v1 (D-064 is not applied); jobid, schedule and active flag unchanged'
     when pl.action = 'pause' then 'deactivate the job (active := false); the job is kept'
     when pl.action = 'resume' then 'reactivate the job; its definition is already concurrency_guard_v1'
     else 'nothing to do'
@@ -521,7 +705,7 @@ from planned pl
      or v_after.status = 'unexpected_job_identity'
      or (v_before.action = 'rewrite' and (
            v_after.definition is distinct from 'concurrency_guard_v1'
-           or v_after.routing is distinct from 'hard_coded'
+           or v_after.routing is distinct from v_install_routing
            or v_after.active is distinct from v_before.active))
      or (v_before.action = 'pause' and (
            v_after.active is distinct from false
@@ -530,8 +714,8 @@ from planned pl
            v_after.active is distinct from true
            or v_after.status is distinct from 'in_sync'
            or v_after.command_sha256 is distinct from v_before.command_sha256)) then
-    raise exception 'kapiloto scheduler: post-condition failed after % (status %, definition %, active %); rolled back',
-      v_before.action, v_after.status, v_after.definition, v_after.active;
+    raise exception 'kapiloto scheduler: post-condition failed after % (status %, definition %, routing %, active %); rolled back',
+      v_before.action, v_after.status, v_after.definition, v_after.routing, v_after.active;
   end if;
 
   insert into public.admin_audit_log (action, entity_type, entity_id, metadata)
@@ -559,7 +743,7 @@ from planned pl
     )
   );
 
-  raise notice 'kapiloto scheduler: APPLIED % on jobid %; now status=% definition=% active=%',
-    v_before.action, v_before.jobid, v_after.status, v_after.definition, v_after.active;
+  raise notice 'kapiloto scheduler: APPLIED % on jobid %; now status=% definition=% active=% routing=%',
+    v_before.action, v_before.jobid, v_after.status, v_after.definition, v_after.active, v_after.routing;
 end;
 $scheduler_reconcile$;

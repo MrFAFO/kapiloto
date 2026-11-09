@@ -421,7 +421,17 @@ const HISTORICAL_SINGLE_CALL = cronBodies("20261020112327_kapiloto_research_work
 // D-065: the only worker command D-064 accepts, and what D-065 installs.
 const CONCURRENCY_GUARD_SHA256 = "b37670903bc0055b1cc12ae5551643d83c85c3ab5260aed6f20c646b1912d453";
 
-type D065State = { definition: string | null; routing: string | null; status: string; action: string; confirm_token: string | null; command_sha256: string };
+type D065State = {
+  definition: string | null;
+  routing: string | null;
+  status: string;
+  action: string;
+  confirm_token: string | null;
+  command_sha256: string;
+  d064_recorded: boolean;
+  d064_live_sync_routed: boolean;
+  rewrite_routing: string;
+};
 
 async function d065Check(db: PGlite): Promise<D065State> {
   return db.transaction(async (tx) => {
@@ -458,9 +468,11 @@ test("after D-065 reconciles production's drifted worker, D-064 routes exactly c
   );
   assert.deepEqual(await jobs(db), production);
 
-  // D-065 W3: the confirmed rewrite installs concurrency_guard_v1, hard-coded.
+  // D-065 W3: D-064 is neither recorded nor visible on live sync, so the
+  // confirmed rewrite installs concurrency_guard_v1, hard-coded.
   const plan = await d065Check(db);
   assert.deepEqual([plan.definition, plan.status, plan.action], ["scheduler_v1_single", "wrong_definition", "rewrite"]);
+  assert.deepEqual([plan.d064_recorded, plan.d064_live_sync_routed, plan.rewrite_routing], [false, false, "hard_coded"]);
   await d065Reconcile(db, plan.confirm_token!);
   const reconciled = (await job(db, WORKER_JOB))!;
   assert.equal(sha256(normalize(reconciled.command)), CONCURRENCY_GUARD_SHA256);
@@ -479,9 +491,22 @@ test("after D-065 reconciles production's drifted worker, D-064 routes exactly c
   const liveSync = after.find((row) => row.jobname === LIVE_SYNC_JOB)!;
   assert.equal(normalize(liveSync.command), normalize(GUARDED.liveSync));
 
-  // D-065's read-only check sees the routed worker as correct.
+  // D-065's read-only check sees the routed worker as correct. D-064 was run
+  // here without a ledger row; the routed live-sync job shows it is applied.
   const final = await d065Check(db);
   assert.deepEqual([final.definition, final.routing, final.status, final.action], ["concurrency_guard_v1", "vault_target", "in_sync", "none"]);
+  assert.deepEqual([final.d064_recorded, final.d064_live_sync_routed, final.rewrite_routing], [false, true, "vault_target"]);
+
+  // If the worker drifts again after that, D-065 repairs it to the routed command.
+  await db.query("select cron.alter_job(job_id := $1, command := $2)", [drifted.jobid, HISTORICAL_SINGLE_CALL]);
+  const again = await d065Check(db);
+  assert.deepEqual([again.status, again.action, again.rewrite_routing], ["wrong_definition", "rewrite", "vault_target"]);
+  await d065Reconcile(db, again.confirm_token!);
+  const normalized = (rows: Job[]) => rows.map((row) => ({ ...row, command: normalize(row.command) }));
+  assert.deepEqual(normalized(await jobs(db)), normalized(after), "the same routed jobs as after D-064");
+  const repaired = await jobs(db);
+  await db.exec(read(GUARD));
+  assert.deepEqual(await jobs(db), repaired, "D-064 re-run: already routed, nothing changed");
 
   // Disarmed until production creates its target; then it posts what concurrency_guard_v1 posted.
   await recordHttpPosts(db);
@@ -491,5 +516,55 @@ test("after D-065 reconciles production's drifted worker, D-064 routes exactly c
   const routedPosts = await posts(db, routed.command);
   assert.equal(routedPosts.length, 1);
   assert.deepEqual(routedPosts, await posts(db, LEGACY.worker));
+  await db.close();
+});
+
+test("after D-064 is applied, a recurring worker drift is repaired by D-065 to the routed command and D-064 stays a no-op", async () => {
+  // A project migrated through D-064: the ledger records it, both jobs are routed.
+  const db = await createMigratedDatabase();
+  const ledger = await db.query("select version from supabase_migrations.schema_migrations where version = '20261108100000'");
+  assert.equal(ledger.rows.length, 1);
+  const routedJobs = await jobs(db);
+  const worker = routedJobs.find((row) => row.jobname === WORKER_JOB)!;
+
+  // The out-of-band drift recurs: the historical single-call body, hard-coded.
+  await db.query("select cron.alter_job(job_id := $1, command := $2)", [worker.jobid, HISTORICAL_SINGLE_CALL]);
+  const drifted = await jobs(db);
+  assert.match((await job(db, WORKER_JOB))!.command, LITERAL_URL);
+  // D-064 refuses it, as it would on its first run.
+  await assert.rejects(
+    db.exec(read(GUARD)),
+    new RegExp(`${WORKER_JOB} \\(jobid ${worker.jobid}\\) has a command this migration did not install`),
+  );
+  assert.deepEqual(await jobs(db), drifted);
+
+  // D-065 plans the rewrite to the routed command and installs exactly D-064's worker body.
+  const plan = await d065Check(db);
+  assert.deepEqual([plan.definition, plan.status, plan.action], ["scheduler_v1_single", "wrong_definition", "rewrite"]);
+  assert.deepEqual([plan.d064_recorded, plan.d064_live_sync_routed, plan.rewrite_routing], [true, true, "vault_target"]);
+  await d065Reconcile(db, plan.confirm_token!);
+  const repaired = await jobs(db);
+  assert.deepEqual(
+    repaired.map((row) => ({ ...row, command: normalize(row.command) })),
+    routedJobs.map((row) => ({ ...row, command: normalize(row.command) })),
+    "back to the routed state D-064 left: same jobs, ids, flags and commands",
+  );
+  for (const row of repaired) assert.doesNotMatch(row.command, LITERAL_URL, row.jobname);
+
+  // D-064 re-run is a no-op, and D-065 now reports in sync.
+  await db.exec(read(GUARD));
+  assert.deepEqual(await jobs(db), repaired);
+  const final = await d065Check(db);
+  assert.deepEqual([final.definition, final.routing, final.status, final.action], ["concurrency_guard_v1", "vault_target", "in_sync", "none"]);
+
+  // Disarmed without a target; with production's target it posts what concurrency_guard_v1 posted.
+  await recordHttpPosts(db);
+  await openBothGates(db);
+  const repairedWorker = repaired.find((row) => row.jobname === WORKER_JOB)!.command;
+  assert.deepEqual(await posts(db, repairedWorker), []);
+  await setTarget(db, WORKER_TARGET, PRODUCTION_WORKER_URL);
+  const repairedPosts = await posts(db, repairedWorker);
+  assert.equal(repairedPosts.length, 1);
+  assert.deepEqual(repairedPosts, await posts(db, LEGACY.worker));
   await db.close();
 });

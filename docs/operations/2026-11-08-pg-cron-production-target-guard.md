@@ -1,6 +1,6 @@
 # pg_cron production target guard (D-064)
 
-Status: proposed in Draft PR #59. Not merged and not applied anywhere. Production is unchanged.
+Status: merged in PR #59 (`f42ccd7`). Not applied in production; production is unchanged. On 2026-11-09 a read-only D-065 check (PR #63 review `5824119967`) showed `d064_recorded = false` and `d064_live_sync_routed = false` in production: no D-064 ledger row, and live sync not running D-064's routed command.
 
 Production rollout depends on D-065 (PR #61, merged):
 - **Production's worker today.** It runs the historical single-call body `6c5cafc2…`, which this migration refuses by design.
@@ -136,7 +136,7 @@ select vault.create_secret(
 );
 ```
 
-**3. Apply the migration** through the normal path after the PR is merged. If it raises "has a command this migration did not install", stop: production's job differs from the chain and needs review. Nothing has changed at that point.
+**3. Apply the migration** through the normal path, the migration tool, so that `supabase_migrations.schema_migrations` records it. D-065's rewrite reads that record. If it raises "has a command this migration did not install", stop: production's job differs from the chain and needs review. Nothing has changed at that point.
 
 **4. Verify.**
 
@@ -198,4 +198,4 @@ Use the body of `20261020101804` for live sync and of `20261020120216` (`concurr
 - **A copy of production carries the targets,** because Vault data is part of the database. The disarm step above is mandatory after a restore. Vault's encryption key may also prevent decryption in another project, which would leave the target `NULL` and the jobs inert, but this guard does not rely on that.
 - **A human can set production URLs on the wrong project.** Only the documentation prevents this.
 - **Skipping step 2 stops production's live sync and worker** until the secrets are created. The failure is fail-closed and visible.
-- **D-065's rewrite installs the hard-coded `concurrency_guard_v1` body.** In the documented order that is harmless, because D-064 then routes it. Its rewrite applies only to a job running a historical body. After D-064 that can happen only if someone changed the job out of band again. If that ever happens, re-route the command by hand (an approved `cron.alter_job` with D-064's worker body) before relying on the target secrets. Teaching D-065 to install the routed form is a possible follow-up; this PR leaves D-065 unchanged.
+- **D-065's rewrite after D-064.** Before D-064, D-065's rewrite installs the hard-coded `concurrency_guard_v1` body, which this migration then routes. Once this migration is applied, the rewrite installs exactly this migration's worker command instead. It detects that from the migration ledger (version `20261108100000` or name `kapiloto_scheduler_target_guard_v1`) or from the live-sync job already being routed. So an out-of-band drift after D-064 is never repaired to a hard-coded endpoint. Its blind spot: a by-hand application without a ledger row, followed by an unscheduled live sync. Applying this migration through the migration tool rules it out. See "Composition with D-064" in `2026-11-08-research-worker-scheduler-reconciliation.md`.
