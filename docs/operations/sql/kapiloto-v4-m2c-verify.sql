@@ -88,20 +88,26 @@ begin
   end if;
 
   for r in
-    select l.pid, l.mode
+    select l.pid, l.mode, l.granted
     from pg_catalog.pg_locks l
     where l.locktype = 'advisory'
-      and l.granted
       and l.objsubid = 1
       and ((l.classid::bigint << 32) | l.objid::bigint)
           = pg_catalog.hashtextextended('kapiloto_v4_provider_identity:sportmonks', 0)
       and l.mode = 'ShareLock'
     order by l.pid
   loop
-    v_problems := v_problems || format(
-      'backend %s still holds the Sportmonks provider-identity ShareLock; a V2 ingest call is still in flight',
-      r.pid
-    );
+    if r.granted then
+      v_problems := v_problems || format(
+        'backend %s still holds the Sportmonks provider-identity ShareLock; a V2 ingest call is still in flight',
+        r.pid
+      );
+    else
+      v_problems := v_problems || format(
+        'backend %s is waiting for the Sportmonks provider-identity ShareLock; a V2 ingest call already passed its EXECUTE check and is waiting at the identity boundary',
+        r.pid
+      );
+    end if;
   end loop;
 
   for r in

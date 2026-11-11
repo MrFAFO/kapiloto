@@ -1,6 +1,6 @@
 # Kapiloto V4 — M2B/M2C Recovery Runbook
 
-Status: **pre-activation runbook; rehearsed on synthetic data (D-061)**  
+Status: **pre-activation runbook; synthetic rehearsal complete (D-061), real PostgreSQL two-session rehearsal evidence recorded 2026-11-07**  
 Scope: Sportmonks V4 Match Ledger tiny pilot and later staged backfills  
 Related: D-058, D-060, D-061, M2A/M2B/M2C
 
@@ -109,8 +109,10 @@ M2C itself never mutates identity, mapping, fixture or Match Ledger data.
    - Executing it alone matters: an error later in the same execution would
      roll the revoke back.
 2. Execute `docs/operations/sql/kapiloto-v4-m2c-verify.sql` as a separate
-   execution. Re-run it until it reports PASS. It fails while any of these
-   holds:
+   execution. Re-run it until it reports PASS. After the first PASS, wait at
+   least 6 seconds (longer than V2's 5-second lock timeout) and run it again;
+   both executions must PASS before identity or data repair begins. It fails
+   while any of these holds:
    - either ingest RPC is owned by anything other than the reviewed Supabase
      operator roles (`postgres` or `supabase_admin`);
    - any non-operator role can execute either RPC, including through role
@@ -126,9 +128,12 @@ M2C itself never mutates identity, mapping, fixture or Match Ledger data.
 
 - PostgreSQL checks EXECUTE once per call, when the call starts. A call
   already running when the revoke commits finishes, and may commit.
-- Every later call is refused, including a statement prepared before M2C.
-- So at most the calls already in flight (one fixture each) land after M2C.
-  The verification's drain check shows when they are done.
+- Every transaction that starts after M2C commits is refused. A transaction
+  that was already open before M2C may already have passed an EXECUTE check;
+  do not use the privilege catalog alone as the drain signal.
+- So at most calls that had already passed their EXECUTE boundary can land
+  after M2C. The provider-identity lock check, including waiting ShareLock
+  requests, is the authoritative drain signal.
 - The identity revoke in §C is the real barrier. It takes the provider
   identity lock exclusive, which waits for every in-flight V2 ingest (they
   hold it shared). Any ingest that starts after that sees no active
@@ -167,6 +172,14 @@ select public.provider_identity_revoke_team(jsonb_build_object(
 A competition uses `public.provider_identity_revoke_competition` with
 `provider_competition_id` and `expected_competition_id`. Both RPCs stay
 executable by service_role under M2C.
+
+**If the revoke raises SQLSTATE `55P03` (lock timeout):**
+
+- Treat it as a clean, failed attempt: the revoke transaction wrote no revoke
+  event.
+- Run the M2C verification until it PASSes twice at least 6 seconds apart.
+- Then retry the revoke as a new execution. Never widen the function's
+  `lock_timeout` to force the barrier through an in-flight ingest.
 
 **If the revoke reports that the ref has no active attestation:**
 
@@ -383,7 +396,9 @@ paused too:
 
 1. Generate a **fresh current timestamp**, later than every applied version.
 2. Create `supabase/migrations/<timestamp>_kapiloto_v4_m2c_pause_provider_ingest.sql`
-   containing the reviewed body byte for byte.
+   containing only the two reviewed `REVOKE EXECUTE` statements from
+   `kapiloto-v4-m2c-revoke-body.sql`. Do not copy its "NOT a migration"
+   header/comment into the migration.
 3. Record that version as applied in production, using the same mechanism PR
    #43 used:
    - apply it through the Supabase migration tool, which re-runs the
@@ -479,18 +494,28 @@ Stop and require a new review if any of these occurs:
   - V2 is never granted;
   - this SQL stays out of `supabase/migrations` and contains no DDL.
 
-PGlite runs one backend. Concurrent interleavings rest on PostgreSQL's
-per-call EXECUTE check and lock conflict tables. The tests prove which locks
-are held, not that a second session waits.
+PGlite runs one backend. Concurrent interleavings therefore still require a
+real PostgreSQL rehearsal. The 2026-11-07 disposable Supabase rehearsal
+recorded real multi-backend lock waits, M2C revoke behaviour, the 55P03
+identity-revoke timeout path, queued revoke completion, and revoke-first
+fail-closed ingest. See
+`docs/operations/2026-11-07-v4-m2b-real-postgres-rehearsal.md` for the
+evidence and remaining optional experiments. The same interleavings (A2, A4,
+B1–B3) are encoded as a reusable operator harness for disposable databases
+only: `npm run rehearsal:v4-m2b-real-postgres` (see that document's
+"Reusable harness" section). It executes this runbook's M2C body and
+verification files verbatim.
 
 ## Relationship to M2B
 
 Passing this rehearsal does **not** activate M2B. M2B remains a separate
 grant-only production action after all of these:
 
-- Winner round 264301 settlement;
-- deferred identity reconciliation and full R7;
-- clean readiness/conflict reports;
-- A2-B amended and re-run;
-- a reviewed tiny-pilot run allowlist;
-- review of this runbook, the M2C body and its verification.
+- the real-PostgreSQL rehearsal evidence is reviewed;
+- H-2 is closed with a reviewed explicit-fixture capture path and operator
+  runner;
+- H-3 is closed by confirming the production migration apply/auto-deploy
+  boundary;
+- clean readiness/conflict reports pass immediately before activation;
+- the tiny-pilot allowlist is re-checked at runtime;
+- the grant-only M2B migration is reviewed separately.
